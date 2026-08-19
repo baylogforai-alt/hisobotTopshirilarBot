@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS attendance (
   work_date    TEXT    NOT NULL,
   checked_in   TEXT,
   checked_out  TEXT,
+  intent       TEXT,
+  intent_at    TEXT,
   UNIQUE (employee_id, work_date)
 );
 
@@ -94,6 +96,8 @@ CREATE TABLE IF NOT EXISTS attendance (
   work_date    TEXT    NOT NULL,
   checked_in   TEXT,
   checked_out  TEXT,
+  intent       TEXT,
+  intent_at    TEXT,
   UNIQUE (employee_id, work_date)
 );
 
@@ -110,4 +114,14 @@ CREATE TABLE IF NOT EXISTS reminder_log (
 );
 `;
 
-module.exports = { POSTGRES, SQLITE };
+/**
+ * Eski (allaqachon yaratilgan) bazalarga qo'shimcha ustun qo'shish uchun.
+ * Har ikkala dialektda ham xato "ustun allaqachon bor" bo'lsa e'tiborsiz qoldiriladi
+ * (bu funksiyani chaqiruvchi joyda amalga oshiriladi — bu yerda faqat SQL matni).
+ */
+const MIGRATIONS = [
+  { postgres: 'ALTER TABLE attendance ADD COLUMN IF NOT EXISTS intent TEXT', sqlite: 'ALTER TABLE attendance ADD COLUMN intent TEXT' },
+  { postgres: 'ALTER TABLE attendance ADD COLUMN IF NOT EXISTS intent_at TEXT', sqlite: 'ALTER TABLE attendance ADD COLUMN intent_at TEXT' },
+];
+
+module.exports = { POSTGRES, SQLITE, MIGRATIONS };

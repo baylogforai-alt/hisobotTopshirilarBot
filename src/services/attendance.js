@@ -57,4 +57,16 @@ const absent = (date = time.today()) =>
     [date],
   );
 
-module.exports = { get, checkIn, checkOut, isCheckedIn, isCheckedOut, workingNow, absent };
+/** "Ishga kelyapsizmi?" so'roviga javob (ha/yo'q) saqlash */
+const setIntent = async (employeeId, intent, date = time.today()) => {
+  await db.query(
+    `INSERT INTO attendance (employee_id, work_date, intent, intent_at) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (employee_id, work_date) DO UPDATE SET intent = EXCLUDED.intent, intent_at = EXCLUDED.intent_at`,
+    [employeeId, date, intent, time.stamp()],
+  );
+  return get(employeeId, date);
+};
+
+module.exports = {
+  get, checkIn, checkOut, isCheckedIn, isCheckedOut, workingNow, absent, setIntent,
+};

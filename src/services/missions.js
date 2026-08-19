@@ -121,7 +121,18 @@ const rangeStats = async (employeeId, fromDate, toDate) => {
   return { done: Number(d.c), created: Number(c.c) };
 };
 
+/** Berilgan sana uchun hodimning rejasi (davomiy yoki shu kunga yozilgan) bormi */
+const hasCoverageFor = async (employeeId, date) => {
+  const row = await db.one(
+    `SELECT COUNT(*) AS c FROM missions
+     WHERE employee_id = $1 AND status IN ('pending', 'active')
+       AND start_date <= $2 AND due_date >= $2`,
+    [employeeId, date],
+  );
+  return Number(row.c) > 0;
+};
+
 module.exports = {
   create, byId, openFor, pendingFor, activateDue, markDone, reopen,
-  cancel, doneOn, dayStats, allOverdue, rangeStats,
+  cancel, doneOn, dayStats, allOverdue, rangeStats, hasCoverageFor,
 };

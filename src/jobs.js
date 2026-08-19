@@ -48,13 +48,30 @@ const start = (bot) => {
     await logRun('rollover', 'kunlik faollashtirish');
   });
 
-  // 2) Ish boshlanishida: "Ishga keldim" ni eslatish
+  // 2) Ish boshlanishidan 5 daqiqa oldin: "Ishga kelyapsizmi?" (ha/yo'q tugmasi bilan)
+  schedule('pre-start-intent', `55 ${startH - 1} * * ${dow}`, async () => {
+    const list = await employees.listActive();
+    let asked = 0;
+    for (const emp of list) {
+      if (await attendance.isCheckedIn(emp.id)) continue;
+      asked += 1;
+      await notify.toUser(
+        bot,
+        emp.tg_id,
+        `🕘 <b>${startH}:00 ga 5 daqiqa qoldi.</b>\n\nBugun ishga kelyapsizmi?`,
+        { parse_mode: 'HTML', ...ui.intentKeyboard() },
+      );
+    }
+    await logRun('pre-start-intent', `${asked} ta hodimdan so'raldi`);
+  });
+
+  // 3) Ish boshlanishida: "Ishga keldim" ni eslatish
   schedule('morning-call', `0 ${startH} * * ${dow}`, async () => {
     const res = await reports.sendMorningCall(bot);
     await logRun('morning-call', JSON.stringify(res));
   });
 
-  // 3) Kun davomida har N soatda: "shu missiyani bajardingmi?"
+  // 4) Kun davomida har N soatda: "shu missiyani bajardingmi?"
   const firstReminder = startH + step;
   const lastReminder = end - 1;
   if (firstReminder <= lastReminder) {
@@ -66,29 +83,24 @@ const start = (bot) => {
     console.warn("[jobs] Ish vaqti juda qisqa — oraliq eslatmalar o'chirildi.");
   }
 
-  // 4) Ish oxirida: kunlik hisobot + ertangi rejani so'rash
+  // 5) Ish oxirida: kunlik hisobot + ertangi rejani so'rash
   schedule('daily-report', `0 ${end} * * ${dow}`, async () => {
     const res = await reports.sendDailyReport(bot);
     await logRun('daily-report', JSON.stringify(res));
   });
 
-  // 5) Ish oxiridan 1 soat keyin: ertangi missiyani yozmaganlarga turtki
-  schedule('plan-nudge', `0 ${end + 1} * * ${dow}`, async () => {
+  // 6) Ish oxiridan 45 daqiqa keyin: ertangi kun uchun missiya yozilmagan bo'lsa eslatish
+  schedule('plan-nudge', `45 ${end} * * ${dow}`, async () => {
+    const tomorrow = time.addDays(time.today(), 1);
     const list = await employees.listActive();
     let nudged = 0;
     for (const emp of list) {
-      if (!(await attendance.isCheckedIn(emp.id))) continue;
-      const pending = await missions.pendingFor(emp.id);
-      if (pending.length) continue;
-      const open = await missions.openFor(emp.id);
+      if (await missions.hasCoverageFor(emp.id, tomorrow)) continue;
       nudged += 1;
       await notify.toUser(
         bot,
         emp.tg_id,
-        `⏰ <b>Eslatma:</b> ertangi missiyalaringizni hali yozmadingiz.\n\n` +
-          (open.length
-            ? `Bajarilmagan ${open.length} ta ish ertaga o'tadi:\n${ui.missionList(open)}\n\n`
-            : '') +
+        `⏰ <b>Eslatma:</b> ertangi (${time.prettyDate(tomorrow)}) missiyalaringizni hali yozmadingiz.\n\n` +
           `«➕ Missiya qo'shish» tugmasi orqali ertangi rejani yozib qo'ying.`,
       );
     }
@@ -96,7 +108,7 @@ const start = (bot) => {
       await notify.toGroup(
         bot,
         `⏰ <b>Diqqat!</b> ${nudged} ta hodim ertangi missiyalarini hali yozmadi.\n` +
-          `Ishdan ketishdan oldin botga yozib qo'ying.`,
+          `Iltimos, botga yozib qo'ying.`,
       );
     }
     await logRun('plan-nudge', `${nudged} ta hodim`);

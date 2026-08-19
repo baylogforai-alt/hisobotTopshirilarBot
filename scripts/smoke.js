@@ -88,6 +88,15 @@ const ok = (label, cond) => {
     !(await missions.openFor(emp.id)).some((m) => m.title === 'Ertangi ish'),
   );
 
+  // 6b. Ertangi kun uchun reja bormi (hasCoverageFor)
+  ok("ertangi kun qoplangan (hasCoverageFor)", await missions.hasCoverageFor(emp.id, ertaga));
+  const indinga = time.addDays(bugun, 2);
+  ok("indinga hali reja yo'q", !(await missions.hasCoverageFor(emp.id, indinga)));
+
+  // 6c. "Ishga kelyapsizmi?" javobi (intent)
+  const withIntent = await attendance.setIntent(emp.id, 'no');
+  ok('intent saqlandi', withIntent.intent === 'no' && Boolean(withIntent.intent_at));
+
   // 7. Sana hisoblash
   ok('dur:today → bugun', datesFor('today').start === bugun && datesFor('today').due === bugun);
   ok('dur:1 → ertaga', datesFor('1').start === ertaga && datesFor('1').due === ertaga);

@@ -75,12 +75,51 @@ const doCheckOut = async (ctx) => {
   );
 };
 
+/** 8:55 dagi "Ishga kelyapsizmi?" so'roviga javob */
+const onIntent = async (ctx) => {
+  const emp = ctx.state.employee;
+  if (!emp) return ctx.answerCbQuery("Ro'yxatdan o'tmagansiz");
+
+  if (await attendance.isCheckedIn(emp.id)) {
+    await ctx.answerCbQuery('Siz allaqachon ishga kelgansiz');
+    try {
+      await ctx.editMessageText('✅ Siz allaqachon ishga kelgansiz. Rahmat!');
+    } catch { /* noop */ }
+    return;
+  }
+
+  const answer = ctx.match[1]; // 'yes' | 'no'
+  await attendance.setIntent(emp.id, answer);
+  await ctx.answerCbQuery(answer === 'yes' ? 'Rahmat!' : 'Qabul qilindi');
+
+  if (answer === 'yes') {
+    try {
+      await ctx.editMessageText(
+        `✅ <b>Yaxshi, kutamiz!</b>\n\nIshga kelganingizda «✅ Ishga keldim» tugmasini bosishni unutmang.`,
+        { parse_mode: 'HTML' },
+      );
+    } catch { /* noop */ }
+    return;
+  }
+
+  try {
+    await ctx.editMessageText("Tushunarli, ma'lumot uchun rahmat.");
+  } catch { /* noop */ }
+
+  await notify.toGroup(
+    { telegram: ctx.telegram },
+    `🔴 ${reports.mentionHtml(emp)} <b>bugun ishga kelmasligini</b> bildirdi.`,
+  );
+};
+
 const register = (bot) => {
   bot.hears(ui.BTN.checkIn, doCheckIn);
   bot.command(['keldim', 'ishga_keldim'], doCheckIn);
 
   bot.hears(ui.BTN.checkOut, doCheckOut);
   bot.command(['ketdim', 'ishdan_ketdim'], doCheckOut);
+
+  bot.action(/^intent:(yes|no)$/, onIntent);
 };
 
 module.exports = { register };

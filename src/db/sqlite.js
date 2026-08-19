@@ -46,6 +46,13 @@ const query = async (sql, params = []) => {
 
 const init = async () => {
   db.exec(schema.SQLITE);
+  for (const m of schema.MIGRATIONS) {
+    try {
+      db.exec(m.sqlite);
+    } catch (e) {
+      if (!/duplicate column/i.test(e.message)) console.warn("[db] migratsiya o'tkazib yuborildi:", e.message);
+    }
+  }
   console.log(`[db] SQLite ulandi → ${config.dbPath}`);
   console.log("[db] ⚠️  Supabase ulanmagan — mahalliy fayl bazasi ishlatilmoqda.");
 };

@@ -27,6 +27,9 @@ const query = async (sql, params = []) => {
 
 const init = async () => {
   await pool.query(schema.POSTGRES);
+  for (const m of schema.MIGRATIONS) {
+    await pool.query(m.postgres).catch((e) => console.warn('[db] migratsiya o\'tkazib yuborildi:', e.message));
+  }
   const { rows } = await pool.query('SELECT current_database() AS db, version() AS v');
   console.log(`[db] PostgreSQL ulandi → ${rows[0].db}${isSupabase ? ' (Supabase)' : ''}`);
 };

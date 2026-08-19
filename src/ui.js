@@ -78,7 +78,13 @@ const adminKeyboard = () =>
     [Markup.button.callback('🔔 Hozir eslatma yuborish', 'adm:remind')],
   ]);
 
+/** "Ishga kelyapsizmi?" — ish boshlanishidan oldingi so'rov */
+const intentKeyboard = () =>
+  Markup.inlineKeyboard([
+    [Markup.button.callback('✅ Ha, kelyapman', 'intent:yes'), Markup.button.callback("❌ Yo'q, kelmayman", 'intent:no')],
+  ]);
+
 module.exports = {
   esc, BTN, mainKeyboard, durationKeyboard, missionLine, missionList,
-  doneKeyboard, cancelKeyboard, adminKeyboard,
+  doneKeyboard, cancelKeyboard, adminKeyboard, intentKeyboard,
 };
