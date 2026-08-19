@@ -151,10 +151,11 @@ Standart sozlamada (9:00–18:00, har 2 soatda, dushanba–shanba):
 | Vaqt | Amal |
 |---|---|
 | `00:05` | Muddati kelgan missiyalar faollashadi |
+| `08:55` | Hali «Ishga keldim» qilmaganlarga: **«Ishga kelyapsizmi?»** — Ha/Yo'q tugmasi bilan shaxsiy xabar |
 | `09:00` | Guruhga «Ishga keldim» chaqirig'i + kelmaganlarga shaxsiy xabar |
 | `11:00, 13:00, 15:00, 17:00` | **«Bu missiyalarni bajardingizmi?»** — guruhga ro'yxat, hodimga tugmali ro'yxat |
 | `18:00` | Kunlik hisobot guruhga + har kimga «ertangi rejani yoz» so'rovi |
-| `19:00` | Ertangi missiyani yozmaganlarga turtki + guruhga ogohlantirish |
+| `18:45` | Ertangi kun uchun rejasi yo'q hodimlarga aniq eslatma + guruhga ogohlantirish |
 
 ---
 
