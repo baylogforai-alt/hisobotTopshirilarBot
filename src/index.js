@@ -6,6 +6,7 @@ const db = require('./db');
 const time = require('./time');
 const session = require('./session');
 const ui = require('./ui');
+const health = require('./health');
 
 const commonHandler = require('./handlers/common');
 const attendanceHandler = require('./handlers/attendance');
@@ -56,6 +57,8 @@ const COMMANDS = [
 ];
 
 (async () => {
+  health.start();
+
   try {
     await db.init();
   } catch (err) {
