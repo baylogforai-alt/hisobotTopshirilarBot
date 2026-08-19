@@ -1,0 +1,84 @@
+'use strict';
+
+const { Markup } = require('telegraf');
+const time = require('./time');
+
+const esc = (s) =>
+  String(s === null || s === undefined ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+const BTN = {
+  checkIn: '✅ Ishga keldim',
+  checkOut: '🏁 Ishdan ketaman',
+  addMission: '➕ Missiya qo\'shish',
+  myMissions: '📋 Missiyalarim',
+  done: '✔️ Bajardim',
+  report: '📊 Hisobot',
+  admin: '⚙️ Admin panel',
+};
+
+const mainKeyboard = (isAdmin = false) => {
+  const rows = [
+    [BTN.checkIn, BTN.checkOut],
+    [BTN.addMission, BTN.myMissions],
+    [BTN.done, BTN.report],
+  ];
+  if (isAdmin) rows.push([BTN.admin]);
+  return Markup.keyboard(rows).resize();
+};
+
+/** Missiya davomiyligini tanlash tugmalari */
+const durationKeyboard = () =>
+  Markup.inlineKeyboard([
+    [Markup.button.callback('📅 Bugun', 'dur:today'), Markup.button.callback('☀️ Ertaga', 'dur:1')],
+    [Markup.button.callback('2 kunlik', 'dur:2'), Markup.button.callback('3 kunlik', 'dur:3')],
+    [Markup.button.callback('1 haftalik', 'dur:7'), Markup.button.callback('1 oylik', 'dur:30')],
+    [Markup.button.callback('❌ Bekor qilish', 'dur:cancel')],
+  ]);
+
+/** Bitta missiya qatori */
+const missionLine = (m, i) => {
+  const t = time.today();
+  const overdue = m.due_date < t;
+  const daysOpen = Math.max(1, time.diffDays(m.start_date, t) + 1);
+  const marks = [];
+  if (overdue) marks.push(`⚠️ ${time.diffDays(m.due_date, t)} kun kechikdi`);
+  else if (daysOpen > 1) marks.push(`🔁 ${daysOpen}-kun`);
+  if (m.due_date !== m.start_date) marks.push(`muddat: ${time.prettyDate(m.due_date)}`);
+  const suffix = marks.length ? `\n   <i>${esc(marks.join(' • '))}</i>` : '';
+  const icon = overdue ? '🔴' : '🔹';
+  return `${i}. ${icon} <b>${esc(m.title)}</b>${suffix}`;
+};
+
+const missionList = (missions) =>
+  missions.length ? missions.map((m, i) => missionLine(m, i + 1)).join('\n') : '<i>— bo\'sh —</i>';
+
+/** "Bajardim" uchun inline ro'yxat */
+const doneKeyboard = (missions) =>
+  Markup.inlineKeyboard([
+    ...missions.map((m, i) => [
+      Markup.button.callback(`${i + 1}. ${m.title.slice(0, 45)}`, `done:${m.id}`),
+    ]),
+    [Markup.button.callback('🔄 Yangilash', 'done:refresh')],
+  ]);
+
+/** Missiyani o'chirish/bekor qilish ro'yxati */
+const cancelKeyboard = (missions) =>
+  Markup.inlineKeyboard(
+    missions.map((m, i) => [Markup.button.callback(`🗑 ${i + 1}. ${m.title.slice(0, 42)}`, `cancel:${m.id}`)]),
+  );
+
+const adminKeyboard = () =>
+  Markup.inlineKeyboard([
+    [Markup.button.callback('👥 Hodimlar', 'adm:list')],
+    [Markup.button.callback('📊 Bugungi umumiy hisobot', 'adm:report')],
+    [Markup.button.callback('⚠️ Kechikkan missiyalar', 'adm:overdue')],
+    [Markup.button.callback('🔔 Hozir eslatma yuborish', 'adm:remind')],
+  ]);
+
+module.exports = {
+  esc, BTN, mainKeyboard, durationKeyboard, missionLine, missionList,
+  doneKeyboard, cancelKeyboard, adminKeyboard,
+};
