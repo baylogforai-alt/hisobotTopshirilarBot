@@ -164,7 +164,8 @@ const showDonePicker = async (ctx) => {
       ui.mainKeyboard(ctx.state.isAdmin),
     );
   }
-  return ctx.reply(`✔️ <b>Qaysi missiyani bajardingiz?</b>\n\n${ui.missionList(open)}`, {
+  const doneToday = await missions.doneOn(emp.id);
+  return ctx.reply(ui.doneChecklist(open, doneToday), {
     parse_mode: 'HTML',
     ...ui.doneKeyboard(open),
   });
@@ -195,10 +196,8 @@ const onDone = async (ctx) => {
   }
 
   const open = await missions.openFor(emp.id);
-  const doneToday = (await missions.doneOn(emp.id)).length;
-  const body = open.length
-    ? `✔️ <b>Qaysi missiyani bajardingiz?</b>\n\n${ui.missionList(open)}\n\n<i>Bugun bajarilgan: ${doneToday} ta</i>`
-    : `🎉 <b>Barcha missiyalar bajarildi!</b>\n<i>Bugun bajarilgan: ${doneToday} ta</i>`;
+  const doneToday = await missions.doneOn(emp.id);
+  const body = ui.doneChecklist(open, doneToday);
 
   try {
     await ctx.editMessageText(body, {

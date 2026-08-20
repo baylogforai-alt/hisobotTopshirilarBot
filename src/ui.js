@@ -55,14 +55,37 @@ const missionLine = (m, i) => {
 const missionList = (missions) =>
   missions.length ? missions.map((m, i) => missionLine(m, i + 1)).join('\n') : '<i>— bo\'sh —</i>';
 
-/** "Bajardim" uchun inline ro'yxat */
+/** "Bajardim" uchun inline ro'yxat — faqat ochiq (bajarilmagan) missiyalar tugma bo'ladi */
 const doneKeyboard = (missions) =>
   Markup.inlineKeyboard([
     ...missions.map((m, i) => [
-      Markup.button.callback(`${i + 1}. ${m.title.slice(0, 45)}`, `done:${m.id}`),
+      Markup.button.callback(`☐ ${i + 1}. ${m.title.slice(0, 43)}`, `done:${m.id}`),
     ]),
     [Markup.button.callback('🔄 Yangilash', 'done:refresh')],
   ]);
+
+/**
+ * "Bajardim" oynasi matni — checklist ko'rinishida.
+ * Bajarilganlar ✅ (chizilgan), qolganlar ☐ (raqamlangan) bo'lib ko'rinadi,
+ * shunda istalganini — 3-sini yoki 5-sini — tanlash mumkinligi aniq bo'ladi.
+ */
+const doneChecklist = (open, doneToday) => {
+  const lines = [];
+  doneToday.forEach((m) => {
+    lines.push(`✅ <s>${esc(m.title)}</s> <i>${time.clock(m.done_at)}</i>`);
+  });
+  open.forEach((m, i) => {
+    const overdue = m.due_date < time.today();
+    lines.push(`☐ <b>${i + 1}.</b> ${esc(m.title)}${overdue ? ' ⚠️' : ''}`);
+  });
+  const total = open.length + doneToday.length;
+  const header =
+    open.length
+      ? `✔️ <b>Qaysi birini bajardingiz?</b>\n<i>Bajarilgan: ${doneToday.length} / ${total}</i>\n`
+      : `🎉 <b>Barcha missiyalar bajarildi!</b>\n<i>Bajarilgan: ${doneToday.length} / ${total}</i>\n`;
+  return `${header}\n${lines.join('\n')}` +
+    (open.length ? `\n\n👇 Bajarganingizni pastdagi ro'yxatdan bosing.` : '');
+};
 
 /** Missiyani o'chirish/bekor qilish ro'yxati */
 const cancelKeyboard = (missions) =>
@@ -86,5 +109,5 @@ const intentKeyboard = () =>
 
 module.exports = {
   esc, BTN, mainKeyboard, durationKeyboard, missionLine, missionList,
-  doneKeyboard, cancelKeyboard, adminKeyboard, intentKeyboard,
+  doneKeyboard, doneChecklist, cancelKeyboard, adminKeyboard, intentKeyboard,
 };
