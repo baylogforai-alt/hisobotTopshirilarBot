@@ -89,7 +89,7 @@ Hodim shu zahoti botdan xabar oladi va ishlata boshlaydi.
 
 | Bosqich | Nima qiladi |
 |---|---|
-| 🌅 Ertalab | **«✅ Ishga keldim»** — yozib qo'yilgan missiyalar faollashadi va guruhga e'lon qilinadi |
+| 🌅 Ertalab | **«✅ Ishga keldim»** → **📍 joylashuvni yuboradi** (ofisda ekani tekshiriladi) → missiyalar faollashadi, guruhga va boshqaruvchiga e'lon qilinadi |
 | ⏰ Kun davomida | Bot har `N` soatda guruhda va shaxsiy chatda «shu missiyani bajardingmi?» deb eslatadi |
 | ✔️ Ish tugagach | **«✔️ Bajardim»** → ro'yxatdan tanlaydi → guruhga «bajardi» deb yoziladi |
 | 📝 Kech kirganda | **«➕ Missiya qo'shish»** — ertangi / 2-3 kunlik / 1 oylik ishlarni yozib qo'yadi |
@@ -139,8 +139,21 @@ Keyin chiqqan tugmalardan umumiy muddat tanlanadi:
 | `/umumiy_hisobot` | Barcha hodimlarning hozirgi holati |
 | `/kechikkanlar` | Muddati o'tgan missiyalar |
 | `/eslat` | Hoziroq eslatma yuborish |
-| `/holat` | Tizim holati — qaysi baza, guruh ulanganmi, kim ishda |
+| `/holat` | Tizim holati — baza, guruh, ofis geofence, kim ishda |
+| `/ofis` | Ofis joylashuvini o'rnatish (ofisda turib joylashuv yuboriladi) — geofence markazi |
+| `/ofis_radius <metr>` | Ruxsat etilgan radiusni o'zgartirish (standart 250 m) |
+| `/ofis_korish` | Hozirgi ofis joylashuvi va radiusni ko'rish |
+| `/ofis_ochir` | Geofence tekshiruvini o'chirish |
 | `/guruh_ulash` | *(guruh ichida)* shu guruhni ishchi guruh qilish |
+
+> **📍 Joylashuv tekshiruvi:** «Ishga keldim» bosilganda bot `request_location`
+> tugmasi orqali hodimning **haqiqiy joriy GPS**'ini so'raydi — qo'lda xaritadan
+> tanlangan yoki forward qilingan joylashuv qabul qilinmaydi. Ofis `/ofis` bilan
+> o'rnatilgan bo'lsa, radiusdan tashqaridan check-in **rad etiladi**.
+>
+> *Cheklov:* GPS'ni maxsus «fake GPS» ilovasi bilan aldash texnik jihatdan
+> mumkin (root/dev telefon). Oddiy foydalanuvchi uchun bu himoya yetarli, lekin
+> mutlaq kafolat emas — geofence real himoyaning asosi.
 
 ---
 
