@@ -83,6 +83,9 @@ const config = {
   reminderIntervalHours: num(process.env.REMINDER_INTERVAL_HOURS, 2),
   workDays: process.env.WORK_DAYS || '1-6',
   announceDone: bool(process.env.ANNOUNCE_DONE, true),
+  officeLat: Number.isFinite(Number(process.env.OFFICE_LAT)) && process.env.OFFICE_LAT ? Number(process.env.OFFICE_LAT) : null,
+  officeLon: Number.isFinite(Number(process.env.OFFICE_LON)) && process.env.OFFICE_LON ? Number(process.env.OFFICE_LON) : null,
+  officeRadiusM: num(process.env.OFFICE_RADIUS_M, 250),
   dbPath: path.resolve(process.env.DB_PATH || path.join(__dirname, '..', 'data', 'bot.db')),
 };
 

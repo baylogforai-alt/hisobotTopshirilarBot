@@ -4,9 +4,12 @@ const config = require('../config');
 const db = require('../db');
 const ui = require('../ui');
 const time = require('../time');
+const geo = require('../geo');
+const session = require('../session');
 const employees = require('../services/employees');
 const missions = require('../services/missions');
 const attendance = require('../services/attendance');
+const office = require('../services/office');
 const reports = require('../services/reports');
 const notify = require('../services/notify');
 
@@ -188,14 +191,90 @@ const systemStatus = async (ctx) => {
   const groupId = await notify.getGroupId();
   const list = await employees.listActive();
   const working = await attendance.workingNow();
+  const officeConf = await office.get();
   return ctx.reply(
     `🩺 <b>TIZIM HOLATI</b>\n\n` +
-      `🗄 Baza: <b>${db.driver === 'postgres' ? 'PostgreSQL (Supabase)' : 'SQLite (mahalliy fayl)'}</b>\n` +
+      `🗄 Baza: <b>${db.driver === 'postgres' ? 'PostgreSQL' : 'SQLite (mahalliy fayl)'}</b>\n` +
       `💬 Guruh: ${groupId ? `<code>${groupId}</code>` : "<b>ulanmagan</b> — guruhda /guruh_ulash yozing"}\n` +
+      `📍 Ofis geofence: ${officeConf ? `<b>yoqilgan</b> (${geo.prettyDistance(officeConf.radius)})` : "<b>o'rnatilmagan</b> — /ofis"}\n` +
       `👥 Faol hodimlar: <b>${list.length}</b>\n` +
       `🟢 Hozir ishda: <b>${working.length}</b>\n` +
       `🕒 Server vaqti: <b>${time.now().toFormat('yyyy-MM-dd HH:mm')}</b> (${config.timezone})\n` +
       `⏰ Ish vaqti: ${config.workStartHour}:00–${config.workEndHour}:00, har ${config.reminderIntervalHours} soatda eslatma`,
+    { parse_mode: 'HTML' },
+  );
+};
+
+/**
+ * /ofis — ofis joylashuvini o'rnatish (geofence markazi).
+ * Ikki usul: (1) argumentsiz → joylashuv so'raladi; (2) /ofis <lat> <lon> [radius].
+ */
+const setOffice = async (ctx) => {
+  if (!(await guard(ctx))) return;
+  const raw = args(ctx);
+
+  if (raw) {
+    const parts = raw.split(/[\s,]+/).map(Number).filter((n) => !Number.isNaN(n));
+    if (parts.length < 2) {
+      return ctx.reply(
+        '📌 <code>/ofis 41.3111 69.2797</code> yoki radius bilan <code>/ofis 41.3111 69.2797 300</code>\n' +
+          "Yoki argumentsiz <code>/ofis</code> yozib, ofisda turib joylashuvni yuboring.",
+        { parse_mode: 'HTML' },
+      );
+    }
+    const [lat, lon, radius] = parts;
+    await office.set(lat, lon, radius > 0 ? radius : office.DEFAULT_RADIUS);
+    return ctx.reply(
+      `✅ Ofis joylashuvi saqlandi.\nRadius: <b>${geo.prettyDistance(radius > 0 ? radius : office.DEFAULT_RADIUS)}</b>`,
+      { parse_mode: 'HTML' },
+    );
+  }
+
+  session.set(ctx.from.id, { step: 'awaiting_office_location' });
+  return ctx.reply(
+    `📍 <b>Ofis joylashuvini o'rnatish</b>\n\n` +
+      `Hozir <b>ofisda turgan holda</b> pastdagi «📍 Joylashuvni yuborish» tugmasini bosing.\n` +
+      `Shu nuqta markaz bo'lib, hodimlar undan <b>${geo.prettyDistance(office.DEFAULT_RADIUS)}</b> ` +
+      `radiusda «Ishga keldim» qila oladi.`,
+    { parse_mode: 'HTML', ...ui.locationKeyboard() },
+  );
+};
+
+const setOfficeRadius = async (ctx) => {
+  if (!(await guard(ctx))) return;
+  const r = Number(args(ctx));
+  if (!Number.isFinite(r) || r <= 0) {
+    return ctx.reply('📌 <code>/ofis_radius 300</code> (metrda)', { parse_mode: 'HTML' });
+  }
+  const conf = await office.get();
+  if (!conf) return ctx.reply("Avval /ofis bilan ofis joylashuvini o'rnating.");
+  await office.set(conf.lat, conf.lon, r);
+  return ctx.reply(`✅ Radius yangilandi: <b>${geo.prettyDistance(r)}</b>`, { parse_mode: 'HTML' });
+};
+
+const clearOffice = async (ctx) => {
+  if (!(await guard(ctx))) return;
+  await office.clear();
+  return ctx.reply(
+    "🗑 Ofis joylashuvi o'chirildi. Endi masofa tekshirilmaydi " +
+      "(lekin joylashuv baribir so'raladi).",
+  );
+};
+
+const showOffice = async (ctx) => {
+  if (!(await guard(ctx))) return;
+  const conf = await office.get();
+  if (!conf) {
+    return ctx.reply(
+      "📍 Ofis joylashuvi hali o'rnatilmagan.\n/ofis buyrug'i bilan o'rnating " +
+        "(masofa tekshiruvi shundan keyin ishlaydi).",
+    );
+  }
+  return ctx.reply(
+    `📍 <b>Ofis joylashuvi</b>\n` +
+      `Koordinata: <code>${conf.lat}, ${conf.lon}</code>\n` +
+      `Radius: <b>${geo.prettyDistance(conf.radius)}</b>\n` +
+      `Manba: ${conf.source === 'env' ? '.env' : 'sozlama'}`,
     { parse_mode: 'HTML' },
   );
 };
@@ -216,6 +295,10 @@ const register = (bot) => {
   bot.command('kechikkanlar', overdueReport);
   bot.command('eslat', manualReminder);
   bot.command('holat', systemStatus);
+  bot.command('ofis', setOffice);
+  bot.command('ofis_radius', setOfficeRadius);
+  bot.command('ofis_ochir', clearOffice);
+  bot.command('ofis_korish', showOffice);
 
   bot.hears(ui.BTN.admin, panel);
 

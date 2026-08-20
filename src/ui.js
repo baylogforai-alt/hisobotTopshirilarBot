@@ -17,7 +17,22 @@ const BTN = {
   done: '✔️ Bajardim',
   report: '📊 Hisobot',
   admin: '⚙️ Admin panel',
+  sendLocation: '📍 Joylashuvni yuborish',
+  cancelLocation: '❌ Bekor qilish',
 };
+
+/**
+ * Ishga kelishni tasdiqlash klaviaturasi — request_location tugmasi qurilmaning
+ * HAQIQIY joriy GPS'ini yuboradi. Foydalanuvchi bu tugma orqali xaritadan
+ * ixtiyoriy nuqta tanlay olmaydi.
+ */
+const locationKeyboard = () =>
+  Markup.keyboard([
+    [Markup.button.locationRequest(BTN.sendLocation)],
+    [BTN.cancelLocation],
+  ])
+    .resize()
+    .oneTime();
 
 const mainKeyboard = (isAdmin = false) => {
   const rows = [
@@ -110,4 +125,5 @@ const intentKeyboard = () =>
 module.exports = {
   esc, BTN, mainKeyboard, durationKeyboard, missionLine, missionList,
   doneKeyboard, doneChecklist, cancelKeyboard, adminKeyboard, intentKeyboard,
+  locationKeyboard,
 };

@@ -15,6 +15,10 @@ const listActive = () =>
 const listAll = () =>
   db.query('SELECT * FROM employees ORDER BY active DESC, lower(full_name)');
 
+/** Bazadagi admin rolli faol hodimlar (xabarlarni shu yerga yuborish uchun) */
+const listAdmins = () =>
+  db.query("SELECT * FROM employees WHERE active = 1 AND role = 'admin' ORDER BY lower(full_name)");
+
 const add = async ({ tgId, fullName, position = null, role = 'employee' }) => {
   const existing = await byTgId(tgId);
   if (existing) {
@@ -60,6 +64,6 @@ const isAdmin = async (tgId) => {
 const mention = (employee) => (employee.username ? `@${employee.username}` : employee.full_name);
 
 module.exports = {
-  byTgId, byId, listActive, listAll, add, deactivate, activate,
+  byTgId, byId, listActive, listAll, listAdmins, add, deactivate, activate,
   setRole, touchUsername, isAdmin, mention,
 };

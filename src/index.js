@@ -32,6 +32,11 @@ bot.on('text', async (ctx, next) => {
   if (s.step === 'duration') {
     return ctx.reply('⏱ Avval yuqoridagi tugmalardan muddatni tanlang (yoki /menu).');
   }
+  if (s.step === 'awaiting_checkin_location' || s.step === 'awaiting_office_location') {
+    return ctx.reply(
+      '📍 Iltimos, pastdagi «📍 Joylashuvni yuborish» tugmasini bosing (yoki «❌ Bekor qilish»).',
+    );
+  }
 
   return ctx.reply(
     'Tushunmadim 🤔 Pastdagi tugmalardan foydalaning yoki /yordam ni bosing.',

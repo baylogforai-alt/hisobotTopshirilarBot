@@ -45,6 +45,9 @@ CREATE TABLE IF NOT EXISTS attendance (
   checked_out  TEXT,
   intent       TEXT,
   intent_at    TEXT,
+  checkin_lat  TEXT,
+  checkin_lon  TEXT,
+  checkin_dist TEXT,
   UNIQUE (employee_id, work_date)
 );
 
@@ -98,6 +101,9 @@ CREATE TABLE IF NOT EXISTS attendance (
   checked_out  TEXT,
   intent       TEXT,
   intent_at    TEXT,
+  checkin_lat  TEXT,
+  checkin_lon  TEXT,
+  checkin_dist TEXT,
   UNIQUE (employee_id, work_date)
 );
 
@@ -122,6 +128,9 @@ CREATE TABLE IF NOT EXISTS reminder_log (
 const MIGRATIONS = [
   { postgres: 'ALTER TABLE attendance ADD COLUMN IF NOT EXISTS intent TEXT', sqlite: 'ALTER TABLE attendance ADD COLUMN intent TEXT' },
   { postgres: 'ALTER TABLE attendance ADD COLUMN IF NOT EXISTS intent_at TEXT', sqlite: 'ALTER TABLE attendance ADD COLUMN intent_at TEXT' },
+  { postgres: 'ALTER TABLE attendance ADD COLUMN IF NOT EXISTS checkin_lat TEXT', sqlite: 'ALTER TABLE attendance ADD COLUMN checkin_lat TEXT' },
+  { postgres: 'ALTER TABLE attendance ADD COLUMN IF NOT EXISTS checkin_lon TEXT', sqlite: 'ALTER TABLE attendance ADD COLUMN checkin_lon TEXT' },
+  { postgres: 'ALTER TABLE attendance ADD COLUMN IF NOT EXISTS checkin_dist TEXT', sqlite: 'ALTER TABLE attendance ADD COLUMN checkin_dist TEXT' },
 ];
 
 module.exports = { POSTGRES, SQLITE, MIGRATIONS };

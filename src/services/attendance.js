@@ -6,13 +6,25 @@ const time = require('../time');
 const get = (employeeId, date = time.today()) =>
   db.one('SELECT * FROM attendance WHERE employee_id = $1 AND work_date = $2', [employeeId, date]);
 
-const checkIn = async (employeeId, date = time.today()) => {
+/**
+ * Ishga kelishni qayd etadi. location = { lat, lon, dist } (ixtiyoriy).
+ * dist — ofisdan masofa (metr), geofence yoqilgan bo'lsa.
+ */
+const checkIn = async (employeeId, location = null, date = time.today()) => {
   const existing = await get(employeeId, date);
   if (existing && existing.checked_in) return { already: true, row: existing };
+  const lat = location ? String(location.lat) : null;
+  const lon = location ? String(location.lon) : null;
+  const dist = location && location.dist != null ? String(location.dist) : null;
   await db.query(
-    `INSERT INTO attendance (employee_id, work_date, checked_in) VALUES ($1, $2, $3)
-     ON CONFLICT (employee_id, work_date) DO UPDATE SET checked_in = EXCLUDED.checked_in`,
-    [employeeId, date, time.stamp()],
+    `INSERT INTO attendance (employee_id, work_date, checked_in, checkin_lat, checkin_lon, checkin_dist)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (employee_id, work_date) DO UPDATE SET
+       checked_in = EXCLUDED.checked_in,
+       checkin_lat = EXCLUDED.checkin_lat,
+       checkin_lon = EXCLUDED.checkin_lon,
+       checkin_dist = EXCLUDED.checkin_dist`,
+    [employeeId, date, time.stamp(), lat, lon, dist],
   );
   return { already: false, row: await get(employeeId, date) };
 };
