@@ -121,6 +121,34 @@ const rangeStats = async (employeeId, fromDate, toDate) => {
   return { done: Number(d.c), created: Number(c.c) };
 };
 
+/**
+ * Berilgan kun uchun "snapshot": har bir faol hodimning
+ *   • o'sha kuni bajargan missiyalari (done)  +
+ *   • hozir ochiq (bajarilishi kerak) missiyalari
+ * hodim ma'lumoti bilan qo'shib qaytaradi. Excel va itemli hisobot uchun.
+ * Missiyasi yo'q hodim ham bitta bo'sh (title = null) qator bilan chiqadi.
+ */
+const dayRows = (date = time.today(), employeeId = null) => {
+  const params = [date];
+  let empFilter = '';
+  if (employeeId) {
+    params.push(employeeId);
+    empFilter = `AND e.id = $${params.length}`;
+  }
+  return db.query(
+    `SELECT e.id AS employee_id, e.full_name, e.position, e.tg_id,
+            m.id AS mission_id, m.title, m.status, m.start_date, m.due_date, m.done_at
+       FROM employees e
+       LEFT JOIN missions m
+         ON m.employee_id = e.id
+        AND ( (m.status = 'done' AND substr(m.done_at, 1, 10) = $1)
+              OR m.status = 'active' )
+      WHERE e.active = 1 ${empFilter}
+      ORDER BY lower(e.full_name), (m.status = 'done') DESC, m.due_date ASC, m.id ASC`,
+    params,
+  );
+};
+
 /** Berilgan sana uchun hodimning rejasi (davomiy yoki shu kunga yozilgan) bormi */
 const hasCoverageFor = async (employeeId, date) => {
   const row = await db.one(
@@ -134,5 +162,5 @@ const hasCoverageFor = async (employeeId, date) => {
 
 module.exports = {
   create, byId, openFor, pendingFor, activateDue, markDone, reopen,
-  cancel, doneOn, dayStats, allOverdue, rangeStats, hasCoverageFor,
+  cancel, doneOn, dayStats, allOverdue, rangeStats, hasCoverageFor, dayRows,
 };

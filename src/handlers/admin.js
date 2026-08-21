@@ -11,6 +11,7 @@ const missions = require('../services/missions');
 const attendance = require('../services/attendance');
 const office = require('../services/office');
 const reports = require('../services/reports');
+const excel = require('../services/excel');
 const notify = require('../services/notify');
 
 const guard = async (ctx) => {
@@ -172,6 +173,28 @@ const overallReport = async (ctx) => {
   return ctx.reply(await reports.buildLiveReport(), { parse_mode: 'HTML' });
 };
 
+/** Batafsil (itemli) kunlik hisobot — kim aynan qaysi ishni qilgani */
+const dailyReport = async (ctx) => {
+  if (!(await guard(ctx))) return;
+  const { text } = await reports.buildDailyReportText(time.today());
+  return ctx.reply(text, { parse_mode: 'HTML' });
+};
+
+/** Butun jamoa uchun Excel fayl */
+const teamExcel = async (ctx, { viaCallback = false } = {}) => {
+  if (!(await guard(ctx))) return;
+  if (viaCallback) await ctx.answerCbQuery('Tayyorlanmoqda…');
+  const t = time.today();
+  const { buffer, filename } = await excel.buildDayReport(t, { scopeName: 'Butun jamoa' });
+  await notify.docToUser(
+    { telegram: ctx.telegram },
+    ctx.from.id,
+    buffer,
+    filename,
+    `📥 <b>${ui.esc(config.companyName)}</b> — ${time.prettyDate(t)} jamoa hisoboti (Excel)`,
+  );
+};
+
 const overdueReport = async (ctx) => {
   if (!(await guard(ctx))) return;
   return ctx.reply(await reports.buildOverdueReport(), { parse_mode: 'HTML' });
@@ -292,6 +315,8 @@ const register = (bot) => {
   bot.command('admin_qil', makeAdmin);
   bot.command('topshiriq', assignMission);
   bot.command('umumiy_hisobot', overallReport);
+  bot.command('kun_hisobot', dailyReport);
+  bot.command('jamoa_excel', (ctx) => teamExcel(ctx));
   bot.command('kechikkanlar', overdueReport);
   bot.command('eslat', manualReminder);
   bot.command('holat', systemStatus);
@@ -311,6 +336,13 @@ const register = (bot) => {
     if (!ctx.state.isAdmin) return;
     return ctx.reply(await reports.buildLiveReport(), { parse_mode: 'HTML' });
   });
+  bot.action('adm:daily', async (ctx) => {
+    await ctx.answerCbQuery();
+    if (!ctx.state.isAdmin) return;
+    const { text } = await reports.buildDailyReportText(time.today());
+    return ctx.reply(text, { parse_mode: 'HTML' });
+  });
+  bot.action('adm:excel', (ctx) => teamExcel(ctx, { viaCallback: true }));
   bot.action('adm:overdue', async (ctx) => {
     await ctx.answerCbQuery();
     if (!ctx.state.isAdmin) return;

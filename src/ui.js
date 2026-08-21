@@ -111,10 +111,16 @@ const cancelKeyboard = (missions) =>
 const adminKeyboard = () =>
   Markup.inlineKeyboard([
     [Markup.button.callback('👥 Hodimlar', 'adm:list')],
-    [Markup.button.callback('📊 Bugungi umumiy hisobot', 'adm:report')],
+    [Markup.button.callback('📊 Hozirgi holat', 'adm:report')],
+    [Markup.button.callback('📋 Kunlik hisobot (batafsil)', 'adm:daily')],
+    [Markup.button.callback('📥 Excel yuklab olish (jamoa)', 'adm:excel')],
     [Markup.button.callback('⚠️ Kechikkan missiyalar', 'adm:overdue')],
     [Markup.button.callback('🔔 Hozir eslatma yuborish', 'adm:remind')],
   ]);
+
+/** Hodimning shaxsiy hisoboti ostidagi Excel tugmasi */
+const myReportKeyboard = () =>
+  Markup.inlineKeyboard([[Markup.button.callback('📥 Excel yuklab olish', 'excel:me')]]);
 
 /** "Ishga kelyapsizmi?" — ish boshlanishidan oldingi so'rov */
 const intentKeyboard = () =>
@@ -125,5 +131,5 @@ const intentKeyboard = () =>
 module.exports = {
   esc, BTN, mainKeyboard, durationKeyboard, missionLine, missionList,
   doneKeyboard, doneChecklist, cancelKeyboard, adminKeyboard, intentKeyboard,
-  locationKeyboard,
+  locationKeyboard, myReportKeyboard,
 };

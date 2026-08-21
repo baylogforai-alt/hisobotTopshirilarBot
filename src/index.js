@@ -53,10 +53,12 @@ const COMMANDS = [
   { command: 'keldim', description: 'Ishga keldim' },
   { command: 'ketdim', description: 'Ishdan ketaman' },
   { command: 'vazifa', description: 'Yangi missiya qoshish' },
+  { command: 'bugun', description: 'Bugungi qoshimcha topshiriq' },
   { command: 'missiyalarim', description: 'Missiyalarim royxati' },
   { command: 'bajardim', description: 'Bajarilganini belgilash' },
   { command: 'bekor', description: 'Missiyani ochirish' },
   { command: 'hisobot', description: 'Mening hisobotim' },
+  { command: 'excel', description: 'Excel faylni yuklab olish' },
   { command: 'id', description: 'Telegram ID' },
   { command: 'yordam', description: 'Qollanma' },
 ];

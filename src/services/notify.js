@@ -50,4 +50,34 @@ const toUser = async (bot, tgId, text, extra = {}) => {
   }
 };
 
-module.exports = { getGroupId, setGroupId, toGroup, toUser };
+/** Guruhga fayl (masalan Excel) yuborish */
+const docToGroup = async (bot, buffer, filename, caption = '') => {
+  const chatId = await getGroupId();
+  if (!chatId) return null;
+  try {
+    return await bot.telegram.sendDocument(
+      chatId,
+      { source: Buffer.from(buffer), filename },
+      caption ? { caption, parse_mode: 'HTML' } : {},
+    );
+  } catch (err) {
+    console.error("[notify] guruhga fayl yuborib bo'lmadi:", err.description || err.message);
+    return null;
+  }
+};
+
+/** Hodimga fayl yuborish */
+const docToUser = async (bot, tgId, buffer, filename, caption = '') => {
+  try {
+    return await bot.telegram.sendDocument(
+      tgId,
+      { source: Buffer.from(buffer), filename },
+      caption ? { caption, parse_mode: 'HTML' } : {},
+    );
+  } catch (err) {
+    console.error(`[notify] ${tgId} ga fayl yuborib bo'lmadi:`, err.description || err.message);
+    return null;
+  }
+};
+
+module.exports = { getGroupId, setGroupId, toGroup, toUser, docToGroup, docToUser };

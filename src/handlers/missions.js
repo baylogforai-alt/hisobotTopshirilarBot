@@ -8,6 +8,7 @@ const missions = require('../services/missions');
 const attendance = require('../services/attendance');
 const notify = require('../services/notify');
 const reports = require('../services/reports');
+const excel = require('../services/excel');
 const { notRegistered } = require('./common');
 
 const MAX_TITLE = 300;
@@ -257,7 +258,62 @@ const showMyReport = async (ctx) => {
       (st.overdue ? `⚠️ Kechikkan: ${st.overdue}\n` : '') +
       `\n<b>So'nggi 7 kun</b>\n✅ Bajarildi: ${week.done}\n` +
       `\n<b>So'nggi 30 kun</b>\n✅ Bajarildi: ${month.done}`,
-    { parse_mode: 'HTML' },
+    { parse_mode: 'HTML', ...ui.myReportKeyboard() },
+  );
+};
+
+/** Kun ichida paydo bo'lgan topshiriqni bugunga tez qo'shish: /bugun <matn> */
+const addTodayTask = async (ctx) => {
+  const emp = ctx.state.employee;
+  if (!emp) return notRegistered(ctx);
+  const arg = ctx.message.text.replace(/^\/\S+\s*/, '').trim();
+  if (!arg) {
+    return ctx.reply(
+      "📌 Bugungi topshiriqni yozing:\n<code>/bugun Yangi mijoz bilan uchrashuv</code>\n\n" +
+        "Bir nechta bo'lsa har birini yangi qatorga yozing. Bu ish <b>bugundan</b> faol bo'ladi va kun oxiridagi hisobotga tushadi.",
+      { parse_mode: 'HTML' },
+    );
+  }
+  const items = parseTitles(arg);
+  if (!items.length) return ctx.reply('❌ Matn juda qisqa.');
+
+  const t = time.today();
+  const created = [];
+  for (const it of items) {
+    created.push(await missions.create({ employeeId: emp.id, title: it.title, startDate: t, dueDate: t }));
+  }
+
+  await ctx.reply(
+    `✅ <b>${created.length} ta bugungi topshiriq qo'shildi</b> (bugundan faol):\n\n` +
+      created.map((m, i) => `${i + 1}. ${ui.esc(m.title)}`).join('\n') +
+      `\n\nBajargach «✔️ Bajardim» bilan belgilang — kun oxirgi hisobotda ko'rinadi.`,
+    { parse_mode: 'HTML', ...ui.mainKeyboard(ctx.state.isAdmin) },
+  );
+
+  await notify.toGroup(
+    { telegram: ctx.telegram },
+    `📌 ${reports.mentionHtml(emp)} bugunga <b>${created.length} ta qo'shimcha topshiriq</b> qo'shdi:\n` +
+      created.map((m, i) => `${i + 1}. ${ui.esc(m.title)}`).join('\n'),
+  );
+};
+
+/** Shaxsiy yoki (admin bo'lsa) jamoa Excel hisobotini yuborish */
+const sendMyExcel = async (ctx, { viaCallback = false } = {}) => {
+  const emp = ctx.state.employee;
+  if (!emp) return viaCallback ? ctx.answerCbQuery("Ro'yxatdan o'tmagansiz") : notRegistered(ctx);
+  if (viaCallback) await ctx.answerCbQuery('Tayyorlanmoqda…');
+
+  const t = time.today();
+  const { buffer, filename } = await excel.buildDayReport(t, {
+    employeeId: emp.id,
+    scopeName: emp.full_name,
+  });
+  await notify.docToUser(
+    { telegram: ctx.telegram },
+    ctx.from.id,
+    buffer,
+    filename,
+    `📥 <b>${ui.esc(emp.full_name)}</b> — ${time.prettyDate(t)} ishlari (Excel)`,
   );
 };
 
@@ -289,6 +345,10 @@ const register = (bot) => {
 
   bot.hears(ui.BTN.report, showMyReport);
   bot.command('hisobot', showMyReport);
+
+  bot.command('bugun', addTodayTask);
+  bot.command('excel', (ctx) => sendMyExcel(ctx));
+  bot.action('excel:me', (ctx) => sendMyExcel(ctx, { viaCallback: true }));
 };
 
 module.exports = { register, handleTitlesInput, parseTitles, datesFor };

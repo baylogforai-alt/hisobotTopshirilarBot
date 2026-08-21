@@ -44,11 +44,13 @@ const HELP = `
 <b>Buyruqlar:</b>
 /start — botni ishga tushirish
 /menu — asosiy menyu
-/vazifa [matn] — yangi missiya
+/vazifa [matn] — yangi missiya (ertaga yoki keyingi kunlarga)
+/bugun [matn] — bugun paydo bo'lgan qo'shimcha topshiriq
 /missiyalarim — barcha missiyalarim
 /bajardim — bajarilganini belgilash
 /bekor — missiyani o'chirish
 /hisobot — mening hisobotim
+/excel — o'z ishlarimni Excel faylda yuklab olish
 /id — Telegram ID ni bilish
 /yordam — shu qo'llanma
 
@@ -58,7 +60,9 @@ const HELP = `
 /hodim_ochir &lt;tg_id&gt; — hodimni o'chirish
 /admin_qil &lt;tg_id&gt; — admin qilish
 /topshiriq &lt;tg_id&gt; &lt;matn&gt; — hodimga missiya berish
-/umumiy_hisobot — barcha hodimlar holati
+/umumiy_hisobot — barcha hodimlar holati (hozirgi)
+/kun_hisobot — kim aynan qaysi ishni qilgani (batafsil)
+/jamoa_excel — butun jamoa hisobotini Excel faylda olish
 /kechikkanlar — muddati o'tgan missiyalar
 /eslat — hoziroq eslatma yuborish
 /holat — tizim holati (baza, guruh)

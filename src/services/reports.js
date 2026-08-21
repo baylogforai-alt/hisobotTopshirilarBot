@@ -7,6 +7,7 @@ const employees = require('./employees');
 const missions = require('./missions');
 const attendance = require('./attendance');
 const notify = require('./notify');
+const excel = require('./excel');
 
 const COMPANY = config.companyName.toUpperCase();
 
@@ -93,38 +94,72 @@ const sendMorningCall = async (bot) => {
   return { sent: true, count: absent.length };
 };
 
-/** Kun oxiri: guruhga umumiy hisobot + hammadan ertangi rejani so'rash */
-const sendDailyReport = async (bot, { askPlan = true } = {}) => {
-  const date = time.today();
+/**
+ * Kun oxiri hisoboti matni — itemli: har bir hodim aynan QAYSI ishlarni
+ * bajargani (✅) va qaysilari qolgani (⏳) ro'yxati bilan.
+ */
+const buildDailyReportText = async (date = time.today()) => {
   const list = await employees.listActive();
-  const lines = [];
+  const blocks = [];
   let totalDone = 0;
   let totalOpen = 0;
 
-  for (const emp of list) {
-    const st = await missions.dayStats(emp.id, date);
-    const att = await attendance.get(emp.id, date);
-    totalDone += st.done;
-    totalOpen += st.open;
+  const MAX_ITEMS = 15; // juda uzun bo'lib ketmasligi uchun
 
+  for (const emp of list) {
+    const att = await attendance.get(emp.id, date);
     if (!att || !att.checked_in) {
-      lines.push(`• ${ui.esc(emp.full_name)} — 🚫 <i>ishga kelmadi</i>`);
+      blocks.push(`👤 <b>${ui.esc(emp.full_name)}</b> — 🚫 <i>ishga kelmadi</i>`);
       continue;
     }
-    const bar = st.total ? Math.round((st.done / st.total) * 100) : 0;
-    const warn = st.overdue ? ` · ⚠️ ${st.overdue} ta kechikkan` : '';
-    lines.push(
-      `• ${ui.esc(emp.full_name)} — ✅ ${st.done} / ${st.total} (${bar}%)${warn}` +
-        (st.open ? `\n   <i>qoldi: ${st.open} ta → ertaga o'tadi</i>` : ''),
+
+    const done = await missions.doneOn(emp.id, date);
+    const open = await missions.openFor(emp.id);
+    totalDone += done.length;
+    totalOpen += open.length;
+
+    const total = done.length + open.length;
+    const bar = total ? Math.round((done.length / total) * 100) : 0;
+
+    const items = [];
+    done.forEach((m) => items.push(`   ✅ ${ui.esc(m.title)}`));
+    open.forEach((m) => {
+      const overdue = m.due_date < date;
+      items.push(`   ⏳ ${ui.esc(m.title)}${overdue ? ' ⚠️' : ''}`);
+    });
+    const shown = items.slice(0, MAX_ITEMS);
+    if (items.length > MAX_ITEMS) shown.push(`   <i>…yana ${items.length - MAX_ITEMS} ta</i>`);
+
+    blocks.push(
+      `👤 <b>${ui.esc(emp.full_name)}</b> — ✅ ${done.length}/${total} (${bar}%)` +
+        (open.length ? ` · ⏳ ${open.length} ta ertaga o'tadi` : '') +
+        (items.length ? `\n${shown.join('\n')}` : ''),
     );
   }
 
   const text =
     `📊 <b>${COMPANY} — KUNLIK HISOBOT</b> · ${time.prettyDate(date)}\n\n` +
-    (lines.length ? lines.join('\n') : "<i>Hodimlar yo'q</i>") +
+    (blocks.length ? blocks.join('\n\n') : "<i>Hodimlar yo'q</i>") +
     `\n\n━━━━━━━━━━━━━━\n✅ Bajarildi: <b>${totalDone}</b>   ⏳ Qoldi: <b>${totalOpen}</b>`;
 
+  return { text, totalDone, totalOpen };
+};
+
+/** Kun oxiri: guruhga itemli hisobot + Excel fayl + hammadan ertangi rejani so'rash */
+const sendDailyReport = async (bot, { askPlan = true } = {}) => {
+  const date = time.today();
+  const list = await employees.listActive();
+
+  const { text, totalDone, totalOpen } = await buildDailyReportText(date);
   await notify.toGroup(bot, text);
+
+  // Excel faylni ham guruhga qo'shamiz
+  try {
+    const { buffer, filename } = await excel.buildDayReport(date, { scopeName: 'Butun jamoa' });
+    await notify.docToGroup(bot, buffer, filename, `📥 ${time.prettyDate(date)} — batafsil hisobot (Excel)`);
+  } catch (e) {
+    console.error('[reports] Excel yuborilmadi:', e.message);
+  }
 
   if (askPlan) {
     for (const emp of list) {
@@ -188,6 +223,6 @@ const buildOverdueReport = async () => {
 };
 
 module.exports = {
-  mentionHtml, sendReminder, sendMorningCall, sendDailyReport,
+  mentionHtml, sendReminder, sendMorningCall, sendDailyReport, buildDailyReportText,
   buildLiveReport, buildOverdueReport,
 };
