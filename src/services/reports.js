@@ -69,7 +69,9 @@ const sendReminder = async (bot, { force = false } = {}) => {
 /** Ertalabki chaqiriq: "Ishga keldim" tugmasini bosishni so'rash */
 const sendMorningCall = async (bot) => {
   await missions.activateDue();
-  const absent = await attendance.absent();
+  const absentAll = await attendance.absent();
+  // Erkin jadvaldagilar (o'qish/kurs) majburiy emas — chaqiriqqa qo'shilmaydi
+  const absent = absentAll.filter((e) => !employees.isFlexible(e));
   if (!absent.length) return { sent: false };
 
   await notify.toGroup(
@@ -109,7 +111,24 @@ const buildDailyReportText = async (date = time.today()) => {
   for (const emp of list) {
     const att = await attendance.get(emp.id, date);
     if (!att || !att.checked_in) {
-      blocks.push(`👤 <b>${ui.esc(emp.full_name)}</b> — 🚫 <i>ishga kelmadi</i>`);
+      if (employees.isFlexible(emp)) {
+        // Erkin jadval — "kelmadi" emas, lekin ishlari baribir ko'rsatiladi
+        const done = await missions.doneOn(emp.id, date);
+        const open = await missions.openFor(emp.id);
+        totalDone += done.length;
+        totalOpen += open.length;
+        const items = [
+          ...done.map((m) => `   ✅ ${ui.esc(m.title)}`),
+          ...open.map((m) => `   ⏳ ${ui.esc(m.title)}${m.due_date < date ? ' ⚠️' : ''}`),
+        ].slice(0, MAX_ITEMS);
+        blocks.push(
+          `🕊 <b>${ui.esc(emp.full_name)}</b> — <i>erkin jadval</i>` +
+            (done.length || open.length ? ` · ✅ ${done.length} · ⏳ ${open.length}` : '') +
+            (items.length ? `\n${items.join('\n')}` : ''),
+        );
+      } else {
+        blocks.push(`👤 <b>${ui.esc(emp.full_name)}</b> — 🚫 <i>ishga kelmadi</i>`);
+      }
       continue;
     }
 
@@ -182,6 +201,35 @@ const sendDailyReport = async (bot, { askPlan = true } = {}) => {
   return { totalDone, totalOpen };
 };
 
+/** Bitta hodimning to'liq missiya holati (admin so'roviga) */
+const buildEmployeeMissions = async (emp) => {
+  const date = time.today();
+  await missions.activateDue(emp.id);
+  const open = await missions.openFor(emp.id);
+  const doneToday = await missions.doneOn(emp.id, date);
+  const pending = await missions.pendingFor(emp.id);
+  const att = await attendance.get(emp.id, date);
+
+  let status = '🚫 kelmadi';
+  if (employees.isFlexible(emp) && (!att || !att.checked_in)) status = '🕊 erkin jadval';
+  else if (att && att.checked_in && att.checked_out) status = `🏁 ketdi (${time.clock(att.checked_out)})`;
+  else if (att && att.checked_in) status = `🟢 ishda (${time.clock(att.checked_in)})`;
+
+  const fmtOpen = (m) => `   ${m.due_date < date ? '🔴' : '🔹'} ${ui.esc(m.title)}` +
+    (m.due_date !== m.start_date ? ` <i>(${time.prettyDate(m.due_date)} gacha)</i>` : '');
+
+  return (
+    `👤 <b>${ui.esc(emp.full_name)}</b>${emp.position ? ` · ${ui.esc(emp.position)}` : ''}\n` +
+    `Holat: ${status}\n\n` +
+    `🎯 <b>Bajarilishi kerak (${open.length})</b>\n` +
+    (open.length ? open.map(fmtOpen).join('\n') : '   <i>— yo\'q —</i>') +
+    `\n\n✅ <b>Bugun bajardi (${doneToday.length})</b>\n` +
+    (doneToday.length ? doneToday.map((m) => `   ✅ ${ui.esc(m.title)} <i>${time.clock(m.done_at)}</i>`).join('\n') : '   <i>— yo\'q —</i>') +
+    `\n\n📅 <b>Keyingi kunlarga (${pending.length})</b>\n` +
+    (pending.length ? pending.map((m) => `   • ${ui.esc(m.title)} <i>(${time.prettyDate(m.start_date)} dan)</i>`).join('\n') : '   <i>— yo\'q —</i>')
+  );
+};
+
 /** Admin uchun bir zumlik umumiy holat */
 const buildLiveReport = async () => {
   const date = time.today();
@@ -224,5 +272,5 @@ const buildOverdueReport = async () => {
 
 module.exports = {
   mentionHtml, sendReminder, sendMorningCall, sendDailyReport, buildDailyReportText,
-  buildLiveReport, buildOverdueReport,
+  buildLiveReport, buildOverdueReport, buildEmployeeMissions,
 };

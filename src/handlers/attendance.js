@@ -108,12 +108,13 @@ const onLocation = async (ctx) => {
     return ctx.reply('ℹ️ Siz allaqachon ishga kelgansiz.', ui.mainKeyboard(ctx.state.isAdmin));
   }
 
-  // Geofence — ofis o'rnatilgan bo'lsa masofani tekshiramiz
+  // Geofence — ofis o'rnatilgan bo'lsa masofani tekshiramiz.
+  // Erkin jadvaldagilar (o'qish/kurs) istalgan joydan kela oladi.
   const officeConf = await office.get();
   let dist = null;
   if (officeConf) {
     dist = geo.distanceMeters(officeConf.lat, officeConf.lon, loc.latitude, loc.longitude);
-    if (dist > officeConf.radius) {
+    if (!employees.isFlexible(emp) && dist > officeConf.radius) {
       return ctx.reply(
         `❌ <b>Siz ish joyidan uzoqdasiz</b> (${geo.prettyDistance(dist)}).\n\n` +
           `Ruxsat etilgan masofa: ${geo.prettyDistance(officeConf.radius)}.\n` +
@@ -171,21 +172,25 @@ const cancelCheckin = async (ctx) => {
   return ctx.reply('Bekor qilindi.', ui.mainKeyboard(ctx.state.isAdmin));
 };
 
+/** Bajarilgan ishlar ro'yxatini ✅ chizib beradi */
+const doneListHtml = (done) =>
+  done.length ? done.map((m) => `   ✅ ${ui.esc(m.title)}`).join('\n') : '   <i>— hech narsa —</i>';
+
 const doCheckOut = async (ctx) => {
   const emp = ctx.state.employee;
   if (!emp) return notRegistered(ctx);
 
   const row = await attendance.checkOut(emp.id);
-  const st = await missions.dayStats(emp.id);
+  const done = await missions.doneOn(emp.id);
   const open = await missions.openFor(emp.id);
   const pending = await missions.pendingFor(emp.id);
 
   await ctx.reply(
     `🏁 <b>Ish kuni yakunlandi</b> — ${time.clock(row.checked_out)}\n\n` +
-      `✅ Bajarildi: <b>${st.done}</b>\n⏳ Bajarilmadi: <b>${st.open}</b>\n\n` +
+      `✅ <b>Bugun bajardingiz (${done.length} ta):</b>\n${doneListHtml(done)}\n\n` +
       (open.length
-        ? `Quyidagilar <b>ertangi kunga o'tadi</b>:\n${ui.missionList(open)}\n\n`
-        : `Barcha missiyalar bajarildi. Barakalla! 👏\n\n`) +
+        ? `⏳ <b>Bajarilmadi (${open.length} ta)</b> — ertangi kunga o'tadi:\n${ui.missionList(open)}\n\n`
+        : `🎉 Barcha missiyalar bajarildi. Barakalla! 👏\n\n`) +
       (pending.length
         ? `📅 Keyingi kunlarga yozib qo'ygan missiyalaringiz: <b>${pending.length} ta</b>\n\n`
         : `📝 <b>Ertangi missiyalaringizni hozir yozib qo'ying</b> — «➕ Missiya qo'shish».\n\n`) +
@@ -193,12 +198,25 @@ const doCheckOut = async (ctx) => {
     { parse_mode: 'HTML', ...ui.mainKeyboard(ctx.state.isAdmin) },
   );
 
+  // Guruhga — bajargan ishlari ro'yxati bilan
   await notify.toGroup(
     { telegram: ctx.telegram },
     `🏁 ${reports.mentionHtml(emp)} <b>ishdan ketdi</b> · ${time.clock(row.checked_out)}\n` +
-      `✅ ${st.done} bajarildi · ⏳ ${st.open} qoldi` +
-      (open.length ? `\n\nErtaga o'tadigan ishlar:\n${ui.missionList(open)}` : ''),
+      `✅ <b>Bajardi (${done.length} ta):</b>\n${doneListHtml(done)}` +
+      (open.length ? `\n\n⏳ Ertaga o'tadigan (${open.length} ta):\n${ui.missionList(open)}` : ''),
   );
+
+  // Boshqaruvchi(lar)ga — kim ketdi va nima bajardi
+  const admins = await employees.listAdmins();
+  const admText =
+    `🏁 <b>${ui.esc(emp.full_name)}</b>${emp.position ? ` (${ui.esc(emp.position)})` : ''} ` +
+    `ishdan ketdi · ${time.clock(row.checked_out)}\n\n` +
+    `✅ <b>Bajargan ishlari (${done.length} ta):</b>\n${doneListHtml(done)}` +
+    (open.length ? `\n\n⏳ Bajarilmagan (${open.length} ta):\n${ui.missionList(open)}` : '');
+  for (const adm of admins) {
+    if (Number(adm.tg_id) === Number(emp.tg_id)) continue;
+    await notify.toUser({ telegram: ctx.telegram }, adm.tg_id, admText);
+  }
 };
 
 /** 8:55 dagi "Ishga kelyapsizmi?" so'roviga javob */

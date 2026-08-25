@@ -70,19 +70,64 @@ const listEmployees = async (ctx) => {
   if (!list.length) return ctx.reply("Hodimlar yo'q. /hodim_qosh bilan qo'shing.");
 
   const parts = [];
+  const buttons = [];
   for (const e of list) {
-    const badge = !e.active ? '⚫️' : e.role === 'admin' ? '👑' : '👤';
-    const inOffice = (await attendance.isCheckedIn(e.id)) ? ' 🟢' : '';
+    const badge = !e.active ? '⚫️' : e.role === 'admin' ? '👑' : employees.isFlexible(e) ? '🕊' : '👤';
+    const inOffice = e.active && (await attendance.isCheckedIn(e.id)) ? ' 🟢' : '';
     parts.push(
       `${badge} <b>${ui.esc(e.full_name)}</b>${inOffice}\n` +
         `   🆔 <code>${e.tg_id}</code>${e.position ? ` · ${ui.esc(e.position)}` : ''}` +
         (e.username ? ` · @${ui.esc(e.username)}` : '') +
+        (employees.isFlexible(e) ? ' · <i>erkin jadval</i>' : '') +
         (!e.active ? " · <i>o'chirilgan</i>" : ''),
     );
+    if (e.active) {
+      buttons.push([{ text: `📋 ${e.full_name} — missiyalari`, callback_data: `emp:miss:${e.id}` }]);
+    }
   }
   return ctx.reply(`👥 <b>HODIMLAR (${list.length})</b>\n\n${parts.join('\n')}`, {
     parse_mode: 'HTML',
+    reply_markup: { inline_keyboard: buttons },
   });
+};
+
+/** /hodim_missiya <tg_id> — bitta hodimning to'liq missiya holati */
+const employeeMissions = async (ctx) => {
+  if (!(await guard(ctx))) return;
+  const id = Number(args(ctx));
+  if (!id) {
+    return ctx.reply(
+      '📌 <code>/hodim_missiya 123456789</code>\n\nYoki /hodimlar ro\'yxatidagi tugmalardan foydalaning.',
+      { parse_mode: 'HTML' },
+    );
+  }
+  const emp = await employees.byTgId(id);
+  if (!emp) return ctx.reply('❌ Bunday hodim topilmadi.');
+  return ctx.reply(await reports.buildEmployeeMissions(emp), { parse_mode: 'HTML' });
+};
+
+/** /erkin <tg_id> — erkin (moslashuvchan) jadvalni yoqish/o'chirish */
+const toggleFlexible = async (ctx) => {
+  if (!(await guard(ctx))) return;
+  const id = Number(args(ctx));
+  if (!id) {
+    return ctx.reply(
+      '📌 <code>/erkin 123456789</code>\n\n' +
+        "Erkin jadval — hodimni kelish nazorati (8:55 so'rovi, «kelmadi» belgisi, " +
+        'ertangi reja turtki) va ofis masofasi tekshiruvidan ozod qiladi. ' +
+        "O'qish/kurs sababli moslashuvchan ishlaydiganlar uchun.",
+      { parse_mode: 'HTML' },
+    );
+  }
+  const emp = await employees.byTgId(id);
+  if (!emp) return ctx.reply("❌ Avval /hodim_qosh bilan qo'shing.");
+  const next = !employees.isFlexible(emp);
+  await employees.setFlexible(id, next);
+  return ctx.reply(
+    `${next ? '🕊' : '👤'} <b>${ui.esc(emp.full_name)}</b> → ` +
+      `<b>${next ? 'erkin jadval (nazoratdan ozod)' : 'oddiy jadval'}</b>`,
+    { parse_mode: 'HTML' },
+  );
 };
 
 const removeEmployee = async (ctx) => {
@@ -310,9 +355,11 @@ const panel = async (ctx) => {
 const register = (bot) => {
   bot.command('hodim_qosh', addEmployee);
   bot.command('hodimlar', listEmployees);
+  bot.command('hodim_missiya', employeeMissions);
   bot.command('hodim_ochir', removeEmployee);
   bot.command('hodim_tikla', restoreEmployee);
   bot.command('admin_qil', makeAdmin);
+  bot.command('erkin', toggleFlexible);
   bot.command('topshiriq', assignMission);
   bot.command('umumiy_hisobot', overallReport);
   bot.command('kun_hisobot', dailyReport);
@@ -330,6 +377,13 @@ const register = (bot) => {
   bot.action('adm:list', async (ctx) => {
     await ctx.answerCbQuery();
     return listEmployees(ctx);
+  });
+  bot.action(/^emp:miss:(\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    if (!ctx.state.isAdmin) return;
+    const emp = await employees.byId(Number(ctx.match[1]));
+    if (!emp) return ctx.reply('❌ Hodim topilmadi.');
+    return ctx.reply(await reports.buildEmployeeMissions(emp), { parse_mode: 'HTML' });
   });
   bot.action('adm:report', async (ctx) => {
     await ctx.answerCbQuery();

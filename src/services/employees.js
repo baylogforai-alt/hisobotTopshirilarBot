@@ -46,6 +46,12 @@ const activate = (tgId) =>
 const setRole = (tgId, role) =>
   db.query('UPDATE employees SET role = $1 WHERE tg_id = $2', [role, Number(tgId)]);
 
+/** Erkin (moslashuvchan) jadval — kelish nazorati va geofence'dan ozod qiladi */
+const setFlexible = (tgId, flexible) =>
+  db.query('UPDATE employees SET flexible = $1 WHERE tg_id = $2', [flexible ? 1 : 0, Number(tgId)]);
+
+const isFlexible = (emp) => Boolean(emp && Number(emp.flexible) === 1);
+
 const touchUsername = async (tgId, username) => {
   if (!username) return;
   await db.query(
@@ -65,5 +71,5 @@ const mention = (employee) => (employee.username ? `@${employee.username}` : emp
 
 module.exports = {
   byTgId, byId, listActive, listAll, listAdmins, add, deactivate, activate,
-  setRole, touchUsername, isAdmin, mention,
+  setRole, setFlexible, isFlexible, touchUsername, isAdmin, mention,
 };

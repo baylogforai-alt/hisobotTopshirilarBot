@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS employees (
   username    TEXT,
   role        TEXT        NOT NULL DEFAULT 'employee',
   active      INTEGER     NOT NULL DEFAULT 1,
+  flexible    INTEGER     NOT NULL DEFAULT 0,
+  work_end    INTEGER,
   created_at  TEXT        NOT NULL
 );
 
@@ -73,6 +75,8 @@ CREATE TABLE IF NOT EXISTS employees (
   username    TEXT,
   role        TEXT    NOT NULL DEFAULT 'employee',
   active      INTEGER NOT NULL DEFAULT 1,
+  flexible    INTEGER NOT NULL DEFAULT 0,
+  work_end    INTEGER,
   created_at  TEXT    NOT NULL
 );
 
@@ -131,6 +135,8 @@ const MIGRATIONS = [
   { postgres: 'ALTER TABLE attendance ADD COLUMN IF NOT EXISTS checkin_lat TEXT', sqlite: 'ALTER TABLE attendance ADD COLUMN checkin_lat TEXT' },
   { postgres: 'ALTER TABLE attendance ADD COLUMN IF NOT EXISTS checkin_lon TEXT', sqlite: 'ALTER TABLE attendance ADD COLUMN checkin_lon TEXT' },
   { postgres: 'ALTER TABLE attendance ADD COLUMN IF NOT EXISTS checkin_dist TEXT', sqlite: 'ALTER TABLE attendance ADD COLUMN checkin_dist TEXT' },
+  { postgres: 'ALTER TABLE employees ADD COLUMN IF NOT EXISTS flexible INTEGER NOT NULL DEFAULT 0', sqlite: 'ALTER TABLE employees ADD COLUMN flexible INTEGER NOT NULL DEFAULT 0' },
+  { postgres: 'ALTER TABLE employees ADD COLUMN IF NOT EXISTS work_end INTEGER', sqlite: 'ALTER TABLE employees ADD COLUMN work_end INTEGER' },
 ];
 
 module.exports = { POSTGRES, SQLITE, MIGRATIONS };

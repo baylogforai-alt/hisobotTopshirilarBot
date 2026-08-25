@@ -9,6 +9,7 @@ const attendance = require('../services/attendance');
 const notify = require('../services/notify');
 const reports = require('../services/reports');
 const excel = require('../services/excel');
+const employees = require('../services/employees');
 const { notRegistered } = require('./common');
 
 const MAX_TITLE = 300;
@@ -189,6 +190,17 @@ const onDone = async (ctx) => {
           { telegram: ctx.telegram },
           `✅ ${reports.mentionHtml(emp)} — «<b>${ui.esc(res.mission.title)}</b>» bajarildi · ${time.clock(res.mission.done_at)}\n` +
             (left ? `<i>Qolgan missiyalar: ${left} ta</i>` : `🎉 <i>Barcha missiyalar bajarildi!</i>`),
+        );
+      }
+      // Boshqaruvchi(lar)ga — har bir bajarilgan missiya haqida
+      const admins = await employees.listAdmins();
+      for (const adm of admins) {
+        if (Number(adm.tg_id) === Number(emp.tg_id)) continue;
+        await notify.toUser(
+          { telegram: ctx.telegram },
+          adm.tg_id,
+          `✅ <b>${ui.esc(emp.full_name)}</b> bajardi: «<b>${ui.esc(res.mission.title)}</b>» · ${time.clock(res.mission.done_at)}` +
+            (left ? `\n<i>Unda yana ${left} ta ish qoldi.</i>` : `\n🎉 <i>Barcha ishlarini tugatdi.</i>`),
         );
       }
     }

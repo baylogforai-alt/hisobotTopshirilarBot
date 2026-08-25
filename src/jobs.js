@@ -53,6 +53,7 @@ const start = (bot) => {
     const list = await employees.listActive();
     let asked = 0;
     for (const emp of list) {
+      if (employees.isFlexible(emp)) continue; // erkin jadval — so'ralmaydi
       if (await attendance.isCheckedIn(emp.id)) continue;
       asked += 1;
       await notify.toUser(
@@ -95,6 +96,7 @@ const start = (bot) => {
     const list = await employees.listActive();
     let nudged = 0;
     for (const emp of list) {
+      if (employees.isFlexible(emp)) continue; // erkin jadval — turtki berilmaydi
       if (await missions.hasCoverageFor(emp.id, tomorrow)) continue;
       nudged += 1;
       await notify.toUser(

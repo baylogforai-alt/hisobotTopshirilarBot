@@ -56,9 +56,11 @@ const HELP = `
 
 <b>Admin buyruqlari:</b>
 /hodim_qosh &lt;tg_id&gt; &lt;Ism Familiya&gt; — hodim qo'shish
-/hodimlar — hodimlar ro'yxati
+/hodimlar — hodimlar ro'yxati (missiyalarini ko'rish tugmalari bilan)
+/hodim_missiya &lt;tg_id&gt; — bitta hodimning barcha missiyalari
 /hodim_ochir &lt;tg_id&gt; — hodimni o'chirish
 /admin_qil &lt;tg_id&gt; — admin qilish
+/erkin &lt;tg_id&gt; — erkin jadval (o'qish/kurs sababli nazoratdan ozod)
 /topshiriq &lt;tg_id&gt; &lt;matn&gt; — hodimga missiya berish
 /umumiy_hisobot — barcha hodimlar holati (hozirgi)
 /kun_hisobot — kim aynan qaysi ishni qilgani (batafsil)
