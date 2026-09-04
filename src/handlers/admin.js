@@ -13,6 +13,7 @@ const office = require('../services/office');
 const reports = require('../services/reports');
 const excel = require('../services/excel');
 const notify = require('../services/notify');
+const activity = require('../services/activity');
 
 const guard = async (ctx) => {
   if (!ctx.state.isAdmin) {
@@ -190,6 +191,15 @@ const assignMission = async (ctx) => {
     startDate: start,
     dueDate: time.addDays(start, days - 1),
     createdBy: ctx.from.id,
+  });
+
+  activity.track(emp, 'assigned', {
+    title: mission.title,
+    detail: `boshqaruvchi berdi · muddat ${time.prettyDate(mission.due_date)}`,
+  });
+  activity.mark(ctx, 'admin', {
+    title: `${emp.full_name} ga topshiriq berdi`,
+    detail: mission.title,
   });
 
   await ctx.reply(

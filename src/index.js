@@ -7,11 +7,13 @@ const time = require('./time');
 const session = require('./session');
 const ui = require('./ui');
 const health = require('./health');
+const activity = require('./services/activity');
 
 const commonHandler = require('./handlers/common');
 const attendanceHandler = require('./handlers/attendance');
 const missionsHandler = require('./handlers/missions');
 const adminHandler = require('./handlers/admin');
+const hrHandler = require('./handlers/hr');
 const jobs = require('./jobs');
 
 const bot = new Telegraf(config.botToken, { handlerTimeout: 60_000 });
@@ -21,6 +23,7 @@ commonHandler.register(bot);
 attendanceHandler.register(bot);
 missionsHandler.register(bot);
 adminHandler.register(bot);
+hrHandler.register(bot);
 
 // Sessiya bosqichidagi erkin matn (faqat shaxsiy chatda)
 bot.on('text', async (ctx, next) => {
@@ -37,6 +40,9 @@ bot.on('text', async (ctx, next) => {
       '📍 Iltimos, pastdagi «📍 Joylashuvni yuborish» tugmasini bosing (yoki «❌ Bekor qilish»).',
     );
   }
+
+  // Tanilmagan matn ham yo'qolmasin — hodim nima yozganini direktor ko'ra oladi
+  activity.mark(ctx, 'note', { title: ctx.message.text, detail: 'erkin matn' });
 
   return ctx.reply(
     'Tushunmadim 🤔 Pastdagi tugmalardan foydalaning yoki /yordam ni bosing.',
@@ -61,6 +67,7 @@ const COMMANDS = [
   { command: 'excel', description: 'Excel faylni yuklab olish' },
   { command: 'id', description: 'Telegram ID' },
   { command: 'yordam', description: 'Qollanma' },
+  { command: 'arxiv', description: 'Hodimlar arxivi (admin)' },
 ];
 
 (async () => {

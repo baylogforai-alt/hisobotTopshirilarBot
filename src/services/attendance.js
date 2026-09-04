@@ -79,6 +79,34 @@ const setIntent = async (employeeId, intent, date = time.today()) => {
   return get(employeeId, date);
 };
 
+
+/** Davr bo'yicha davomat qatorlari (sana bo'yicha tartiblangan) */
+const range = (employeeId, from, to) =>
+  db.query(
+    `SELECT * FROM attendance WHERE employee_id = $1 AND work_date BETWEEN $2 AND $3
+     ORDER BY work_date ASC`,
+    [employeeId, from, to],
+  );
+
+/** Ishda o'tkazilgan daqiqalar (kelgan–ketgan). Ketmagan bo'lsa null. */
+const workedMinutes = (row) => {
+  if (!row || !row.checked_in || !row.checked_out) return null;
+  const a = Date.parse(row.checked_in);
+  const b = Date.parse(row.checked_out);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return null;
+  return Math.round((b - a) / 60000);
+};
+
+/** 512 → "8 soat 32 daqiqa" */
+const prettyDuration = (minutes) => {
+  if (minutes === null || minutes === undefined) return '—';
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (!h) return `${m} daqiqa`;
+  return m ? `${h} soat ${m} daqiqa` : `${h} soat`;
+};
+
 module.exports = {
   get, checkIn, checkOut, isCheckedIn, isCheckedOut, workingNow, absent, setIntent,
+  range, workedMinutes, prettyDuration,
 };

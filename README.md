@@ -137,6 +137,12 @@ Keyin chiqqan tugmalardan umumiy muddat tanlanadi:
 | `/admin_qil <id>` | Admin qilish / adminlikdan olish |
 | `/topshiriq <id> <matn> [\| kun]` | Hodimga topshiriq berish |
 | `/umumiy_hisobot` | Barcha hodimlarning hozirgi holati |
+| `/kun_hisobot` | Bugun kim aynan qaysi ishni bajargani (batafsil) |
+| `/jamoa_excel` | Bugungi jamoa hisoboti — Excel fayl |
+| **`/arxiv`** | **🗂 Hodimlar arxivi — ilova ko'rinishidagi panel** |
+| `/hodim_hisobot <id>` | Bitta hodimning bugungi kun daftari |
+| `/hodim_missiya <id>` | Bitta hodimning barcha missiyalari |
+| `/erkin <id>` | Erkin jadval (nazoratdan ozod) yoqish/o'chirish |
 | `/kechikkanlar` | Muddati o'tgan missiyalar |
 | `/eslat` | Hoziroq eslatma yuborish |
 | `/holat` | Tizim holati — baza, guruh, ofis geofence, kim ishda |
@@ -154,6 +160,74 @@ Keyin chiqqan tugmalardan umumiy muddat tanlanadi:
 > *Cheklov:* GPS'ni maxsus «fake GPS» ilovasi bilan aldash texnik jihatdan
 > mumkin (root/dev telefon). Oddiy foydalanuvchi uchun bu himoya yetarli, lekin
 > mutlaq kafolat emas — geofence real himoyaning asosi.
+
+---
+
+## 6.1. 🗂 Hodimlar arxivi — direktor uchun «ilova»
+
+`/arxiv` buyrug'i yoki asosiy klaviaturadagi **«🗂 Hodimlar arxivi»**
+tugmasi bitta xabar ichida ochiladigan panelni beradi. Har bosishda o'sha
+xabar yangilanadi — chat toza qoladi, ilovadek yuriladi.
+
+```
+🗂 HODIMLAR ARXIVI
+   └─ 👤 Akbar Karimov
+        ├─ 🗂 Kun daftari      ◀️ oldingi kun │ keyingi kun ▶️
+        ├─ 📜 Harakatlar tarixi
+        ├─ 🗓 Kun tanlash (oxirgi 14 kun)
+        ├─ 📊 7 kunlik / 30 kunlik hisobot
+        ├─ 🎯 Missiyalari
+        └─ 📥 Excel (3 varaqli arxiv)
+   └─ 🏢 Jamoa · 7 / 30 kun  → 📥 jamoa jamlanmasi
+```
+
+### Kun daftari nimani ko'rsatadi
+
+Bitta hodim, bitta kun — hammasi bir ekranda:
+
+| Bo'lim | Nima ko'rinadi |
+|---|---|
+| ⏰ **Ish vaqti** | Qachon kelgan (kech bo'lsa ⚠️), ofisdan masofa, qachon ketgan, necha soat ishlagan |
+| ✅ **Bajargan ishlari** | Har bir missiya — nomi va aniq bajarilgan vaqti |
+| ⏳ **Bajarilmagani** | O'sha kuni zimmasida bo'lgan, lekin yopilmagan ishlar (kechikkani ⚠️ bilan) |
+| 📝 **Shu kuni yozib qo'yganlari** | O'zi kiritgan yangi missiyalar va ularning muddati |
+| 🗑 **O'chirganlari** | Bekor qilingan missiyalar |
+| 💬 **Botga yozgan matnlari** | Hodim yozgan erkin matnlar — vaqti bilan |
+| 📈 **Bot faolligi** | O'sha kuni nechta harakat qilgani va oxirgi faolligi |
+
+### Harakatlar tarixi
+
+Hodimning **botdagi har bir amali** yozib boriladi — tugma bosishi, buyruq,
+yozgan matni, ishga kelishi, missiya bajarishi. Kun bo'yicha vaqt lentasi
+ko'rinishida chiqadi:
+
+```
+09:12 🟢 Ishga keldi: 09:12   ofisdan 40 m
+09:14 📋 Missiyalarini ko'rdi
+11:07 ✅ Missiyani bajardi: Yuklarni ro'yxatga olish   yana 4 ta qoldi
+14:30 💬 Matn yozdi: Ombor kaliti topilmadi
+18:02 🏁 Ishdan ketdi: 18:02   5 ta bajarildi, 1 ta qoldi
+```
+
+### Davr hisoboti (7 / 30 kun)
+
+Kun-kun jadval + xulosa: nechta kun kelgan, jami necha soat ishlagan,
+o'rtacha kelish vaqti, necha kun kech qolgan, nechta missiya bajargan va
+yozgan, bajarish foizi, bot faolligi.
+
+### Excel arxivi
+
+**📥 Excel** tugmasi hodimning 30 kunlik arxivini **3 varaqli** faylda beradi:
+
+| Varaq | Ustunlar |
+|---|---|
+| **Kunlar** | Sana, keldi, ketdi, ish davomiyligi, bajardi, yozib qo'ydi, bot harakatlari, izoh |
+| **Missiyalar** | Missiya, holat (Bajarildi / Kechikkan / Bajarilmadi / O'chirilgan), yozilgan kuni, boshlanish, muddat, bajarilgan vaqti |
+| **Harakatlar** | Sana, vaqt, harakat, tafsilot — hodimning botdagi to'liq izi |
+
+Jamoa ko'rinishida esa **📥 Jamoa jamlanmasi** — har bir hodim bitta qator:
+kelgan kunlar, jami ish vaqti, o'rtacha kelish, kech kelgan kunlar,
+bajargan missiyalari, bot harakatlari.
 
 ---
 
@@ -187,10 +261,14 @@ src/
     employees.js        hodimlar
     missions.js         missiyalar (yaratish, bajarish, o'tkazish)
     attendance.js       kelish–ketish
+    activity.js         hodimning botdagi har bir harakati jurnali
+    history.js          hodim faoliyati arxivi (kun daftari, davr hisoboti)
+    excel.js            Excel hisobotlar (kunlik, hodim arxivi, jamoa)
+    office.js           ofis geofence sozlamasi
     notify.js           guruh / shaxsiy xabar yuborish
     reports.js          eslatma va hisobot matnlari
   handlers/
-    common.js  attendance.js  missions.js  admin.js
+    common.js  attendance.js  missions.js  admin.js  hr.js (arxiv paneli)
 scripts/
   seed.js               hodimlarni bazaga kiritish   (npm run seed)
   admin.js              rahbarni admin qilish        (npm run admin -- <id>)

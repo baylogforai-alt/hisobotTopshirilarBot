@@ -5,6 +5,7 @@ const ui = require('../ui');
 const time = require('../time');
 const employees = require('../services/employees');
 const notify = require('../services/notify');
+const activity = require('../services/activity');
 const session = require('../session');
 
 /** Har bir update uchun hodim ma'lumotini biriktiradi */
@@ -17,6 +18,36 @@ const attachEmployee = async (ctx, next) => {
     ctx.state.isAdmin = await employees.isAdmin(from.id);
   }
   return next();
+};
+
+/**
+ * Hodimning botdagi HAR BIR harakatini jurnalga yozadi.
+ * next() dan KEYIN ishlaydi: agar handler o'zi mazmunli yozuv qoldirgan bo'lsa
+ * (ctx.state.logged), takroriy "botdan foydalandi" yozuvi qo'shilmaydi.
+ */
+const trackUsage = async (ctx, next) => {
+  await next();
+  try {
+    if (!ctx.state || !ctx.state.employee || ctx.state.logged) return;
+    if (ctx.chat && ctx.chat.type !== 'private') return;
+
+    if (ctx.updateType === 'callback_query') {
+      const data = ctx.callbackQuery && ctx.callbackQuery.data;
+      if (!data) return;
+      await activity.log(ctx.state.employee, 'use', { title: 'Tugma bosdi', detail: data });
+      return;
+    }
+    if (ctx.updateType === 'message' && ctx.message && ctx.message.text) {
+      const text = ctx.message.text.trim();
+      const isCommand = text.startsWith('/');
+      await activity.log(ctx.state.employee, 'use', {
+        title: isCommand ? text.split(/\s+/)[0] : text,
+        detail: isCommand ? 'buyruq' : 'tugma / matn',
+      });
+    }
+  } catch (err) {
+    console.error('[activity] kuzatuv xatosi:', err.message);
+  }
 };
 
 /** Ro'yxatdan o'tmaganlar uchun javob */
@@ -65,6 +96,12 @@ const HELP = `
 /umumiy_hisobot — barcha hodimlar holati (hozirgi)
 /kun_hisobot — kim aynan qaysi ishni qilgani (batafsil)
 /jamoa_excel — butun jamoa hisobotini Excel faylda olish
+
+<b>🗂 Hodimlar arxivi (ilova):</b>
+/arxiv — hodimlarni tanlab, kun-kun faoliyatini ko'rish
+/hodim_hisobot &lt;tg_id&gt; — bitta hodimning bugungi kun daftari
+<i>Arxiv ichida: kun daftari (qachon kelgan/ketgan, nima bajargan, nima
+yozgan), harakatlar tarixi, 7 va 30 kunlik hisobot, Excel yuklab olish.</i>
 /kechikkanlar — muddati o'tgan missiyalar
 /eslat — hoziroq eslatma yuborish
 /holat — tizim holati (baza, guruh)
@@ -73,6 +110,7 @@ const HELP = `
 
 const register = (bot) => {
   bot.use(attachEmployee);
+  bot.use(trackUsage);
 
   bot.command('id', (ctx) =>
     ctx.reply(`🆔 Telegram ID: <code>${ctx.from.id}</code>\n💬 Chat ID: <code>${ctx.chat.id}</code>`, {
@@ -99,6 +137,7 @@ const register = (bot) => {
     session.clear(ctx.from.id);
     const emp = ctx.state.employee;
     if (!emp) return notRegistered(ctx);
+    activity.mark(ctx, 'start');
     return ctx.reply(
       `👋 Salom, <b>${ui.esc(emp.full_name)}</b>!\n` +
         `<i>${ui.esc(config.companyName)}${emp.position ? ` · ${ui.esc(emp.position)}` : ''}</i>\n\n` +
@@ -112,10 +151,14 @@ const register = (bot) => {
     if (ctx.chat.type !== 'private') return;
     if (!ctx.state.employee) return notRegistered(ctx);
     session.clear(ctx.from.id);
+    activity.mark(ctx, 'menu');
     return ctx.reply('🏠 Asosiy menyu', ui.mainKeyboard(ctx.state.isAdmin));
   });
 
-  bot.command(['yordam', 'help'], (ctx) => ctx.reply(HELP, { parse_mode: 'HTML' }));
+  bot.command(['yordam', 'help'], (ctx) => {
+    activity.mark(ctx, 'help');
+    return ctx.reply(HELP, { parse_mode: 'HTML' });
+  });
 };
 
-module.exports = { register, attachEmployee, notRegistered, HELP };
+module.exports = { register, attachEmployee, trackUsage, notRegistered, HELP };

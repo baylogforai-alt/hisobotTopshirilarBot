@@ -64,6 +64,20 @@ CREATE TABLE IF NOT EXISTS reminder_log (
   ran_at TEXT NOT NULL,
   detail TEXT
 );
+
+CREATE TABLE IF NOT EXISTS activity_log (
+  id           SERIAL PRIMARY KEY,
+  employee_id  INTEGER REFERENCES employees(id) ON DELETE CASCADE,
+  tg_id        BIGINT,
+  work_date    TEXT    NOT NULL,
+  action       TEXT    NOT NULL,
+  title        TEXT,
+  detail       TEXT,
+  created_at   TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_emp_date ON activity_log(employee_id, work_date);
+CREATE INDEX IF NOT EXISTS idx_activity_date ON activity_log(work_date);
 `;
 
 const SQLITE = `
@@ -122,6 +136,20 @@ CREATE TABLE IF NOT EXISTS reminder_log (
   ran_at TEXT NOT NULL,
   detail TEXT
 );
+
+CREATE TABLE IF NOT EXISTS activity_log (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id  INTEGER REFERENCES employees(id) ON DELETE CASCADE,
+  tg_id        INTEGER,
+  work_date    TEXT    NOT NULL,
+  action       TEXT    NOT NULL,
+  title        TEXT,
+  detail       TEXT,
+  created_at   TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_emp_date ON activity_log(employee_id, work_date);
+CREATE INDEX IF NOT EXISTS idx_activity_date ON activity_log(work_date);
 `;
 
 /**

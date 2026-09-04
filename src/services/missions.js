@@ -160,7 +160,65 @@ const hasCoverageFor = async (employeeId, date) => {
   return Number(row.c) > 0;
 };
 
+
+/** Berilgan kunda YOZIB QO'YILGAN (yaratilgan) missiyalar */
+const createdOn = (employeeId, date) =>
+  db.query(
+    `SELECT * FROM missions
+     WHERE employee_id = $1 AND substr(created_at, 1, 10) = $2
+     ORDER BY id ASC`,
+    [employeeId, date],
+  );
+
+/** Berilgan kunda o'chirilgan (bekor qilingan) missiyalar */
+const cancelledOn = (employeeId, date) =>
+  db.query(
+    `SELECT * FROM missions
+     WHERE employee_id = $1 AND status = 'cancelled' AND substr(cancelled_at, 1, 10) = $2
+     ORDER BY cancelled_at ASC`,
+    [employeeId, date],
+  );
+
+/**
+ * O'sha kuni hodim zimmasida bo'lgan missiyalar — ya'ni muddati shu kunni
+ * qamrab olganlari. O'tgan kunlarni tiklab ko'rsatish uchun ishlatiladi.
+ */
+const dueOn = (employeeId, date) =>
+  db.query(
+    `SELECT * FROM missions
+     WHERE employee_id = $1 AND status <> 'cancelled'
+       AND start_date <= $2 AND due_date >= $2
+     ORDER BY due_date ASC, id ASC`,
+    [employeeId, date],
+  );
+
+/** Davr ichida bajarilgan missiyalar */
+const doneBetween = (employeeId, from, to) =>
+  db.query(
+    `SELECT * FROM missions
+     WHERE employee_id = $1 AND status = 'done'
+       AND substr(done_at, 1, 10) BETWEEN $2 AND $3
+     ORDER BY done_at ASC`,
+    [employeeId, from, to],
+  );
+
+/**
+ * Davrga tegishli BARCHA missiyalar (Excel uchun): shu davrda yaratilgan,
+ * bajarilgan yoki muddati shu davrga tushganlari.
+ */
+const forRange = (employeeId, from, to) =>
+  db.query(
+    `SELECT * FROM missions
+     WHERE employee_id = $1
+       AND ( substr(created_at, 1, 10) BETWEEN $2 AND $3
+             OR substr(COALESCE(done_at, ''), 1, 10) BETWEEN $2 AND $3
+             OR (start_date <= $3 AND due_date >= $2) )
+     ORDER BY start_date ASC, id ASC`,
+    [employeeId, from, to],
+  );
+
 module.exports = {
   create, byId, openFor, pendingFor, activateDue, markDone, reopen,
   cancel, doneOn, dayStats, allOverdue, rangeStats, hasCoverageFor, dayRows,
+  createdOn, cancelledOn, dueOn, doneBetween, forRange,
 };

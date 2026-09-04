@@ -10,6 +10,7 @@ const notify = require('../services/notify');
 const reports = require('../services/reports');
 const excel = require('../services/excel');
 const employees = require('../services/employees');
+const activity = require('../services/activity');
 const { notRegistered } = require('./common');
 
 const MAX_TITLE = 300;
@@ -71,6 +72,10 @@ const handleTitlesInput = async (ctx) => {
     return ctx.reply('❌ Missiya matni juda qisqa. Qaytadan yozing yoki /menu bosing.');
   }
   session.set(ctx.from.id, { step: 'duration', items });
+  activity.mark(ctx, 'note', {
+    title: items.map((i) => i.title).join(' | '),
+    detail: 'missiya matni sifatida yozdi',
+  });
   return askDuration(ctx, items);
 };
 
@@ -87,6 +92,7 @@ const onDuration = async (ctx) => {
 
   if (choice === 'cancel') {
     session.clear(ctx.from.id);
+    activity.mark(ctx, 'use', { title: 'Missiya yozishni bekor qildi' });
     await ctx.answerCbQuery('Bekor qilindi');
     return ctx.editMessageText('❌ Bekor qilindi.');
   }
@@ -99,6 +105,15 @@ const onDuration = async (ctx) => {
     );
   }
   session.clear(ctx.from.id);
+  created.forEach((m) =>
+    activity.mark(ctx, 'mission_add', {
+      title: m.title,
+      detail:
+        m.start_date === m.due_date
+          ? time.prettyDate(m.due_date)
+          : `${time.prettyDate(m.start_date)} → ${time.prettyDate(m.due_date)}`,
+    }),
+  );
   await ctx.answerCbQuery('Saqlandi ✅');
 
   const startsToday = created.filter((m) => m.start_date <= time.today()).length;
@@ -135,6 +150,7 @@ const showMyMissions = async (ctx) => {
   const open = await missions.openFor(emp.id);
   const pending = await missions.pendingFor(emp.id);
   const doneToday = await missions.doneOn(emp.id);
+  activity.mark(ctx, 'my_missions', { detail: `${open.length} ta ochiq, ${doneToday.length} ta bajarilgan` });
 
   const text =
     `📋 <b>MISSIYALARIM</b> · ${time.prettyDate(time.today())}\n\n` +
@@ -185,6 +201,10 @@ const onDone = async (ctx) => {
     } else {
       await ctx.answerCbQuery('✅ Bajarildi!');
       const left = (await missions.openFor(emp.id)).length;
+      activity.mark(ctx, 'mission_done', {
+        title: res.mission.title,
+        detail: left ? `yana ${left} ta qoldi` : 'barcha ishlar tugadi',
+      });
       if (config.announceDone) {
         await notify.toGroup(
           { telegram: ctx.telegram },
@@ -238,6 +258,7 @@ const onCancel = async (ctx) => {
   if (!emp) return ctx.answerCbQuery();
   const res = await missions.cancel(Number(ctx.match[1]), emp.id);
   await ctx.answerCbQuery(res.ok ? "O'chirildi" : 'Topilmadi');
+  if (res.ok) activity.mark(ctx, 'mission_cancel', { title: res.mission.title });
   const list = [...(await missions.openFor(emp.id)), ...(await missions.pendingFor(emp.id))];
   try {
     if (list.length) {
@@ -261,6 +282,7 @@ const showMyReport = async (ctx) => {
   const att = await attendance.get(emp.id, t);
   const week = await missions.rangeStats(emp.id, time.addDays(t, -6), t);
   const month = await missions.rangeStats(emp.id, time.addDays(t, -29), t);
+  activity.mark(ctx, 'my_report');
 
   return ctx.reply(
     `📊 <b>HISOBOTIM</b> · ${time.prettyDate(t)}\n\n` +
@@ -295,6 +317,8 @@ const addTodayTask = async (ctx) => {
     created.push(await missions.create({ employeeId: emp.id, title: it.title, startDate: t, dueDate: t }));
   }
 
+  created.forEach((m) => activity.mark(ctx, 'mission_today', { title: m.title }));
+
   await ctx.reply(
     `✅ <b>${created.length} ta bugungi topshiriq qo'shildi</b> (bugundan faol):\n\n` +
       created.map((m, i) => `${i + 1}. ${ui.esc(m.title)}`).join('\n') +
@@ -316,6 +340,7 @@ const sendMyExcel = async (ctx, { viaCallback = false } = {}) => {
   if (viaCallback) await ctx.answerCbQuery('Tayyorlanmoqda…');
 
   const t = time.today();
+  activity.mark(ctx, 'excel', { detail: 'shaxsiy kunlik hisobot' });
   const { buffer, filename } = await excel.buildDayReport(t, {
     employeeId: emp.id,
     scopeName: emp.full_name,

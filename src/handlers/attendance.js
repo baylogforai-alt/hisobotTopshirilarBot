@@ -10,6 +10,7 @@ const employees = require('../services/employees');
 const office = require('../services/office');
 const notify = require('../services/notify');
 const reports = require('../services/reports');
+const activity = require('../services/activity');
 const { notRegistered } = require('./common');
 
 /**
@@ -24,6 +25,7 @@ const doCheckIn = async (ctx) => {
     await missions.activateDue(emp.id);
     const open = await missions.openFor(emp.id);
     const row = await attendance.get(emp.id);
+    activity.mark(ctx, 'checkin_repeat', { detail: `allaqachon kelgan (${time.clock(row.checked_in)})` });
     return ctx.reply(
       `ℹ️ Siz bugun allaqachon ishga kelgansiz (${time.clock(row.checked_in)}).\n\n` +
         `<b>Bugungi missiyalar (${open.length} ta):</b>\n${ui.missionList(open)}`,
@@ -115,6 +117,10 @@ const onLocation = async (ctx) => {
   if (officeConf) {
     dist = geo.distanceMeters(officeConf.lat, officeConf.lon, loc.latitude, loc.longitude);
     if (!employees.isFlexible(emp) && dist > officeConf.radius) {
+      activity.mark(ctx, 'checkin_far', {
+        title: `ofisdan ${geo.prettyDistance(dist)}`,
+        detail: `ruxsat etilgan ${geo.prettyDistance(officeConf.radius)}`,
+      });
       return ctx.reply(
         `❌ <b>Siz ish joyidan uzoqdasiz</b> (${geo.prettyDistance(dist)}).\n\n` +
           `Ruxsat etilgan masofa: ${geo.prettyDistance(officeConf.radius)}.\n` +
@@ -130,6 +136,10 @@ const onLocation = async (ctx) => {
     dist,
   });
   session.clear(ctx.from.id);
+  activity.mark(ctx, 'checkin', {
+    title: time.clock(res.row.checked_in),
+    detail: dist != null ? `ofisdan ${geo.prettyDistance(dist)}` : 'ofis belgilanmagan',
+  });
   await missions.activateDue(emp.id);
   const open = await missions.openFor(emp.id);
   const carried = open.filter((m) => m.start_date < time.today());
@@ -181,9 +191,17 @@ const doCheckOut = async (ctx) => {
   if (!emp) return notRegistered(ctx);
 
   const row = await attendance.checkOut(emp.id);
+  const worked = attendance.workedMinutes(row);
   const done = await missions.doneOn(emp.id);
   const open = await missions.openFor(emp.id);
   const pending = await missions.pendingFor(emp.id);
+
+  activity.mark(ctx, 'checkout', {
+    title: time.clock(row.checked_out),
+    detail:
+      `${done.length} ta bajarildi, ${open.length} ta qoldi` +
+      (worked !== null ? ` · ${attendance.prettyDuration(worked)} ishladi` : ''),
+  });
 
   await ctx.reply(
     `🏁 <b>Ish kuni yakunlandi</b> — ${time.clock(row.checked_out)}\n\n` +
@@ -234,6 +252,7 @@ const onIntent = async (ctx) => {
 
   const answer = ctx.match[1]; // 'yes' | 'no'
   await attendance.setIntent(emp.id, answer);
+  activity.mark(ctx, answer === 'yes' ? 'intent_yes' : 'intent_no');
   await ctx.answerCbQuery(answer === 'yes' ? 'Rahmat!' : 'Qabul qilindi');
 
   if (answer === 'yes') {

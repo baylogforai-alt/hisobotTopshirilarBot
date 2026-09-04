@@ -19,6 +19,9 @@ const employees = require('../src/services/employees');
 const missions = require('../src/services/missions');
 const attendance = require('../src/services/attendance');
 const reports = require('../src/services/reports');
+const activity = require('../src/services/activity');
+const history = require('../src/services/history');
+const excel = require('../src/services/excel');
 const { datesFor, parseTitles } = require('../src/handlers/missions');
 
 const ok = (label, cond) => {
@@ -127,6 +130,65 @@ const ok = (label, cond) => {
   // 12. Sozlamalar (guruh ID saqlash)
   await db.setSetting('group_chat_id', '-1001234567890');
   ok('sozlama saqlandi', (await db.getSetting('group_chat_id')) === '-1001234567890');
+
+  // 12b. Faoliyat jurnali — hodim botda nima qilgani yozilyaptimi
+  await activity.log(emp, 'checkin', { title: '09:12', detail: 'ofisdan 40 m' });
+  await activity.log(emp, 'note', { title: 'Ombor kalitini topolmadim' });
+  await activity.log(emp, 'use', { title: '📋 Missiyalarim' });
+  const acts = await activity.forDay(emp.id, bugun);
+  ok('faoliyat jurnaliga yozildi', acts.length === 3);
+  ok('jurnal vaqt boyicha tartiblangan', acts[0].action === 'checkin');
+  const counts = await activity.countsByDay(emp.id, kecha, bugun);
+  ok('kunlik faollik sanaldi', counts.get(bugun) === 3);
+  ok('oxirgi faollik topildi', (await activity.lastSeen(emp.id)) !== null);
+
+  // 12c. Hodim tarixi so'rovlari
+  ok('shu kuni yozilganlar topildi', (await missions.createdOn(emp.id, bugun)).length >= 5);
+  ok('kun zimmasidagi ishlar topildi', (await missions.dueOn(emp.id, bugun)).length >= 5);
+  ok('davrda bajarilganlar topildi', (await missions.doneBetween(emp.id, kecha, bugun)).length === 3);
+  const attRange = await attendance.range(emp.id, kecha, bugun);
+  ok('davomat davri oqildi', attRange.length === 1 && attRange[0].work_date === bugun);
+  ok('ish davomiyligi hisoblandi', attendance.workedMinutes(attRange[0]) !== null);
+
+  // 12d. Direktor ko'radigan matnlar
+  const card = await history.dayCard(emp, bugun);
+  ok('kun daftari yasaldi', card.includes('KUN DAFTARI') && card.includes('Akbar Karimov'));
+  ok('kun daftarida kelish vaqti bor', card.includes('Keldi'));
+  ok('kun daftarida bajarilganlar bor', card.includes('BAJARGAN ISHLARI (3)'));
+  ok('kun daftarida yozgan matni bor', card.includes('Ombor kalitini topolmadim'));
+
+  // Kecha bajarilgan, lekin muddati bugungacha cho'zilgan ish bugun
+  // "bajarilmagan" bo'lib ko'rinmasligi kerak
+  const uzun = await missions.create({
+    employeeId: emp.id,
+    title: 'Kecha yopilgan uzoq ish',
+    startDate: kecha,
+    dueDate: bugun,
+  });
+  await db.query("UPDATE missions SET status = 'done', done_at = $1 WHERE id = $2", [
+    `${kecha}T16:00:00`,
+    uzun.id,
+  ]);
+  const card2 = await history.dayCard(emp, bugun);
+  ok(
+    'avval bajarilgan ish bugun "bajarilmagan"da yoq',
+    !card2.split('SHU KUNI')[0].includes('Kecha yopilgan uzoq ish'),
+  );
+
+  const tl = await history.timeline(emp, bugun);
+  ok('harakatlar tarixi yasaldi', tl.includes('HARAKATLAR TARIXI') && tl.includes('Ishga keldi'));
+
+  const r7 = await history.rangeReport(emp, 7);
+  ok('7 kunlik hisobot yasaldi', r7.includes('7 KUNLIK HISOBOT') && r7.includes('XULOSA'));
+  ok('hisobotda ish kunlari bor', r7.includes('Ishga kelgan kunlar'));
+
+  const team = await history.teamOverview(7);
+  ok('jamoa faolligi yasaldi', team.includes('JAMOA FAOLLIGI') && team.includes('Akbar Karimov'));
+
+  // 12e. Excel arxivi (3 varaq)
+  const xls = await excel.buildEmployeeHistory(emp, 7);
+  ok('hodim arxivi Excel yasaldi', xls.buffer.byteLength > 5000);
+  ok('fayl nomi togri', /^faoliyat-.*\.xlsx$/.test(xls.filename));
 
   // 13. Admin huquqi
   await employees.setRole(111222333, 'admin');
