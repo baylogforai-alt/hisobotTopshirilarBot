@@ -94,6 +94,7 @@ const homeKeyboard = async () => {
     Markup.button.callback('🏢 Jamoa · 7 kun', 'hr:team:7'),
     Markup.button.callback('🏢 30 kun', 'hr:team:30'),
   ]);
+  rows.push([Markup.button.callback('📈 Davr hisoboti (sana tanlab)', 'pr:home')]);
   rows.push([Markup.button.callback('🔄 Yangilash', 'hr:home')]);
   return Markup.inlineKeyboard(rows);
 };

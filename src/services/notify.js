@@ -80,4 +80,38 @@ const docToUser = async (bot, tgId, buffer, filename, caption = '') => {
   }
 };
 
-module.exports = { getGroupId, setGroupId, toGroup, toUser, docToGroup, docToUser };
+/** .env dagi ADMIN_IDS + bazadagi role='admin' — takrorlanmagan ro'yxat */
+const adminIds = async () => {
+  const employees = require('./employees');
+  const ids = new Set(config.adminIds.map(Number));
+  try {
+    (await employees.listAdmins()).forEach((e) => ids.add(Number(e.tg_id)));
+  } catch (err) {
+    console.error("[notify] adminlar ro'yxati olinmadi:", err.message);
+  }
+  return [...ids].filter(Boolean);
+};
+
+/** Barcha adminlarga xabar (uzun matn bo'laklarga bo'linadi) */
+const toAdmins = async (bot, text, extra = {}) => {
+  const period = require('./period');
+  const ids = await adminIds();
+  for (const id of ids) {
+    for (const part of period.splitText(text)) {
+      await toUser(bot, id, part, extra);
+    }
+  }
+  return ids.length;
+};
+
+/** Barcha adminlarga fayl */
+const docToAdmins = async (bot, buffer, filename, caption = '') => {
+  const ids = await adminIds();
+  for (const id of ids) await docToUser(bot, id, buffer, filename, caption);
+  return ids.length;
+};
+
+module.exports = {
+  getGroupId, setGroupId, toGroup, toUser, docToGroup, docToUser,
+  adminIds, toAdmins, docToAdmins,
+};

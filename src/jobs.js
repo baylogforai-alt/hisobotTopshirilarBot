@@ -10,6 +10,8 @@ const missions = require('./services/missions');
 const attendance = require('./services/attendance');
 const notify = require('./services/notify');
 const reports = require('./services/reports');
+const period = require('./services/period');
+const excel = require('./services/excel');
 
 const logRun = (kind, detail = '') =>
   db
@@ -114,6 +116,40 @@ const start = (bot) => {
       );
     }
     await logRun('plan-nudge', `${nudged} ta hodim`);
+  });
+
+  // 7) Har dushanba ertalab: o'tgan haftaning to'liq hisoboti — faqat direktor(lar)ga
+  schedule('weekly-report', `10 ${startH} * * 1`, async () => {
+    const anchor = time.addDays(time.startOfWeek(time.today()), -1); // o'tgan yakshanba
+    const from = time.startOfWeek(anchor);
+    const to = time.endOfWeek(anchor);
+    const text = await period.teamReport(from, to);
+    await notify.toAdmins(bot, `🔔 <b>HAFTALIK AVTOMATIK HISOBOT</b>\n\n${text}`);
+    const { buffer, filename } = await excel.buildTeamPeriod(from, to);
+    await notify.docToAdmins(
+      bot,
+      buffer,
+      filename,
+      `📥 <b>O'tgan hafta</b> — ${time.prettyRange(from, to)} (Excel)`,
+    );
+    await logRun('weekly-report', `${from} → ${to}`);
+  });
+
+  // 8) Har oyning 1-kuni: o'tgan oyning to'liq hisoboti
+  schedule('monthly-report', `20 ${startH} 1 * *`, async () => {
+    const anchor = time.addDays(time.startOfMonth(time.today()), -1); // o'tgan oyning oxirgi kuni
+    const from = time.startOfMonth(anchor);
+    const to = time.endOfMonth(anchor);
+    const text = await period.teamReport(from, to);
+    await notify.toAdmins(bot, `🔔 <b>OYLIK AVTOMATIK HISOBOT</b>\n\n${text}`);
+    const { buffer, filename } = await excel.buildTeamPeriod(from, to);
+    await notify.docToAdmins(
+      bot,
+      buffer,
+      filename,
+      `📥 <b>${time.monthLabel(from)}</b> — oylik hisobot (Excel)`,
+    );
+    await logRun('monthly-report', `${from} → ${to}`);
   });
 
   console.log('[jobs] Rejalashtiruvchi ishga tushdi.');

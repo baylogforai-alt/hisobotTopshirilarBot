@@ -14,6 +14,7 @@ const attendanceHandler = require('./handlers/attendance');
 const missionsHandler = require('./handlers/missions');
 const adminHandler = require('./handlers/admin');
 const hrHandler = require('./handlers/hr');
+const periodHandler = require('./handlers/period');
 const jobs = require('./jobs');
 
 const bot = new Telegraf(config.botToken, { handlerTimeout: 60_000 });
@@ -24,10 +25,18 @@ attendanceHandler.register(bot);
 missionsHandler.register(bot);
 adminHandler.register(bot);
 hrHandler.register(bot);
+periodHandler.register(bot);
 
 // Sessiya bosqichidagi erkin matn (faqat shaxsiy chatda)
 bot.on('text', async (ctx, next) => {
   if (ctx.chat.type !== 'private') return next();
+
+  // Davr hisoboti uchun qo'lda yozilgan sanalar — admin hodimlar ro'yxatida
+  // bo'lmasa ham ishlashi kerak
+  if (session.get(ctx.from.id).step === 'period_dates' && ctx.state.isAdmin) {
+    return periodHandler.handleTypedDates(ctx);
+  }
+
   if (!ctx.state.employee) return commonHandler.notRegistered(ctx);
 
   const s = session.get(ctx.from.id);
@@ -68,6 +77,7 @@ const COMMANDS = [
   { command: 'id', description: 'Telegram ID' },
   { command: 'yordam', description: 'Qollanma' },
   { command: 'arxiv', description: 'Hodimlar arxivi (admin)' },
+  { command: 'davr', description: 'Davr hisoboti — sana tanlab (admin)' },
 ];
 
 (async () => {

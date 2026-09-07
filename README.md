@@ -139,6 +139,8 @@ Keyin chiqqan tugmalardan umumiy muddat tanlanadi:
 | `/umumiy_hisobot` | Barcha hodimlarning hozirgi holati |
 | `/kun_hisobot` | Bugun kim aynan qaysi ishni bajargani (batafsil) |
 | `/jamoa_excel` | Bugungi jamoa hisoboti — Excel fayl |
+| **`/davr`** | **📈 Davr hisoboti — boshlanish/tugash sanasini o'zingiz tanlaysiz** |
+| `/oraliq <dan> <gacha> [id]` | Bir buyruq bilan davr hisoboti (masalan `/oraliq 2026-09-01 2026-09-07`) |
 | **`/arxiv`** | **🗂 Hodimlar arxivi — ilova ko'rinishidagi panel** |
 | `/hodim_hisobot <id>` | Bitta hodimning bugungi kun daftari |
 | `/hodim_missiya <id>` | Bitta hodimning barcha missiyalari |
@@ -160,6 +162,56 @@ Keyin chiqqan tugmalardan umumiy muddat tanlanadi:
 > *Cheklov:* GPS'ni maxsus «fake GPS» ilovasi bilan aldash texnik jihatdan
 > mumkin (root/dev telefon). Oddiy foydalanuvchi uchun bu himoya yetarli, lekin
 > mutlaq kafolat emas — geofence real himoyaning asosi.
+
+---
+
+## 6.0. 📈 Davr hisoboti — istalgan sana oralig'i
+
+Direktor uchun asosiy hisobot oynasi. `/davr` buyrug'i yoki asosiy
+klaviaturadagi **«📈 Davr hisoboti»** tugmasi ochadi.
+
+Uch qadam, hammasi tugmalar bilan:
+
+1. **🗓 Davrni tanlash** — uchta yo'l:
+   - tayyor tugmalar: *Bugun · Kecha · Shu hafta · O'tgan hafta · Shu oy ·
+     O'tgan oy · 7 / 30 / 90 kun · Shu yil*;
+   - **kalendar**: oyma-oy yurib, avval 🟢 boshlanish, keyin 🔴 tugash kunini
+     bosasiz (kelajakdagi kunlar tanlanmaydi);
+   - **qo'lda yozish**: `01.09.2026 - 07.09.2026`, `2026-09-01 2026-09-07`,
+     `1-sentabr 7-sentabr` yoki `01.09.2026 dan 07.09.2026 gacha`.
+2. **👥 Kimni ko'ramiz?** — «🏢 Butun jamoa» (hammasi bitta hisobotda) yoki
+   ro'yxatdan bitta hodim.
+3. **📊 Hisobotni ko'rish** yoki **📥 Excel yuklab olish**.
+
+Tanlangan davr sessiyada saqlanadi — bir marta sana tanlab, hodimdan hodimga
+o'tib chiqish mumkin.
+
+### Ekranda nima ko'rinadi
+
+**Butun jamoa:** umumiy raqamlar (bajarilgan/yozilgan ishlar, bajarish foizi,
+ochiq va kechikkanlar, davomat, jami ish vaqti) + **oldingi shuncha kunlik davr
+bilan solishtirish** (📈 +12% / 📉 −8%) + **🏆 reyting** + har bir hodim
+kesimida qisqa qator.
+
+**Bitta hodim:** xulosa (kelgan kunlar, jami va o'rtacha ish vaqti, o'rtacha
+kelish vaqti, kech kelgan kunlar, bajargan/yozgan ishlari, bajarish foizi,
+hozir ochiq va kechikkanlari) + **kun-kun jadval** (keldi / ketdi / soat /
+bajarilgan soni; `!` — kech kelgan kun) + **bajargan ishlari ro'yxati sanasi
+bilan** + **hozir zimmasida turgan ishlar**.
+
+Uzun hisobot Telegram chegarasidan oshsa — avtomatik bo'laklarga bo'linib
+yuboriladi, hech narsa kesilmaydi.
+
+### Excel fayllar
+
+| Kim uchun | Varaqlar |
+|---|---|
+| **Bitta hodim** | **Xulosa** (barcha raqamlar bitta ustunda) · **Kunlar** (sana, kun, keldi, ketdi, ish soati raqam bilan, davomiylik, bajardi, yozdi, bot harakatlari, izoh + JAMI qator) · **Missiyalar** · **Harakatlar** |
+| **Butun jamoa** | **Jamlanma** (har bir hodim bitta qator + JAMI) · **Kunlar** (hamma hodimning kun-kun davomati) · **Missiyalar** (hodimi bilan) · **Kechikkanlar** · **Bajarilganlar** (davrda bajarilgan barcha ishlar, sana va vaqti bilan) |
+
+Har bir varaqda sarlavha muzlatilgan, **filtr** yoqilgan, ish soatlari
+**raqam** ko'rinishida (Excelda yig'indi/o'rtacha olish mumkin), holatlar
+rangli: 🟩 Bajarildi · 🟥 Kechikkan · 🟧 Bajarilmadi.
 
 ---
 
@@ -243,6 +295,8 @@ Standart sozlamada (9:00–18:00, har 2 soatda, dushanba–shanba):
 | `11:00, 13:00, 15:00, 17:00` | **«Bu missiyalarni bajardingizmi?»** — guruhga ro'yxat, hodimga tugmali ro'yxat |
 | `18:00` | Kunlik hisobot guruhga + har kimga «ertangi rejani yoz» so'rovi |
 | `18:45` | Ertangi kun uchun rejasi yo'q hodimlarga aniq eslatma + guruhga ogohlantirish |
+| **Har dushanba 9:10** | **O'tgan haftaning to'liq jamoa hisoboti + Excel — faqat direktor(lar)ga** |
+| **Har oyning 1-kuni 9:20** | **O'tgan oyning to'liq jamoa hisoboti + Excel — faqat direktor(lar)ga** |
 
 ---
 
@@ -262,13 +316,15 @@ src/
     missions.js         missiyalar (yaratish, bajarish, o'tkazish)
     attendance.js       kelish–ketish
     activity.js         hodimning botdagi har bir harakati jurnali
-    history.js          hodim faoliyati arxivi (kun daftari, davr hisoboti)
-    excel.js            Excel hisobotlar (kunlik, hodim arxivi, jamoa)
+    history.js          hodim faoliyati arxivi (kun daftari, 7/30 kunlik)
+    period.js           davr hisoboti — istalgan sana oraligi (jamoa va hodim)
+    excel.js            Excel hisobotlar (kunlik, davr: hodim va jamoa)
     office.js           ofis geofence sozlamasi
     notify.js           guruh / shaxsiy xabar yuborish
     reports.js          eslatma va hisobot matnlari
   handlers/
-    common.js  attendance.js  missions.js  admin.js  hr.js (arxiv paneli)
+    common.js  attendance.js  missions.js  admin.js
+    hr.js (arxiv paneli)  period.js (davr hisoboti + kalendar)
 scripts/
   seed.js               hodimlarni bazaga kiritish   (npm run seed)
   admin.js              rahbarni admin qilish        (npm run admin -- <id>)

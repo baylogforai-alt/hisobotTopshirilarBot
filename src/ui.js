@@ -18,6 +18,7 @@ const BTN = {
   report: '📊 Hisobot',
   admin: '⚙️ Admin panel',
   archive: '🗂 Hodimlar arxivi',
+  periodReport: '📈 Davr hisoboti',
   sendLocation: '📍 Joylashuvni yuborish',
   cancelLocation: '❌ Bekor qilish',
 };
@@ -41,7 +42,10 @@ const mainKeyboard = (isAdmin = false) => {
     [BTN.addMission, BTN.myMissions],
     [BTN.done, BTN.report],
   ];
-  if (isAdmin) rows.push([BTN.admin, BTN.archive]);
+  if (isAdmin) {
+    rows.push([BTN.admin, BTN.archive]);
+    rows.push([BTN.periodReport]);
+  }
   return Markup.keyboard(rows).resize();
 };
 
@@ -111,6 +115,7 @@ const cancelKeyboard = (missions) =>
 
 const adminKeyboard = () =>
   Markup.inlineKeyboard([
+    [Markup.button.callback('📈 Davr hisoboti (sana tanlab)', 'pr:home')],
     [Markup.button.callback('🗂 Hodimlar arxivi (ilova)', 'hr:home')],
     [Markup.button.callback('👥 Hodimlar', 'adm:list')],
     [Markup.button.callback('📊 Hozirgi holat', 'adm:report')],

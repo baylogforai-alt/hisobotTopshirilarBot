@@ -22,6 +22,8 @@ const reports = require('../src/services/reports');
 const activity = require('../src/services/activity');
 const history = require('../src/services/history');
 const excel = require('../src/services/excel');
+const period = require('../src/services/period');
+const periodHandler = require('../src/handlers/period');
 const { datesFor, parseTitles } = require('../src/handlers/missions');
 
 const ok = (label, cond) => {
@@ -188,7 +190,73 @@ const ok = (label, cond) => {
   // 12e. Excel arxivi (3 varaq)
   const xls = await excel.buildEmployeeHistory(emp, 7);
   ok('hodim arxivi Excel yasaldi', xls.buffer.byteLength > 5000);
-  ok('fayl nomi togri', /^faoliyat-.*\.xlsx$/.test(xls.filename));
+  ok('fayl nomi togri', /^hisobot-.*\.xlsx$/.test(xls.filename));
+
+  // 12f. Sana o'qish (direktor qo'lda yozganda)
+  ok("'2026-09-07' o'qildi", time.parseDate('2026-09-07') === '2026-09-07');
+  ok("'07.09.2026' o'qildi", time.parseDate('07.09.2026') === '2026-09-07');
+  ok("'7-sentabr' o'qildi", time.parseDate('7-sentabr 2026') === '2026-09-07');
+  ok("noto'g'ri sana rad etildi", time.parseDate('salom') === null);
+  ok('davr kunlari sanaldi', time.daysIn('2026-09-01', '2026-09-07') === 7);
+  ok('oy chegarasi topildi', time.endOfMonth('2026-02-10') === '2026-02-28');
+
+  // 12g. DAVR HISOBOTI — boshlanish/tugash sanasi bo'yicha
+  const davr = period.normalize(bugun, kecha); // teskari yozilsa ham to'g'rilanadi
+  ok('teskari sanalar tartiblandi', davr.from === kecha && davr.to === bugun && davr.days === 2);
+  ok('tayyor davr (o\'tgan oy) hisoblandi', period.presetRange('lastmonth')[0].endsWith('-01'));
+
+  const ps = await period.employeeStats(emp, kecha, bugun);
+  ok('davr statistikasi: 2 kun', ps.dayRows.length === 2);
+  ok('davr statistikasi: 1 kun ishga kelgan', ps.workedDays === 1);
+  ok('davr statistikasi: bajarganlari sanaldi', ps.doneCount >= 3);
+  ok('davr statistikasi: yozganlari sanaldi', ps.createdCount >= 5);
+  ok('davr statistikasi: ochiq ishlar bor', ps.open.length >= 1);
+
+  const empRep = await period.employeeReport(emp, kecha, bugun);
+  ok('hodim davr hisoboti yasaldi', empRep.includes('DAVR HISOBOTI') && empRep.includes('XULOSA'));
+  ok('hisobotda kunlar jadvali bor', empRep.includes('KUNLAR') && empRep.includes('<pre>'));
+  ok('hisobotda bajargan ishlari bor', empRep.includes('BAJARGAN ISHLARI'));
+
+  const teamRep = await period.teamReport(kecha, bugun);
+  ok('jamoa davr hisoboti yasaldi', teamRep.includes('JAMOA HISOBOTI') && teamRep.includes('Akbar Karimov'));
+  ok('jamoa hisobotida umumiy raqamlar bor', teamRep.includes('UMUMIY'));
+
+  const ts = await period.teamStats(kecha, bugun);
+  ok('jamoa jamlanmasi hisoblandi', ts.totals.employees === 1 && ts.totals.doneCount >= 3);
+
+  const parts = period.splitText(`${'a'.repeat(4000)}\nb`, 3800);
+  ok("uzun matn bo'laklarga bo'lindi", parts.length === 2);
+
+  // 12h. Qo'lda yozilgan sana oralig'i va kalendar tugmalari
+  const r1 = periodHandler.parseRange('01.09.2026 - 07.09.2026');
+  ok("'01.09.2026 - 07.09.2026' o'qildi", r1.from === '2026-09-01' && r1.to === '2026-09-07');
+  const r2 = periodHandler.parseRange('2026-09-07 2026-09-01');
+  ok('teskari yozilsa ham tartiblandi', r2.from === '2026-09-01' && r2.to === '2026-09-07');
+  const r3 = periodHandler.parseRange('01.09.2026 dan 07.09.2026 gacha');
+  ok("'dan ... gacha' o'qildi", r3.from === '2026-09-01' && r3.to === '2026-09-07');
+  const r4 = periodHandler.parseRange('15.08.2026');
+  ok('bitta sana → bir kunlik davr', r4.from === '2026-08-15' && r4.to === '2026-08-15');
+  ok('bemaʼni matn rad etildi', periodHandler.parseRange('shunchaki matn') === null);
+
+  const cal = periodHandler.calendarKeyboard('f', bugun.slice(0, 7), {
+    from: bugun,
+    to: bugun,
+  }).reply_markup.inline_keyboard;
+  ok('kalendarda oy navigatsiyasi bor', cal[0].length === 3);
+  ok('kalendarda hafta kunlari bor', cal[1].length === 7 && cal[1][0].text === 'Du');
+  ok('kalendar kunlari 7 tadan', cal[2].length === 7);
+  ok(
+    'bugungi kun tanlanadigan tugma',
+    JSON.stringify(cal).includes(`pr:set:f:${bugun}`),
+  );
+
+  // 12i. Davr Excel fayllari
+  const xEmp = await excel.buildEmployeePeriod(emp, kecha, bugun);
+  ok('hodim davr Excel yasaldi', xEmp.buffer.byteLength > 5000);
+  ok('hodim fayl nomida davr bor', xEmp.filename.includes(`${kecha}_${bugun}`));
+  const xTeam = await excel.buildTeamPeriod(kecha, bugun);
+  ok('jamoa davr Excel yasaldi', xTeam.buffer.byteLength > 5000);
+  ok('jamoa fayl nomi to\'g\'ri', /^jamoa-hisobot-.*\.xlsx$/.test(xTeam.filename));
 
   // 13. Admin huquqi
   await employees.setRole(111222333, 'admin');

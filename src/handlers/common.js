@@ -97,6 +97,14 @@ const HELP = `
 /kun_hisobot — kim aynan qaysi ishni qilgani (batafsil)
 /jamoa_excel — butun jamoa hisobotini Excel faylda olish
 
+<b>📈 Davr hisoboti (sana tanlab):</b>
+/davr — hisobot markazi: boshlanish va tugash sanasini tanlang
+<i>Kalendardan yoki tayyor tugmalardan (bugun, shu hafta, o'tgan oy, 30 kun…)
+davrni tanlaysiz, keyin «Butun jamoa» yoki bitta hodimni tanlab, hisobotni
+ekranda ko'rasiz yoki Excel qilib yuklab olasiz.</i>
+/oraliq &lt;boshlanish&gt; &lt;tugash&gt; [tg_id] — bir buyruq bilan
+<i>Masalan: /oraliq 2026-09-01 2026-09-07</i>
+
 <b>🗂 Hodimlar arxivi (ilova):</b>
 /arxiv — hodimlarni tanlab, kun-kun faoliyatini ko'rish
 /hodim_hisobot &lt;tg_id&gt; — bitta hodimning bugungi kun daftari

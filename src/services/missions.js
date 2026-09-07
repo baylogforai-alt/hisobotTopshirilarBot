@@ -192,6 +192,25 @@ const dueOn = (employeeId, date) =>
     [employeeId, date],
   );
 
+/** Davr ichida YOZIB QO'YILGAN (yaratilgan) missiyalar */
+const createdBetween = (employeeId, from, to) =>
+  db.query(
+    `SELECT * FROM missions
+     WHERE employee_id = $1 AND substr(created_at, 1, 10) BETWEEN $2 AND $3
+     ORDER BY created_at ASC, id ASC`,
+    [employeeId, from, to],
+  );
+
+/** Davr ichida o'chirilgan (bekor qilingan) missiyalar */
+const cancelledBetween = (employeeId, from, to) =>
+  db.query(
+    `SELECT * FROM missions
+     WHERE employee_id = $1 AND status = 'cancelled'
+       AND substr(cancelled_at, 1, 10) BETWEEN $2 AND $3
+     ORDER BY cancelled_at ASC, id ASC`,
+    [employeeId, from, to],
+  );
+
 /** Davr ichida bajarilgan missiyalar */
 const doneBetween = (employeeId, from, to) =>
   db.query(
@@ -220,5 +239,5 @@ const forRange = (employeeId, from, to) =>
 module.exports = {
   create, byId, openFor, pendingFor, activateDue, markDone, reopen,
   cancel, doneOn, dayStats, allOverdue, rangeStats, hasCoverageFor, dayRows,
-  createdOn, cancelledOn, dueOn, doneBetween, forRange,
+  createdOn, cancelledOn, dueOn, doneBetween, createdBetween, cancelledBetween, forRange,
 };
