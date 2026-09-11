@@ -81,7 +81,7 @@ const HELP = `
 /bajardim — bajarilganini belgilash
 /bekor — missiyani o'chirish
 /hisobot — mening hisobotim
-/excel — o'z ishlarimni Excel faylda yuklab olish
+/excel — o'z ishlarimni Excel faylda yuklab olish (bugun / hafta / oy)
 /id — Telegram ID ni bilish
 /yordam — shu qo'llanma
 
@@ -95,7 +95,7 @@ const HELP = `
 /topshiriq &lt;tg_id&gt; &lt;matn&gt; — hodimga missiya berish
 /umumiy_hisobot — barcha hodimlar holati (hozirgi)
 /kun_hisobot — kim aynan qaysi ishni qilgani (batafsil)
-/jamoa_excel — butun jamoa hisobotini Excel faylda olish
+/jamoa_excel — Excel yuklab olish: davr (kun/hafta/oy) → butun jamoa, har bir hodim alohida yoki bitta hodim
 
 <b>📈 Davr hisoboti (sana tanlab):</b>
 /davr — hisobot markazi: boshlanish va tugash sanasini tanlang

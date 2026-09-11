@@ -8,12 +8,7 @@ const db = require('../src/db');
 const employees = require('../src/services/employees');
 const config = require('../src/config');
 
-const HODIMLAR = [
-  { tgId: 8254184544, fullName: 'Samandar', position: 'Sotuv menejeri' },
-  { tgId: 5934117099, fullName: 'Akbarali', position: 'Marketolog' },
-  { tgId: 7963610051, fullName: 'Durdona', position: 'Operator' },
-  { tgId: 7802923308, fullName: 'Islombek', position: 'Dasturchi' },
-];
+const { HODIMLAR } = require('../src/hodimlar');
 
 (async () => {
   await db.init();

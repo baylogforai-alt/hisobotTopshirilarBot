@@ -120,7 +120,7 @@ const adminKeyboard = () =>
     [Markup.button.callback('👥 Hodimlar', 'adm:list')],
     [Markup.button.callback('📊 Hozirgi holat', 'adm:report')],
     [Markup.button.callback('📋 Kunlik hisobot (batafsil)', 'adm:daily')],
-    [Markup.button.callback('📥 Excel yuklab olish (jamoa)', 'adm:excel')],
+    [Markup.button.callback('📥 Excel yuklab olish (kun / hafta / oy)', 'adm:excel')],
     [Markup.button.callback('⚠️ Kechikkan missiyalar', 'adm:overdue')],
     [Markup.button.callback('🔔 Hozir eslatma yuborish', 'adm:remind')],
   ]);

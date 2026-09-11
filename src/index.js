@@ -8,6 +8,8 @@ const session = require('./session');
 const ui = require('./ui');
 const health = require('./health');
 const activity = require('./services/activity');
+const employees = require('./services/employees');
+const { HODIMLAR } = require('./hodimlar');
 
 const commonHandler = require('./handlers/common');
 const attendanceHandler = require('./handlers/attendance');
@@ -15,6 +17,7 @@ const missionsHandler = require('./handlers/missions');
 const adminHandler = require('./handlers/admin');
 const hrHandler = require('./handlers/hr');
 const periodHandler = require('./handlers/period');
+const excelMenuHandler = require('./handlers/excelMenu');
 const jobs = require('./jobs');
 
 const bot = new Telegraf(config.botToken, { handlerTimeout: 60_000 });
@@ -26,6 +29,7 @@ missionsHandler.register(bot);
 adminHandler.register(bot);
 hrHandler.register(bot);
 periodHandler.register(bot);
+excelMenuHandler.register(bot);
 
 // Sessiya bosqichidagi erkin matn (faqat shaxsiy chatda)
 bot.on('text', async (ctx, next) => {
@@ -73,7 +77,7 @@ const COMMANDS = [
   { command: 'bajardim', description: 'Bajarilganini belgilash' },
   { command: 'bekor', description: 'Missiyani ochirish' },
   { command: 'hisobot', description: 'Mening hisobotim' },
-  { command: 'excel', description: 'Excel faylni yuklab olish' },
+  { command: 'excel', description: 'Excel yuklab olish (kun / hafta / oy)' },
   { command: 'id', description: 'Telegram ID' },
   { command: 'yordam', description: 'Qollanma' },
   { command: 'arxiv', description: 'Hodimlar arxivi (admin)' },
@@ -89,6 +93,14 @@ const COMMANDS = [
     console.error('\n❌ Bazaga ulanib bo\'lmadi:', err.message);
     console.error('   DATABASE_URL ni tekshiring (.env). Supabase → Project Settings → Database → Connection string.');
     process.exit(1);
+  }
+
+  // Ro'yxatdagi yangi hodimlar bazaga tushsin (mavjudlariga tegilmaydi)
+  try {
+    const added = await employees.ensureMany(HODIMLAR);
+    if (added.length) console.log(`👥 Yangi hodimlar qo'shildi: ${added.map((e) => e.full_name).join(', ')}`);
+  } catch (err) {
+    console.error("[hodimlar] avtomatik qo'shishda xato:", err.message);
   }
 
   await bot.telegram.setMyCommands(COMMANDS).catch(() => {});

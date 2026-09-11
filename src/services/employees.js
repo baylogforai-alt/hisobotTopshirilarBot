@@ -37,6 +37,21 @@ const add = async ({ tgId, fullName, position = null, role = 'employee' }) => {
   return { employee: rows[0], created: true };
 };
 
+/**
+ * Ro'yxatdagi BAZADA YO'Q hodimlarni qo'shadi; mavjudlariga tegmaydi.
+ * Bot ishga tushganda chaqiriladi — yangi hodim kodga yozilsa, deploy bilan bazaga tushadi.
+ * Qaytaradi: qo'shilganlar ro'yxati.
+ */
+const ensureMany = async (list) => {
+  const added = [];
+  for (const h of list) {
+    if (await byTgId(h.tgId)) continue;
+    const { employee } = await add(h);
+    added.push(employee);
+  }
+  return added;
+};
+
 const deactivate = (tgId) =>
   db.query('UPDATE employees SET active = 0 WHERE tg_id = $1', [Number(tgId)]);
 
@@ -70,6 +85,7 @@ const isAdmin = async (tgId) => {
 const mention = (employee) => (employee.username ? `@${employee.username}` : employee.full_name);
 
 module.exports = {
+  ensureMany,
   byTgId, byId, listActive, listAll, listAdmins, add, deactivate, activate,
   setRole, setFlexible, isFlexible, touchUsername, isAdmin, mention,
 };

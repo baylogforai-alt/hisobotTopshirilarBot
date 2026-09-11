@@ -8,7 +8,6 @@ const missions = require('../services/missions');
 const attendance = require('../services/attendance');
 const notify = require('../services/notify');
 const reports = require('../services/reports');
-const excel = require('../services/excel');
 const employees = require('../services/employees');
 const activity = require('../services/activity');
 const { notRegistered } = require('./common');
@@ -333,27 +332,6 @@ const addTodayTask = async (ctx) => {
   );
 };
 
-/** Shaxsiy yoki (admin bo'lsa) jamoa Excel hisobotini yuborish */
-const sendMyExcel = async (ctx, { viaCallback = false } = {}) => {
-  const emp = ctx.state.employee;
-  if (!emp) return viaCallback ? ctx.answerCbQuery("Ro'yxatdan o'tmagansiz") : notRegistered(ctx);
-  if (viaCallback) await ctx.answerCbQuery('Tayyorlanmoqda…');
-
-  const t = time.today();
-  activity.mark(ctx, 'excel', { detail: 'shaxsiy kunlik hisobot' });
-  const { buffer, filename } = await excel.buildDayReport(t, {
-    employeeId: emp.id,
-    scopeName: emp.full_name,
-  });
-  await notify.docToUser(
-    { telegram: ctx.telegram },
-    ctx.from.id,
-    buffer,
-    filename,
-    `📥 <b>${ui.esc(emp.full_name)}</b> — ${time.prettyDate(t)} ishlari (Excel)`,
-  );
-};
-
 const register = (bot) => {
   bot.hears(ui.BTN.addMission, (ctx) =>
     ctx.state.employee ? startWizard(ctx) : notRegistered(ctx),
@@ -384,8 +362,6 @@ const register = (bot) => {
   bot.command('hisobot', showMyReport);
 
   bot.command('bugun', addTodayTask);
-  bot.command('excel', (ctx) => sendMyExcel(ctx));
-  bot.action('excel:me', (ctx) => sendMyExcel(ctx, { viaCallback: true }));
 };
 
 module.exports = { register, handleTitlesInput, parseTitles, datesFor };

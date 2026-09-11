@@ -138,7 +138,7 @@ Keyin chiqqan tugmalardan umumiy muddat tanlanadi:
 | `/topshiriq <id> <matn> [\| kun]` | Hodimga topshiriq berish |
 | `/umumiy_hisobot` | Barcha hodimlarning hozirgi holati |
 | `/kun_hisobot` | Bugun kim aynan qaysi ishni bajargani (batafsil) |
-| `/jamoa_excel` | Bugungi jamoa hisoboti — Excel fayl |
+| **`/jamoa_excel`** | **📥 Excel yuklab olish menyusi: bugun / shu hafta / o'tgan hafta / shu oy / o'tgan oy → butun jamoa (1 fayl), har bir hodim alohida yoki bitta hodim** |
 | **`/davr`** | **📈 Davr hisoboti — boshlanish/tugash sanasini o'zingiz tanlaysiz** |
 | `/oraliq <dan> <gacha> [id]` | Bir buyruq bilan davr hisoboti (masalan `/oraliq 2026-09-01 2026-09-07`) |
 | **`/arxiv`** | **🗂 Hodimlar arxivi — ilova ko'rinishidagi panel** |
@@ -202,12 +202,30 @@ bilan** + **hozir zimmasida turgan ishlar**.
 Uzun hisobot Telegram chegarasidan oshsa — avtomatik bo'laklarga bo'linib
 yuboriladi, hech narsa kesilmaydi.
 
-### Excel fayllar
+### 📥 Excel yuklab olish — ikki bosishda
+
+Admin paneldagi **«📥 Excel yuklab olish (kun / hafta / oy)»**, arxivdagi
+shu nomli tugma yoki `/jamoa_excel` buyrug'i sodda menyuni ochadi:
+
+```
+1-qadam · DAVR                          2-qadam · KIM
+  📅 Bugun · 11.09                        🏢 Butun jamoa — bitta fayl
+  📆 Shu hafta · 08.09–11.09 (4 kun)      👥 Har bir hodim alohida — N ta fayl
+  📆 O'tgan hafta · 01.09–07.09 (7 kun)   👤 Akbar Karimov
+  🗓 Shu oy · sentabr (11 kun)            👤 ...
+  🗓 O'tgan oy · avgust (31 kun)
+  🗓 Boshqa sana oralig'i (kalendar)
+```
+
+Oy — **kalendar oy**: 30 kunlik oyda 30 kun, 31 kunlik oyda 31 kun, fevralda
+28/29 kun chiqadi (tugmaning o'zida kunlar soni yozilgan). Hafta dushanbadan
+boshlanadi. Hodimlar o'zlari uchun `/excel` yozib xuddi shu davrlarni tanlaydi.
 
 | Kim uchun | Varaqlar |
 |---|---|
-| **Bitta hodim** | **Xulosa** (barcha raqamlar bitta ustunda) · **Kunlar** (sana, kun, keldi, ketdi, ish soati raqam bilan, davomiylik, bajardi, yozdi, bot harakatlari, izoh + JAMI qator) · **Missiyalar** · **Harakatlar** |
-| **Butun jamoa** | **Jamlanma** (har bir hodim bitta qator + JAMI) · **Kunlar** (hamma hodimning kun-kun davomati) · **Missiyalar** (hodimi bilan) · **Kechikkanlar** · **Bajarilganlar** (davrda bajarilgan barcha ishlar, sana va vaqti bilan) |
+| **Bitta hodim** | **Xulosa** (barcha raqamlar bitta ustunda) · **Bajarilgan ishlar** (davrda nima ish qilgani — №, sana, kun, vaqt, ish, muddati edi, muddatida) · **Kunlar** (sana, kun, keldi, ketdi, ish soati raqam bilan, davomiylik, bajardi, **nima ish qildi**, yozdi, bot harakatlari, izoh + JAMI qator) · **Missiyalar** · **Harakatlar** |
+| **Butun jamoa** | **Jamlanma** (har bir hodim bitta qator + JAMI) · **Kunlar** (hamma hodimning kun-kun davomati + **nima ish qildi**) · **Missiyalar** (hodimi bilan) · **Kechikkanlar** · **Bajarilganlar** (davrda bajarilgan barcha ishlar, sana va vaqti bilan) |
+| **Bugun** (1 kun) | Bitta sodda jadval: hodim, lavozim, missiya, holat, muddat, bajarilgan vaqti |
 
 Har bir varaqda sarlavha muzlatilgan, **filtr** yoqilgan, ish soatlari
 **raqam** ko'rinishida (Excelda yig'indi/o'rtacha olish mumkin), holatlar
@@ -229,8 +247,9 @@ xabar yangilanadi — chat toza qoladi, ilovadek yuriladi.
         ├─ 🗓 Kun tanlash (oxirgi 14 kun)
         ├─ 📊 7 kunlik / 30 kunlik hisobot
         ├─ 🎯 Missiyalari
-        └─ 📥 Excel (3 varaqli arxiv)
+        └─ 📥 Excel (hafta / oy)  → davr tanlab, shu hodimning fayli
    └─ 🏢 Jamoa · 7 / 30 kun  → 📥 jamoa jamlanmasi
+   └─ 📥 Excel yuklab olish (kun / hafta / oy)
 ```
 
 ### Kun daftari nimani ko'rsatadi
@@ -269,13 +288,19 @@ yozgan, bajarish foizi, bot faolligi.
 
 ### Excel arxivi
 
-**📥 Excel** tugmasi hodimning 30 kunlik arxivini **3 varaqli** faylda beradi:
+**📥 Excel (hafta / oy)** tugmasi davrni so'raydi (bugun / shu hafta /
+o'tgan hafta / shu oy / o'tgan oy) va shu hodimning **5 varaqli** faylini beradi:
 
 | Varaq | Ustunlar |
 |---|---|
-| **Kunlar** | Sana, keldi, ketdi, ish davomiyligi, bajardi, yozib qo'ydi, bot harakatlari, izoh |
+| **Xulosa** | Barcha ko'rsatkichlar bitta ustunda |
+| **Bajarilgan ishlar** | №, sana, kun, vaqt, bajarilgan ish, muddati edi, muddatida (Ha/Kech) |
+| **Kunlar** | Sana, keldi, ketdi, ish soati, davomiylik, bajardi, nima ish qildi, yozib qo'ydi, bot harakatlari, izoh |
 | **Missiyalar** | Missiya, holat (Bajarildi / Kechikkan / Bajarilmadi / O'chirilgan), yozilgan kuni, boshlanish, muddat, bajarilgan vaqti |
 | **Harakatlar** | Sana, vaqt, harakat, tafsilot — hodimning botdagi to'liq izi |
+
+7 / 30 kunlik hisobot ostidagi **📥 Excel (N kun)** tugmasi esa oxirgi N
+kunning (bugundan orqaga) faylini beradi.
 
 Jamoa ko'rinishida esa **📥 Jamoa jamlanmasi** — har bir hodim bitta qator:
 kelgan kunlar, jami ish vaqti, o'rtacha kelish, kech kelgan kunlar,
@@ -305,6 +330,7 @@ Standart sozlamada (9:00–18:00, har 2 soatda, dushanba–shanba):
 ```
 src/
   index.js              bot ishga tushishi, handlerlar tartibi
+  hodimlar.js           doimiy hodimlar ro'yxati — bot ishga tushganda yo'qlari avtomatik qo'shiladi
   config.js             .env o'qish
   db/                   baza qatlami (postgres | sqlite avtomatik tanlanadi)
   time.js               Toshkent vaqti, sana formatlari
@@ -324,6 +350,7 @@ src/
     reports.js          eslatma va hisobot matnlari
   handlers/
     common.js  attendance.js  missions.js  admin.js
+    excelMenu.js        📥 Excel yuklab olish menyusi (davr → kim → fayl)
     hr.js (arxiv paneli)  period.js (davr hisoboti + kalendar)
 scripts/
   seed.js               hodimlarni bazaga kiritish   (npm run seed)

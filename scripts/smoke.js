@@ -24,6 +24,8 @@ const history = require('../src/services/history');
 const excel = require('../src/services/excel');
 const period = require('../src/services/period');
 const periodHandler = require('../src/handlers/period');
+const excelMenu = require('../src/handlers/excelMenu');
+const ExcelJS = require('exceljs');
 const { datesFor, parseTitles } = require('../src/handlers/missions');
 
 const ok = (label, cond) => {
@@ -257,6 +259,31 @@ const ok = (label, cond) => {
   const xTeam = await excel.buildTeamPeriod(kecha, bugun);
   ok('jamoa davr Excel yasaldi', xTeam.buffer.byteLength > 5000);
   ok('jamoa fayl nomi to\'g\'ri', /^jamoa-hisobot-.*\.xlsx$/.test(xTeam.filename));
+
+  // 12j. Excel yuklab olish menyusi — davrlar kalendar bo'yicha
+  const lastMonth = excelMenu.resolve('lastmonth');
+  const lmDays = Number(time.endOfMonth(lastMonth.from).slice(8, 10));
+  ok(`o'tgan oy to'liq oy: ${lastMonth.days} kun`, lastMonth.days === lmDays && lastMonth.from.endsWith('-01'));
+  ok("o'tgan oy 28–31 kun oralig'ida", lastMonth.days >= 28 && lastMonth.days <= 31);
+  const thisMonth = excelMenu.resolve('month');
+  ok('shu oy 1-kundan bugungacha', thisMonth.from === time.startOfMonth(bugun) && thisMonth.to === bugun);
+  const lastWeek = excelMenu.resolve('lastweek');
+  ok("o'tgan hafta 7 kun", lastWeek.days === 7);
+  ok('bugun 1 kun', excelMenu.resolve('today').days === 1);
+  ok("noma'lum davr rad etiladi", excelMenu.resolve('xyz') === null);
+
+  // Hodim faylida «Bajarilgan ishlar» varag'i va «Nima ish qildi» ustuni bor
+  const wbEmp = new ExcelJS.Workbook();
+  await wbEmp.xlsx.load(xEmp.buffer);
+  const sheetNames = wbEmp.worksheets.map((w) => w.name);
+  ok("Excelda 'Bajarilgan ishlar' varag'i bor", sheetNames.includes('Bajarilgan ishlar'));
+  ok('Excelda 5 ta varaq', sheetNames.length === 5);
+  const daysSheet = wbEmp.getWorksheet('Kunlar');
+  ok("Kunlar varag'ida 'Nima ish qildi' ustuni", daysSheet.getRow(3).values.includes('Nima ish qildi'));
+  const doneSheet = wbEmp.getWorksheet('Bajarilgan ishlar');
+  const doneTitles = [];
+  doneSheet.eachRow((row, n) => { if (n > 3) doneTitles.push(String(row.getCell(5).value || '')); });
+  ok("'Bajarilgan ishlar' varag'ida bajarilgan ish nomi bor", doneTitles.some((t) => t.length > 3));
 
   // 13. Admin huquqi
   await employees.setRole(111222333, 'admin');

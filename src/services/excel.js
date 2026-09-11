@@ -189,12 +189,17 @@ const zebra = (ws, startRow = 4) => {
 
 const hours = (minutes) => (minutes === null || minutes === undefined ? null : Math.round((minutes / 60) * 100) / 100);
 
+/** Bir kunda bajarilgan ishlar — har biri yangi qatorda: «✓ 10:20 Yuklarni tekshirish» */
+const doneList = (rows) =>
+  rows.map((m) => `✓ ${time.clock(m.done_at)}  ${m.title}`).join('\n');
+
 /**
- * BITTA HODIM — tanlangan davr uchun to'liq arxiv (4 varaq):
- *   1. Xulosa      — bir qarashda hamma raqam
- *   2. Kunlar      — kun-kun: keldi/ketdi/soat/bajardi/yozdi
- *   3. Missiyalar  — har bir ish: holati, muddati, bajarilgan vaqti
- *   4. Harakatlar  — botdagi har bir amal (vaqti bilan)
+ * BITTA HODIM — tanlangan davr uchun to'liq arxiv (5 varaq):
+ *   1. Xulosa            — bir qarashda hamma raqam
+ *   2. Bajarilgan ishlar — davrda NIMA ish qilgani, kun-kun, vaqti bilan
+ *   3. Kunlar            — kun-kun: keldi/ketdi/soat + o'sha kuni bajargan ishlari
+ *   4. Missiyalar        — har bir ish: holati, muddati, bajarilgan vaqti
+ *   5. Harakatlar        — botdagi har bir amal (vaqti bilan)
  */
 const buildEmployeePeriod = async (emp, fromRaw, toRaw) => {
   const period = require('./period');
@@ -247,7 +252,43 @@ const buildEmployeePeriod = async (emp, fromRaw, toRaw) => {
   });
   zebra(wsSum);
 
-  // ---------------- 2) Kunlar ----------------
+  // ---------------- 2) Bajarilgan ishlar ----------------
+  // Direktor eng ko'p so'raydigan savol: «bu davrda nima ish qildi?» — shu varaq
+  const wsDone = wb.addWorksheet('Bajarilgan ishlar');
+  decorate(
+    wsDone,
+    [
+      { key: 'n', header: '№', width: 6 },
+      { key: 'date', header: 'Sana', width: 13 },
+      { key: 'wd', header: 'Kun', width: 8 },
+      { key: 'time', header: 'Vaqt', width: 9 },
+      { key: 'title', header: 'Bajarilgan ish', width: 60 },
+      { key: 'due', header: 'Muddati edi', width: 14 },
+      { key: 'ontime', header: 'Muddatida', width: 12 },
+    ],
+    `${config.companyName} — bajarilgan ishlar`,
+    `${who} · ${periodText} · jami ${s.doneCount} ta`,
+  );
+  const doneSorted = [...s.doneRows].sort((a, b) => String(a.done_at).localeCompare(String(b.done_at)));
+  doneSorted.forEach((m, i) => {
+    const d = String(m.done_at).slice(0, 10);
+    const onTime = !m.due_date || d <= m.due_date;
+    const row = wsDone.addRow([
+      i + 1,
+      d,
+      time.weekdayShort(d),
+      time.clock(m.done_at),
+      m.title,
+      m.due_date || '—',
+      onTime ? 'Ha' : 'Kech',
+    ]);
+    row.alignment = { vertical: 'top', wrapText: true };
+    row.getCell(7).font = { bold: true, color: { argb: onTime ? 'FF1B7F4B' : 'FFA83D3D' } };
+  });
+  if (!doneSorted.length) wsDone.addRow(['', "— bu davrda bajarilgan ish yo'q —", '', '', '', '', '']);
+  zebra(wsDone);
+
+  // ---------------- 3) Kunlar ----------------
   const wsDays = wb.addWorksheet('Kunlar');
   decorate(
     wsDays,
@@ -259,6 +300,7 @@ const buildEmployeePeriod = async (emp, fromRaw, toRaw) => {
       { key: 'h', header: 'Ish soati', width: 11 },
       { key: 'dur', header: 'Davomiylik', width: 17 },
       { key: 'done', header: 'Bajardi', width: 9 },
+      { key: 'what', header: 'Nima ish qildi', width: 55 },
       { key: 'added', header: "Yozib qo'ydi", width: 13 },
       { key: 'acts', header: 'Bot harakatlari', width: 15 },
       { key: 'note', header: 'Izoh', width: 24 },
@@ -276,14 +318,16 @@ const buildEmployeePeriod = async (emp, fromRaw, toRaw) => {
       hours(d.minutes),
       d.minutes === null ? '—' : attendance.prettyDuration(d.minutes),
       d.done.length,
+      doneList(d.done),
       d.created.length,
       d.acts,
       d.note,
     ]);
+    row.alignment = { vertical: 'top', wrapText: true };
     row.getCell(5).numFmt = '0.00';
     if (d.in) row.getCell(3).font = { bold: true, color: { argb: d.late ? 'FFA83D3D' : 'FF1B7F4B' } };
-    if (d.note === 'Kelmagan') row.getCell(10).font = { italic: true, color: { argb: 'FFA83D3D' } };
-    else if (d.note) row.getCell(10).font = { italic: true, color: { argb: 'FF96591F' } };
+    if (d.note === 'Kelmagan') row.getCell(11).font = { italic: true, color: { argb: 'FFA83D3D' } };
+    else if (d.note) row.getCell(11).font = { italic: true, color: { argb: 'FF96591F' } };
   });
 
   const totalRow = wsDays.addRow([
@@ -294,6 +338,7 @@ const buildEmployeePeriod = async (emp, fromRaw, toRaw) => {
     hours(s.totalMinutes),
     attendance.prettyDuration(s.totalMinutes),
     s.doneCount,
+    `${s.doneCount} ta ish`,
     s.createdCount,
     s.totalActs,
     s.lateDays ? `${s.lateDays} kun kech` : '',
@@ -304,7 +349,7 @@ const buildEmployeePeriod = async (emp, fromRaw, toRaw) => {
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE7EFF0' } };
   });
 
-  // ---------------- 3) Missiyalar ----------------
+  // ---------------- 4) Missiyalar ----------------
   const wsMis = wb.addWorksheet('Missiyalar');
   decorate(
     wsMis,
@@ -337,7 +382,7 @@ const buildEmployeePeriod = async (emp, fromRaw, toRaw) => {
   }
   if (!list.length) wsMis.addRow(["— bu davrda missiya yo'q —", '', '', '', '', '']);
 
-  // ---------------- 4) Harakatlar ----------------
+  // ---------------- 5) Harakatlar ----------------
   const wsAct = wb.addWorksheet('Harakatlar');
   decorate(
     wsAct,
@@ -474,6 +519,7 @@ const buildTeamPeriod = async (fromRaw, toRaw) => {
       { key: 'out', header: 'Ketdi', width: 9 },
       { key: 'h', header: 'Ish soati', width: 11 },
       { key: 'done', header: 'Bajardi', width: 9 },
+      { key: 'what', header: 'Nima ish qildi', width: 50 },
       { key: 'added', header: "Yozdi", width: 9 },
       { key: 'note', header: 'Izoh', width: 24 },
     ],
@@ -491,12 +537,14 @@ const buildTeamPeriod = async (fromRaw, toRaw) => {
         d.out || '—',
         hours(d.minutes),
         d.done.length,
+        doneList(d.done),
         d.created.length,
         d.note,
       ]);
+      row.alignment = { vertical: 'top', wrapText: true };
       row.getCell(6).numFmt = '0.00';
       if (d.late) row.getCell(4).font = { bold: true, color: { argb: 'FFA83D3D' } };
-      if (d.note === 'Kelmagan') row.getCell(9).font = { italic: true, color: { argb: 'FFA83D3D' } };
+      if (d.note === 'Kelmagan') row.getCell(10).font = { italic: true, color: { argb: 'FFA83D3D' } };
     });
   });
 

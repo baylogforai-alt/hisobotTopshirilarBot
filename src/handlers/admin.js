@@ -11,7 +11,7 @@ const missions = require('../services/missions');
 const attendance = require('../services/attendance');
 const office = require('../services/office');
 const reports = require('../services/reports');
-const excel = require('../services/excel');
+const excelMenu = require('./excelMenu');
 const notify = require('../services/notify');
 const activity = require('../services/activity');
 
@@ -235,21 +235,6 @@ const dailyReport = async (ctx) => {
   return ctx.reply(text, { parse_mode: 'HTML' });
 };
 
-/** Butun jamoa uchun Excel fayl */
-const teamExcel = async (ctx, { viaCallback = false } = {}) => {
-  if (!(await guard(ctx))) return;
-  if (viaCallback) await ctx.answerCbQuery('Tayyorlanmoqda…');
-  const t = time.today();
-  const { buffer, filename } = await excel.buildDayReport(t, { scopeName: 'Butun jamoa' });
-  await notify.docToUser(
-    { telegram: ctx.telegram },
-    ctx.from.id,
-    buffer,
-    filename,
-    `📥 <b>${ui.esc(config.companyName)}</b> — ${time.prettyDate(t)} jamoa hisoboti (Excel)`,
-  );
-};
-
 const overdueReport = async (ctx) => {
   if (!(await guard(ctx))) return;
   return ctx.reply(await reports.buildOverdueReport(), { parse_mode: 'HTML' });
@@ -373,7 +358,6 @@ const register = (bot) => {
   bot.command('topshiriq', assignMission);
   bot.command('umumiy_hisobot', overallReport);
   bot.command('kun_hisobot', dailyReport);
-  bot.command('jamoa_excel', (ctx) => teamExcel(ctx));
   bot.command('kechikkanlar', overdueReport);
   bot.command('eslat', manualReminder);
   bot.command('holat', systemStatus);
@@ -406,7 +390,10 @@ const register = (bot) => {
     const { text } = await reports.buildDailyReportText(time.today());
     return ctx.reply(text, { parse_mode: 'HTML' });
   });
-  bot.action('adm:excel', (ctx) => teamExcel(ctx, { viaCallback: true }));
+  bot.action('adm:excel', async (ctx) => {
+    await ctx.answerCbQuery();
+    return excelMenu.showHome(ctx);
+  });
   bot.action('adm:overdue', async (ctx) => {
     await ctx.answerCbQuery();
     if (!ctx.state.isAdmin) return;

@@ -94,6 +94,7 @@ const homeKeyboard = async () => {
     Markup.button.callback('🏢 Jamoa · 7 kun', 'hr:team:7'),
     Markup.button.callback('🏢 30 kun', 'hr:team:30'),
   ]);
+  rows.push([Markup.button.callback('📥 Excel yuklab olish (kun / hafta / oy)', 'xl:home')]);
   rows.push([Markup.button.callback('📈 Davr hisoboti (sana tanlab)', 'pr:home')]);
   rows.push([Markup.button.callback('🔄 Yangilash', 'hr:home')]);
   return Markup.inlineKeyboard(rows);
@@ -129,7 +130,7 @@ const dayKeyboard = (empId, date) => {
   ]);
   rows.push([
     Markup.button.callback('🎯 Missiyalari', `hr:m:${empId}`),
-    Markup.button.callback('📥 Excel', `hr:x:${empId}:30`),
+    Markup.button.callback('📥 Excel (hafta / oy)', `xl:emp:${empId}`),
   ]);
   rows.push([Markup.button.callback('⬅️ Hodimlar', 'hr:home')]);
   return Markup.inlineKeyboard(rows);
