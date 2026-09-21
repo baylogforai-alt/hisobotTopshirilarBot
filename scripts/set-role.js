@@ -35,8 +35,8 @@ if (!Number.isFinite(tgId) || !['admin', 'employee'].includes(role)) {
     }));
     console.log(`✅ Yangi admin yaratildi: ${emp.full_name} (${emp.tg_id})`);
   } else {
-    await employees.setRole(tgId, role);
-    await employees.activate(tgId);
+    await employees.setRole(emp.id, role);
+    await employees.activate(emp.id);
     emp = await employees.byTgId(tgId);
     console.log(`✅ ${emp.full_name} (${emp.tg_id}) → ${role === 'admin' ? 'administrator 👑' : 'oddiy hodim 👤'}`);
   }

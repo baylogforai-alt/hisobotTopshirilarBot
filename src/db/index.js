@@ -14,8 +14,16 @@ const one = async (sql, params = []) => {
   return rows.length ? rows[0] : null;
 };
 
+/** `SELECT COUNT(*) AS c ...` natijasini son sifatida qaytaradi */
+const count = async (sql, params = []) => {
+  const row = await one(sql, params);
+  return row ? Number(row.c || 0) : 0;
+};
+
 const init = () => impl.init();
 const close = () => impl.close();
+const backup = (dest) => impl.backup(dest);
+const hasTable = (name) => impl.hasTable(name);
 
 const getSetting = async (key, fallback = null) => {
   const row = await one('SELECT value FROM settings WHERE key = $1', [key]);
@@ -30,4 +38,4 @@ const setSetting = async (key, value) => {
   );
 };
 
-module.exports = { query, one, init, close, getSetting, setSetting, driver: impl.name };
+module.exports = { query, one, count, init, close, backup, hasTable, getSetting, setSetting, driver: impl.name };

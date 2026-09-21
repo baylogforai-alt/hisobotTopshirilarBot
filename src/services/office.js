@@ -13,7 +13,6 @@ const get = async () => {
   const lat = await db.getSetting('office_lat');
   const lon = await db.getSetting('office_lon');
   const radius = await db.getSetting('office_radius_m');
-  // null yoki bo'sh string (clear() dan keyin) — o'rnatilmagan hisoblanadi
   if (!lat || !lon) {
     if (config.officeLat !== null && config.officeLon !== null) {
       return { lat: config.officeLat, lon: config.officeLon, radius: DEFAULT_RADIUS, source: 'env' };
@@ -23,7 +22,7 @@ const get = async () => {
   return {
     lat: Number(lat),
     lon: Number(lon),
-    radius: radius !== null ? Number(radius) : DEFAULT_RADIUS,
+    radius: radius !== null && radius !== '' ? Number(radius) : DEFAULT_RADIUS,
     source: 'db',
   };
 };
@@ -38,7 +37,6 @@ const set = async (lat, lon, radius = DEFAULT_RADIUS) => {
 const clear = async () => {
   await db.setSetting('office_lat', '');
   await db.setSetting('office_lon', '');
-  // bo'sh string → get() da null bo'lib ko'rinishi uchun alohida tekshiramiz
 };
 
 module.exports = { get, set, clear, DEFAULT_RADIUS };

@@ -4,10 +4,10 @@ const config = require('../config');
 const ui = require('../ui');
 const time = require('../time');
 const employees = require('./employees');
-const missions = require('./missions');
+const tasks = require('./tasks');
 const attendance = require('./attendance');
 const activity = require('./activity');
-const history = require('./history');
+const dailyReports = require('./dailyReports');
 
 /**
  * DAVR HISOBOTI — direktor o'zi boshlanish va tugash sanasini tanlaydi.
@@ -18,9 +18,9 @@ const history = require('./history');
  */
 
 const COMPANY = config.companyName.toUpperCase();
-const LINE = '━━━━━━━━━━━━━━━━━━';
+const { esc, LINE } = ui;
 
-/** Ikki sanani tartibga soladi va bugundan keyingi chegarani kesadi */
+/** Ikki sanani tartibga soladi */
 const normalize = (from, to) => {
   let a = time.isValidDate(from) ? from : time.startOfMonth(time.today());
   let b = time.isValidDate(to) ? to : time.today();
@@ -31,25 +31,16 @@ const normalize = (from, to) => {
 /** Tayyor davrlar — tugmalar uchun */
 const PRESETS = {
   today: { label: '📅 Bugun', range: () => [time.today(), time.today()] },
-  yesterday: {
-    label: '🌙 Kecha',
-    range: () => [time.addDays(time.today(), -1), time.addDays(time.today(), -1)],
-  },
+  yesterday: { label: '🌙 Kecha', range: () => [time.addDays(time.today(), -1), time.addDays(time.today(), -1)] },
   week: { label: '📆 Shu hafta', range: () => [time.startOfWeek(time.today()), time.today()] },
   lastweek: {
-    label: '📆 O\'tgan hafta',
-    range: () => {
-      const d = time.addDays(time.startOfWeek(time.today()), -1);
-      return [time.startOfWeek(d), time.endOfWeek(d)];
-    },
+    label: "📆 O'tgan hafta",
+    range: () => { const d = time.addDays(time.startOfWeek(time.today()), -1); return [time.startOfWeek(d), time.endOfWeek(d)]; },
   },
   month: { label: '🗓 Shu oy', range: () => [time.startOfMonth(time.today()), time.today()] },
   lastmonth: {
-    label: '🗓 O\'tgan oy',
-    range: () => {
-      const d = time.addDays(time.startOfMonth(time.today()), -1);
-      return [time.startOfMonth(d), time.endOfMonth(d)];
-    },
+    label: "🗓 O'tgan oy",
+    range: () => { const d = time.addDays(time.startOfMonth(time.today()), -1); return [time.startOfMonth(d), time.endOfMonth(d)]; },
   },
   d7: { label: '7 kun', range: () => [time.addDays(time.today(), -6), time.today()] },
   d30: { label: '30 kun', range: () => [time.addDays(time.today(), -29), time.today()] },
@@ -58,13 +49,6 @@ const PRESETS = {
 };
 
 const presetRange = (key) => (PRESETS[key] ? PRESETS[key].range() : null);
-
-const hhmm = (mins) => {
-  if (mins === null || mins === undefined) return '—';
-  const h = Math.floor(mins / 60);
-  const m = Math.round(mins % 60);
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-};
 
 const pct = (part, whole) => (whole ? Math.round((part / whole) * 100) : null);
 
@@ -76,23 +60,28 @@ const eachDay = (from, to) => {
   return out;
 };
 
+const DAY_NOTE = {
+  ontime: '', late: 'Kech keldi', absent: 'Kelmagan', excused: 'Sababli', pending: "So'rov kutilmoqda", future: '', off: 'Dam olish kuni',
+};
+
 // ---------------------------------------------------------------------------
 // HISOB-KITOB
 // ---------------------------------------------------------------------------
 
 /**
  * Bitta hodimning davr bo'yicha to'liq ko'rsatkichlari.
- * Kunlar soni qancha bo'lishidan qat'i nazar — bazaga 5 ta so'rov.
+ * Davomat holatlari attendance.stats bilan bir xil (KPI bilan mos).
  */
 const employeeStats = async (emp, fromRaw, toRaw) => {
   const { from, to, days } = normalize(fromRaw, toRaw);
 
-  const attRows = await attendance.range(emp.id, from, to);
-  const attByDate = new Map(attRows.map((r) => [r.work_date, r]));
-  const doneRows = await missions.doneBetween(emp.id, from, to);
-  const createdRows = await missions.createdBetween(emp.id, from, to);
+  const at = await attendance.stats(emp, from, to);
+  const ts = await tasks.stats(emp.id, from, to);
+  const doneRows = await tasks.doneBetween(emp.id, from, to);
+  const createdRows = await tasks.createdBetween(emp.id, from, to);
+  const reportRows = await dailyReports.range(emp.id, from, to);
   const actCounts = await activity.countsByDay(emp.id, from, to);
-  const open = await missions.openFor(emp.id);
+  const open = await tasks.openFor(emp.id);
 
   const groupByDay = (rows, field) => {
     const map = new Map();
@@ -105,85 +94,59 @@ const employeeStats = async (emp, fromRaw, toRaw) => {
   };
   const doneByDate = groupByDay(doneRows, 'done_at');
   const createdByDate = groupByDay(createdRows, 'created_at');
+  const reportByDate = new Map(reportRows.map((r) => [r.work_date, r]));
 
   const dayRows = [];
-  let workedDays = 0;
-  let totalMinutes = 0;
-  let lateDays = 0;
-  let absentDays = 0;
-  let noCheckout = 0;
+  let workedDays = 0, totalMinutes = 0, noCheckout = 0;
   const arrivals = [];
 
-  for (const d of eachDay(from, to)) {
-    const att = attByDate.get(d);
+  for (const day of at.days) {
+    const d = day.date;
+    const att = day.row;
     const mins = attendance.workedMinutes(att);
     const came = Boolean(att && att.checked_in);
-    const late = came && history.isLate(att.checked_in);
-
+    const late = day.status === 'late';
     if (came) {
       workedDays += 1;
-      const [h, m] = time.clock(att.checked_in).split(':').map(Number);
-      arrivals.push(h * 60 + m);
-      if (late) lateDays += 1;
+      const m = time.minutesOfDay(att.checked_in);
+      if (m !== null) arrivals.push(m);
       if (!att.checked_out) noCheckout += 1;
-    } else if (!time.isSunday(d) && !employees.isFlexible(emp)) {
-      absentDays += 1;
     }
     if (mins !== null) totalMinutes += mins;
 
-    let note = '';
-    if (!came) {
-      if (employees.isFlexible(emp)) note = 'Erkin jadval';
-      else if (att && att.intent === 'no') note = 'Kelmasligini bildirgan';
-      else if (time.isSunday(d)) note = 'Dam olish kuni';
-      else note = 'Kelmagan';
-    } else if (!att.checked_out) note = 'Ketishni belgilamagan';
-    else if (late) note = 'Kech keldi';
+    let note = DAY_NOTE[day.status] || '';
+    if (!came && employees.isFlexible(emp) && day.status !== 'off') note = 'Erkin jadval';
+    else if (!came && att && att.intent === 'no' && day.status === 'absent') note = 'Kelmasligini bildirgan';
+    else if (came && !att.checked_out) note = 'Ketishni belgilamagan';
+    if (day.status === 'excused' && att && att.excuse_reason) note = `Sababli: ${att.excuse_reason}`;
 
     dayRows.push({
-      date: d,
+      date: d, status: day.status,
       in: came ? time.clock(att.checked_in) : null,
       out: att && att.checked_out ? time.clock(att.checked_out) : null,
-      minutes: mins,
-      late,
-      done: doneByDate.get(d) || [],
-      created: createdByDate.get(d) || [],
-      acts: actCounts.get(d) || 0,
-      note,
+      minutes: mins, late, lateMinutes: late ? Number(att.late_minutes) || 0 : 0,
+      done: doneByDate.get(d) || [], created: createdByDate.get(d) || [],
+      report: reportByDate.get(d) || null,
+      acts: actCounts.get(d) || 0, note,
     });
   }
 
   let totalActs = 0;
-  actCounts.forEach((v) => {
-    totalActs += v;
-  });
-
-  const overdue = open.filter((m) => m.due_date < time.today());
+  actCounts.forEach((v) => { totalActs += v; });
 
   return {
-    emp,
-    from,
-    to,
-    days,
-    dayRows,
-    doneRows,
-    createdRows,
-    open,
-    overdue,
-    workedDays,
-    absentDays,
-    lateDays,
-    noCheckout,
+    emp, from, to, days, dayRows, doneRows, createdRows, reportRows, open,
+    overdue: open.filter((t) => t.due_date < time.today()),
+    workDays: at.workDays, workedDays, absentDays: at.absent, lateDays: at.late, excusedDays: at.excused, noCheckout,
+    attPct: at.pct, lateMinutes: at.lateMinutes,
     totalMinutes,
     avgMinutes: workedDays ? Math.round(totalMinutes / workedDays) : null,
-    avgArrival: arrivals.length
-      ? hhmm(arrivals.reduce((a, b) => a + b, 0) / arrivals.length)
-      : '—',
-    doneCount: doneRows.length,
-    createdCount: createdRows.length,
+    avgArrival: arrivals.length ? time.hhmm(arrivals.reduce((a, b) => a + b, 0) / arrivals.length) : '—',
+    doneCount: doneRows.length, createdCount: createdRows.length,
+    ts, tasksPct: ts.pct,
     rate: pct(doneRows.length, createdRows.length),
-    activeDays: [...actCounts.values()].filter((v) => v > 0).length,
-    totalActs,
+    reportDays: reportRows.length,
+    activeDays: [...actCounts.values()].filter((v) => v > 0).length, totalActs,
   };
 };
 
@@ -197,18 +160,14 @@ const teamStats = async (fromRaw, toRaw) => {
   const sum = (f) => rows.reduce((a, r) => a + f(r), 0);
   const totals = {
     employees: rows.length,
-    workedDays: sum((r) => r.workedDays),
-    possibleDays: rows.length * days,
-    absentDays: sum((r) => r.absentDays),
-    lateDays: sum((r) => r.lateDays),
+    workedDays: sum((r) => r.workedDays), possibleDays: sum((r) => r.workDays),
+    absentDays: sum((r) => r.absentDays), lateDays: sum((r) => r.lateDays), excusedDays: sum((r) => r.excusedDays),
     totalMinutes: sum((r) => r.totalMinutes),
-    doneCount: sum((r) => r.doneCount),
-    createdCount: sum((r) => r.createdCount),
-    openCount: sum((r) => r.open.length),
-    overdueCount: sum((r) => r.overdue.length),
+    doneCount: sum((r) => r.doneCount), createdCount: sum((r) => r.createdCount),
+    openCount: sum((r) => r.open.length), overdueCount: sum((r) => r.overdue.length),
+    reportDays: sum((r) => r.reportDays),
   };
   totals.rate = pct(totals.doneCount, totals.createdCount);
-
   return { from, to, days, rows, totals };
 };
 
@@ -217,13 +176,12 @@ const previousDone = async (from, to) => {
   const days = time.daysIn(from, to);
   const prevTo = time.addDays(from, -1);
   const prevFrom = time.addDays(prevTo, -(days - 1));
-  const list = await employees.listActive();
   let total = 0;
-  for (const emp of list) total += (await missions.doneBetween(emp.id, prevFrom, prevTo)).length;
+  for (const emp of await employees.listActive()) total += (await tasks.doneBetween(emp.id, prevFrom, prevTo)).length;
   return { from: prevFrom, to: prevTo, done: total };
 };
 
-/** '↑ 12%' / '↓ 8%' / '= o'zgarishsiz' */
+/** '📈 +12%' / '📉 −8%' / "= o'zgarishsiz" */
 const trend = (current, previous) => {
   if (!previous) return current ? '🆕 yangi' : '—';
   const diff = Math.round(((current - previous) / previous) * 100);
@@ -245,78 +203,61 @@ const dayTable = (stats, limit = 31) => {
   const lines = shown.map((r) => {
     const label = `${time.weekdayShort(r.date)} ${time.shortDate(r.date)}`;
     const dur = r.minutes === null ? '—' : `${Math.floor(r.minutes / 60)}s${String(r.minutes % 60).padStart(2, '0')}`;
-    const mark = r.in ? (r.late ? '!' : ' ') : ' ';
-    return `${label.padEnd(9)}${(r.in || '—').padStart(5)}${mark} ${(r.out || '—').padStart(5)} ${dur.padStart(6)} ${String(r.done.length).padStart(2)}`;
+    const mark = r.late ? '!' : r.status === 'excused' ? 's' : ' ';
+    return `${label.padEnd(9)}${(r.in || '—').padStart(5)}${mark} ${(r.out || '—').padStart(5)} ${dur.padStart(6)} ${String(r.done.length).padStart(2)} ${r.report ? '📝' : '  '}`;
   });
-  const anyLate = shown.some((r) => r.late);
   return (
     `📅 <b>KUNLAR</b>${rows.length > limit ? ` <i>(oxirgi ${limit} kun)</i>` : ''}\n` +
-    `<pre>Kun      Keldi  Ketdi   Soat  ✅\n${'-'.repeat(34)}\n${lines.join('\n')}</pre>` +
-    (anyLate ? "\n<i>! — kech kelgan kun</i>" : '')
+    `<pre>Kun      Keldi  Ketdi   Soat  ✅ 📝\n${'-'.repeat(37)}\n${lines.join('\n')}</pre>` +
+    `\n<i>! — kech kelgan · s — sababli · 📝 — hisobot topshirgan</i>`
   );
 };
 
 /** Bitta hodimning davr hisoboti — direktor ekranda ko'radigan matn */
 const employeeReport = async (emp, from, to, { maxItems = 20 } = {}) => {
   const s = await employeeStats(emp, from, to);
-
   const out = [];
   out.push(header('DAVR HISOBOTI', s.from, s.to));
-  out.push(
-    `👤 <b>${ui.esc(emp.full_name)}</b>${emp.position ? ` · <i>${ui.esc(emp.position)}</i>` : ''}` +
-      (employees.isFlexible(emp) ? ' 🕊' : ''),
-  );
+  out.push(`👤 <b>${esc(emp.full_name)}</b>${emp.position ? ` · <i>${esc(emp.position)}</i>` : ''}${emp.department_name ? ` · ${esc(emp.department_name)}` : ''}${employees.isFlexible(emp) ? ' 🕊' : ''}`);
   out.push('');
-
   out.push('📌 <b>XULOSA</b>');
-  out.push(`   🟢 Ishga kelgan: <b>${s.workedDays} / ${s.days}</b> kun` +
-    (s.absentDays ? ` · 🚫 kelmagan: <b>${s.absentDays}</b>` : ''));
-  out.push(`   ⏱ Jami ish vaqti: <b>${attendance.prettyDuration(s.totalMinutes)}</b>` +
-    (s.avgMinutes ? ` · o'rtacha <b>${attendance.prettyDuration(s.avgMinutes)}</b>` : ''));
-  out.push(`   🕘 O'rtacha kelish: <b>${s.avgArrival}</b>` +
-    (s.lateDays ? ` · ⚠️ kech kelgan: <b>${s.lateDays}</b> kun` : ''));
-  out.push(`   ✅ Bajargan ishlari: <b>${s.doneCount}</b>` +
-    `   📝 Yozib qo'ygani: <b>${s.createdCount}</b>` +
-    (s.rate !== null ? `\n   🎯 Bajarish darajasi: <b>${s.rate}%</b>` : ''));
-  out.push(`   ⏳ Hozir ochiq: <b>${s.open.length}</b>` +
-    (s.overdue.length ? ` <i>(${s.overdue.length} tasi kechikkan)</i>` : ''));
+  out.push(`   🟢 Ishga kelgan: <b>${s.workedDays} / ${s.workDays}</b> ish kuni` + (s.absentDays ? ` · 🔴 kelmagan: <b>${s.absentDays}</b>` : '') + (s.excusedDays ? ` · 📄 sababli: <b>${s.excusedDays}</b>` : ''));
+  out.push(`   🕘 Davomat: ${ui.pctBar(s.attPct)}`);
+  out.push(`   ⏱ Jami ish vaqti: <b>${time.prettyDuration(s.totalMinutes)}</b>` + (s.avgMinutes ? ` · o'rtacha <b>${time.prettyDuration(s.avgMinutes)}</b>` : ''));
+  out.push(`   🕘 O'rtacha kelish: <b>${s.avgArrival}</b>` + (s.lateDays ? ` · ⚠️ kech kelgan: <b>${s.lateDays}</b> kun (${time.prettyDuration(s.lateMinutes)})` : ''));
+  out.push(`   ✅ Bajargan ishlari: <b>${s.doneCount}</b>   📝 Yozib qo'ygani: <b>${s.createdCount}</b>` + (s.rate !== null ? `\n   🎯 Bajarish darajasi: <b>${s.rate}%</b>` : ''));
+  out.push(`   📋 Muddatida (KPI): ${s.ts.ontime}/${s.ts.total} — ${ui.pctBar(s.tasksPct)}${s.ts.penalty ? ` <i>(−${s.ts.penalty}% qaytarish)</i>` : ''}`);
+  out.push(`   ⏳ Hozir ochiq: <b>${s.open.length}</b>` + (s.overdue.length ? ` <i>(${s.overdue.length} tasi kechikkan)</i>` : ''));
+  out.push(`   📝 Kunlik hisobot topshirgan: <b>${s.reportDays}</b> kun`);
   out.push(`   👆 Bot faolligi: <b>${s.totalActs}</b> harakat · <b>${s.activeDays}</b> kun`);
   out.push('');
-
   out.push(dayTable(s));
   out.push('');
 
-  // Bajarganlari — kun bo'yicha
   out.push(`✅ <b>BAJARGAN ISHLARI (${s.doneCount})</b>`);
   if (s.doneCount) {
-    const list = s.doneRows.slice(0, maxItems);
-    list.forEach((m) => {
-      const d = String(m.done_at).slice(0, 10);
-      out.push(`   <code>${time.shortDate(d)}</code> ✅ ${ui.esc(m.title)}`);
+    s.doneRows.slice(0, maxItems).forEach((t) => {
+      const d = String(t.done_at).slice(0, 10);
+      out.push(`   <code>${time.shortDate(d)}</code> ${t.status === 'accepted' ? '✅' : '🕓'} ${esc(t.title)}${d > t.due_date ? ' <i>(kech)</i>' : ''}`);
     });
     if (s.doneCount > maxItems) out.push(`   <i>…yana ${s.doneCount - maxItems} ta (Excel faylda to'liq)</i>`);
-  } else {
-    out.push('   <i>— bu davrda bajarilgan ish yo\'q —</i>');
-  }
+  } else out.push("   <i>— bu davrda bajarilgan ish yo'q —</i>");
   out.push('');
 
-  // Hozir zimmasida turgan ishlar
   out.push(`⏳ <b>HOZIR ZIMMASIDA (${s.open.length})</b>`);
   if (s.open.length) {
-    s.open.slice(0, maxItems).forEach((m) => {
-      const late = m.due_date < time.today();
-      out.push(
-        `   ${late ? '🔴' : '🔹'} ${ui.esc(m.title)}` +
-          (late
-            ? ` <i>— ${time.diffDays(m.due_date, time.today())} kun kechikdi</i>`
-            : ` <i>(${time.prettyDate(m.due_date)} gacha)</i>`),
-      );
+    s.open.slice(0, maxItems).forEach((t) => {
+      const late = t.due_date < time.today();
+      out.push(`   ${late ? '🔴' : '🔹'} ${esc(t.title)}` + (late ? ` <i>— ${time.diffDays(t.due_date, time.today())} kun kechikdi</i>` : ` <i>(${time.prettyDate(t.due_date)} gacha)</i>`));
     });
     if (s.open.length > maxItems) out.push(`   <i>…yana ${s.open.length - maxItems} ta</i>`);
-  } else {
-    out.push('   <i>— hammasi yopilgan 🎉 —</i>');
-  }
+  } else out.push('   <i>— hammasi yopilgan 🎉 —</i>');
 
+  if (s.reportRows.length) {
+    out.push('', `📝 <b>KUNLIK HISOBOTLARI (${s.reportRows.length})</b>`);
+    s.reportRows.slice(-7).forEach((r) => out.push(`   <code>${time.shortDate(r.work_date)}</code> ${esc(r.text).slice(0, 160).replace(/\n/g, ' ')}${r.text.length > 160 ? '…' : ''}`));
+    if (s.reportRows.length > 7) out.push(`   <i>…oxirgi 7 tasi ko'rsatildi (Excel faylda to'liq)</i>`);
+  }
   return out.join('\n');
 };
 
@@ -324,90 +265,43 @@ const employeeReport = async (emp, from, to, { maxItems = 20 } = {}) => {
 const teamReport = async (from, to, { compare = true } = {}) => {
   const t = await teamStats(from, to);
   const out = [];
-
   out.push(header(`${COMPANY} — JAMOA HISOBOTI`, t.from, t.to));
-
   out.push('📊 <b>UMUMIY</b>');
   let trendText = '';
   if (compare) {
     const prev = await previousDone(t.from, t.to);
-    if (prev.done) {
-      trendText = ` <i>(oldingi ${t.days} kunda: ${prev.done} — ${trend(t.totals.doneCount, prev.done)})</i>`;
-    }
+    if (prev.done) trendText = ` <i>(oldingi ${t.days} kunda: ${prev.done} — ${trend(t.totals.doneCount, prev.done)})</i>`;
   }
   out.push(`   ✅ Bajarilgan ishlar: <b>${t.totals.doneCount}</b>${trendText}`);
-  out.push(`   📝 Yozib qo'yilgan: <b>${t.totals.createdCount}</b>` +
-    (t.totals.rate !== null ? ` · 🎯 bajarish: <b>${t.totals.rate}%</b>` : ''));
-  out.push(`   ⏳ Hozir ochiq: <b>${t.totals.openCount}</b>` +
-    (t.totals.overdueCount ? ` <i>(${t.totals.overdueCount} tasi kechikkan)</i>` : ''));
-  out.push(`   🟢 Davomat: <b>${t.totals.workedDays}/${t.totals.possibleDays}</b> kun` +
-    (t.totals.lateDays ? ` · ⚠️ kech: <b>${t.totals.lateDays}</b>` : ''));
-  out.push(`   ⏱ Jami ish vaqti: <b>${attendance.prettyDuration(t.totals.totalMinutes)}</b>`);
+  out.push(`   📝 Yozib qo'yilgan: <b>${t.totals.createdCount}</b>` + (t.totals.rate !== null ? ` · 🎯 bajarish: <b>${t.totals.rate}%</b>` : ''));
+  out.push(`   ⏳ Hozir ochiq: <b>${t.totals.openCount}</b>` + (t.totals.overdueCount ? ` <i>(${t.totals.overdueCount} tasi kechikkan)</i>` : ''));
+  out.push(`   🟢 Davomat: <b>${t.totals.workedDays}/${t.totals.possibleDays}</b> ish kuni` + (t.totals.lateDays ? ` · ⚠️ kech: <b>${t.totals.lateDays}</b>` : '') + (t.totals.excusedDays ? ` · 📄 sababli: ${t.totals.excusedDays}` : ''));
+  out.push(`   ⏱ Jami ish vaqti: <b>${time.prettyDuration(t.totals.totalMinutes)}</b>`);
+  out.push(`   📝 Kunlik hisobotlar: <b>${t.totals.reportDays}</b>`);
   out.push(`   👥 Hodimlar: <b>${t.totals.employees}</b>`);
   out.push('');
 
-  // Reyting — kim ko'p ish bajardi
-  const rank = [...t.rows].sort((a, b) => b.doneCount - a.doneCount || (b.rate || 0) - (a.rate || 0));
+  const rank = [...t.rows].sort((a, b) => b.doneCount - a.doneCount || (b.tasksPct || 0) - (a.tasksPct || 0));
   if (rank.length > 1 && rank[0].doneCount) {
     out.push('🏆 <b>REYTING</b>');
     const medals = ['🥇', '🥈', '🥉'];
-    rank.slice(0, 5).forEach((r, i) => {
-      out.push(
-        `   ${medals[i] || `${i + 1}.`} <b>${ui.esc(r.emp.full_name)}</b> — ` +
-          `${r.doneCount} ta${r.rate !== null ? ` · ${r.rate}%` : ''}`,
-      );
-    });
+    rank.slice(0, 5).forEach((r, i) => out.push(`   ${medals[i] || `${i + 1}.`} <b>${esc(r.emp.full_name)}</b> — ${r.doneCount} ta · muddatida ${r.tasksPct}% · davomat ${r.attPct}%`));
     out.push('');
   }
 
   out.push('👥 <b>HODIMLAR KESIMIDA</b>');
-  if (!t.rows.length) {
-    out.push("   <i>Hodimlar ro'yxati bo'sh</i>");
-  } else {
+  if (!t.rows.length) out.push("   <i>Hodimlar ro'yxati bo'sh</i>");
+  else {
     t.rows.forEach((r) => {
       out.push('');
-      out.push(
-        `👤 <b>${ui.esc(r.emp.full_name)}</b>` +
-          (r.emp.position ? ` · <i>${ui.esc(r.emp.position)}</i>` : '') +
-          (employees.isFlexible(r.emp) ? ' 🕊' : ''),
-      );
-      out.push(
-        `   🟢 ${r.workedDays}/${r.days} kun · ⏱ ${attendance.prettyDuration(r.totalMinutes)}` +
-          ` · 🕘 ${r.avgArrival}${r.lateDays ? ` · ⚠️ ${r.lateDays}` : ''}`,
-      );
-      out.push(
-        `   ✅ ${r.doneCount} bajardi · 📝 ${r.createdCount} yozdi` +
-          (r.rate !== null ? ` · 🎯 ${r.rate}%` : '') +
-          (r.open.length ? ` · ⏳ ${r.open.length}` : '') +
-          (r.overdue.length ? ` 🔴 ${r.overdue.length}` : ''),
-      );
+      out.push(`👤 <b>${esc(r.emp.full_name)}</b>` + (r.emp.position ? ` · <i>${esc(r.emp.position)}</i>` : '') + (employees.isFlexible(r.emp) ? ' 🕊' : ''));
+      out.push(`   🟢 ${r.workedDays}/${r.workDays} kun · ⏱ ${time.prettyDuration(r.totalMinutes)} · 🕘 ${r.avgArrival}${r.lateDays ? ` · ⚠️ ${r.lateDays}` : ''}${r.absentDays ? ` · 🔴 ${r.absentDays}` : ''}`);
+      out.push(`   ✅ ${r.doneCount} bajardi · 📝 ${r.createdCount} yozdi` + (r.rate !== null ? ` · 🎯 ${r.rate}%` : '') + ` · 📋 ${r.tasksPct}%` + (r.open.length ? ` · ⏳ ${r.open.length}` : '') + (r.overdue.length ? ` 🔴 ${r.overdue.length}` : '') + ` · 📝 hisobot ${r.reportDays}`);
     });
   }
-
   return out.join('\n');
 };
 
-/** Telegram chegarasiga (4096) sig'adigan bo'laklarga bo'ladi — <pre> buzilmaydi */
-const splitText = (text, limit = 3800) => {
-  if (text.length <= limit) return [text];
-  const parts = [];
-  let buf = '';
-  let open = 0;
-  for (const line of text.split('\n')) {
-    open += (line.match(/<pre>/g) || []).length;
-    open -= (line.match(/<\/pre>/g) || []).length;
-    if (buf.length + line.length + 1 > limit && open === 0 && buf) {
-      parts.push(buf);
-      buf = '';
-    }
-    buf += (buf ? '\n' : '') + line;
-  }
-  if (buf) parts.push(buf);
-  return parts;
-};
-
 module.exports = {
-  PRESETS, presetRange, normalize, eachDay, splitText,
-  employeeStats, teamStats, previousDone, trend,
-  employeeReport, teamReport, dayTable, hhmm, pct,
+  PRESETS, presetRange, normalize, eachDay, employeeStats, teamStats, previousDone, trend, employeeReport, teamReport, dayTable, pct,
 };

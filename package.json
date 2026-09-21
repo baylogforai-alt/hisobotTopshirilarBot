@@ -1,8 +1,8 @@
 {
   "name": "missiya-bot",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "BayLog Cargo hodimlari uchun missiya (vazifa) boshqaruvi va hisobot Telegram boti",
+  "description": "BayLog Cargo korporativ Telegram bot: davomat (GPS), missiya/topshiriq + tekshiruv, kunlik hisobot, KPI-bonus, arxiv va Excel hisobotlar",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
@@ -10,13 +10,14 @@
     "seed": "node scripts/seed.js",
     "admin": "node scripts/admin.js",
     "db:check": "node scripts/db-check.js",
+    "backup": "node scripts/backup.js",
     "test": "node scripts/smoke.js"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0",
+    "better-sqlite3": "^12.11.1",
     "dotenv": "^16.4.7",
     "exceljs": "^4.4.0",
     "luxon": "^3.5.0",
