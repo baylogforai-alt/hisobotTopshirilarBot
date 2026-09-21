@@ -60,7 +60,7 @@ const start = (port = config.port) => {
 
     /* ---- oddiy tiriklik tekshiruvi ---- */
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('OK — missiya bot ishlamoqda\n');
+    res.end(`OK — ${config.companyName} bot ishlamoqda\n`);
   });
 
   server.on('error', (err) => {
