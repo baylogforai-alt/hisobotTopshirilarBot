@@ -76,9 +76,14 @@ src/jobs.js           pre-start-intent (start−5), morning-group (start), morni
 ## 6. Holat
 
 - ✅ `npm test` — 106/106, handler xatosi 0. `npm run db:check` lokal `data/bot.db` da v1 → v2 migratsiyasini bajardi (1 missiya → tasks, `missions_v1` qoldi; `data/bot.db.pre-v2-backup` nusxasi bor).
-- ⬜ Haqiqiy Telegramda hali sinalmagan (lokal `npm start` va Railway bir vaqtda 409 beradi — avval serverni to'xtatish kerak).
-- ⬜ Postgres/Supabase bilan sinalmagan (migratsiya `to_regclass` + tranzaksiya bilan yozilgan).
-- ⬜ Railway'ga deploy qilinmagan (v1 qayerda ishlayotgani noma'lum — README v1 da Koyeb/Railway). Deploy'dan oldin `.env`/Variables ga yangi kalitlar: `ANNOUNCE_DONE`, `DAILY_REPORT_REQUIRED`, `DAILY_REPORT_REMIND_MIN`, `CRM_API_SECRET` (ixtiyoriy), `LATE_GRACE_MINUTES`, `RETURN_PENALTY_PCT`, `OFFICE_RADIUS_M`, `BACKUP_KEEP`.
+- ✅ 21-sen-2026 **Railway'ga deploy qilindi**: loyiha `missiya-bot-baylog` (`1f7a7f70-a8f5-427d-a874-2b50bc60baf4`), servis `missiya-bot`, baza — shu loyihadagi **Postgres** servisi (`DATABASE_URL` → `postgres.railway.internal`, tashqi TCP proxy yo'q).
+  Prod migratsiyasi o'tdi: `[db] v1 missions → tasks: 154 ta yozuv ko'chirildi (eski jadval: missions_v1)`. Health: https://missiya-bot-production.up.railway.app/ ; `/crm/snapshot` kalit bilan (CRM_API_SECRET prod'da bor).
+  Deploy usuli: `git push origin master:main` (GitHub `baylogforai-alt/hisobotTopshirilarBot`, lokal branch `master` → remote `main`) + **`railway up --detach`** (GitHub auto-deploy emas). Papka `railway link` qilingan.
+  Rolling deploy paytida eski konteyner bilan bir marta 409 Conflict bo'ladi — jarayon qayta ishga tushib o'zi tuzaladi.
+  Prod Variables: BOT_TOKEN, DATABASE_URL, COMPANY_NAME, TIMEZONE, WORK_START_HOUR=9, WORK_END_HOUR=19, WORK_DAYS, REMINDER_INTERVAL_HOURS=2, ANNOUNCE_DONE, CRM_API_SECRET. `ADMIN_IDS` yo'q — adminlar bazada role=admin.
+  Yangi ixtiyoriy kalitlar (standart bilan ishlaydi): DAILY_REPORT_REQUIRED, DAILY_REPORT_REMIND_MIN, LATE_GRACE_MINUTES, RETURN_PENALTY_PCT, OFFICE_RADIUS_M, BACKUP_KEEP.
+- ⬜ Haqiqiy Telegramda hodimlar bilan to'liq oqim (GPS, rasm bilan Bajardim, kunlik hisobot) hali sinalmagan. Lokal `npm start` prod bilan 409 beradi.
+- ⚠️ Auto-mode: `railway ssh` (prod o'qish) rad etiladi — prod bazani zaxiralash uchun foydalanuvchi o'zi Railway dashboard'dan qilishi kerak.
 
 ## Ishga tushirish
 
