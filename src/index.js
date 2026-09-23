@@ -56,6 +56,12 @@ const COMMANDS = [
   }
 
   try {
+    await require('./fixes').run();
+  } catch (err) {
+    console.error('[fix] xato:', err.message);
+  }
+
+  try {
     const restored = await session.load();
     if (restored) console.log(`🧭 ${restored} ta sessiya tiklandi`);
   } catch (err) {
