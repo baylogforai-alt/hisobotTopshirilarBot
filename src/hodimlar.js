@@ -13,7 +13,7 @@ const HODIMLAR = [
   { tgId: 5934117099, fullName: 'Akbarali', position: 'Marketolog' },
   { tgId: 7963610051, fullName: 'Durdona', position: 'Operator' },
   { tgId: 7802923308, fullName: 'Islombek', position: 'Dasturchi' },
-  { tgId: 7956294912, fullName: 'Buxgalter', position: 'Buxgalter' },
+  // 7956294912 Rahmatullo (buxgalter) — 23-sen-2026 botdan chiqarildi, qayta qo'shilmasin
 ];
 
 module.exports = { HODIMLAR };
