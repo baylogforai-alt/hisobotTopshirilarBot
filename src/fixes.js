@@ -14,6 +14,8 @@ const FIXES = [
   { id: 'chiqar-rahmatulloh-20260923', action: 'deactivate', match: (e) => /rahmatull/i.test(e.full_name) },
   // 23-sen-2026: direktorga hodim qo'shish/o'chirish huquqi (role=admin)
   { id: 'direktor-admin-20260923', action: 'admin', match: (e) => /direktor|director/i.test(`${e.full_name} ${e.position || ''}`) },
+  // 2-okt-2026: Odilxon (asoschi) — eng katta boshliq; bazada oldin hodim bo'lib qo'shilgan bo'lsa ham admin bo'lsin, xabarlardagi boshliq ismi
+  { id: 'odilxon-boss-20261002', action: 'boss', match: (e) => Number(e.tg_id) === 8726834955 },
 ];
 
 const run = async () => {
@@ -28,6 +30,10 @@ const run = async () => {
     const e = hits[0];
     if (f.action === 'deactivate') await employees.deactivate(e.id);
     if (f.action === 'admin') await employees.setRole(e.id, 'admin');
+    if (f.action === 'boss') {
+      await employees.setRole(e.id, 'admin');
+      await require('./services/org').setBossName(e.full_name);
+    }
     await db.setSetting(`fix:${f.id}`, `${e.id} ${e.full_name}`);
     console.log(`[fix] ${f.id}: ${e.full_name} (${e.tg_id}) → ${f.action}`);
   }
