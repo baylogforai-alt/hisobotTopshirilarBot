@@ -153,7 +153,7 @@ const employeeStats = async (emp, fromRaw, toRaw) => {
 /** Butun jamoa — har bir faol hodim uchun employeeStats */
 const teamStats = async (fromRaw, toRaw) => {
   const { from, to, days } = normalize(fromRaw, toRaw);
-  const list = await employees.listActive();
+  const list = await employees.listStaff();
   const rows = [];
   for (const emp of list) rows.push(await employeeStats(emp, from, to));
 
@@ -177,7 +177,7 @@ const previousDone = async (from, to) => {
   const prevTo = time.addDays(from, -1);
   const prevFrom = time.addDays(prevTo, -(days - 1));
   let total = 0;
-  for (const emp of await employees.listActive()) total += (await tasks.doneBetween(emp.id, prevFrom, prevTo)).length;
+  for (const emp of await employees.listStaff()) total += (await tasks.doneBetween(emp.id, prevFrom, prevTo)).length;
   return { from: prevFrom, to: prevTo, done: total };
 };
 

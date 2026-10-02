@@ -23,7 +23,7 @@ const botOf = (ctx) => ({ telegram: ctx.telegram });
 
 // 1) Bosh sahifa
 const homeText = async () => {
-  const list = await employees.listActive();
+  const list = await employees.listStaff();
   if (!list.length) return "Hodimlar ro'yxati bo'sh. Panel → «➕ Hodim qo'shish».";
   const t = time.today();
   const lines = [];
@@ -40,7 +40,7 @@ const homeText = async () => {
 };
 
 const homeKeyboard = async () => {
-  const rows = (await employees.listActive()).map((e) => [cb(`👤 ${e.full_name}`, `hr:emp:${e.id}`)]);
+  const rows = (await employees.listStaff()).map((e) => [cb(`👤 ${e.full_name}`, `hr:emp:${e.id}`)]);
   rows.push([cb('🏢 Jamoa · 7 kun', 'hr:team:7'), cb('🏢 30 kun', 'hr:team:30')]);
   rows.push([cb('📥 Excel yuklab olish (kun / hafta / oy)', 'xl:home')]);
   rows.push([cb('📈 Davr hisoboti (sana tanlab)', 'pr:home')]);

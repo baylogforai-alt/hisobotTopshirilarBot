@@ -18,13 +18,30 @@ const SELECT = `SELECT t.*, e.full_name, e.tg_id, e.department_id, e.username
 
 const byId = (id) => db.one(`${SELECT} WHERE t.id = $1`, [Number(id)]);
 
-const create = async ({ employeeId, title, dueDate, createdBy, source = 'self', priority = 'normal', startDate = time.today() }) => {
+/** media — topshiriqning o'zi ovoz / video / fayl / rasm bo'lsa: { type, fileId, fileName } */
+const create = async ({ employeeId, title, dueDate, createdBy, source = 'self', priority = 'normal', startDate = time.today(), media = null }) => {
   const rows = await db.query(
-    `INSERT INTO tasks (employee_id, title, status, priority, source, created_by, created_at, start_date, due_date)
-     VALUES ($1, $2, 'active', $3, $4, $5, $6, $7, $8) RETURNING id`,
-    [Number(employeeId), String(title).trim().slice(0, 500), priority, source, createdBy ? Number(createdBy) : null, time.stamp(), startDate, dueDate],
+    `INSERT INTO tasks (employee_id, title, status, priority, source, created_by, created_at, start_date, due_date, task_media_type, task_file_id, task_file_name)
+     VALUES ($1, $2, 'active', $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+    [Number(employeeId), String(title).trim().slice(0, 500), priority, source, createdBy ? Number(createdBy) : null, time.stamp(), startDate, dueDate,
+      media ? media.type : null, media ? media.fileId : null, media && media.fileName ? String(media.fileName).slice(0, 200) : null],
   );
   return byId(rows[0].id);
+};
+
+/** «Eshitdim, tushundim» kerakmi: boshqa odam bergan, hali tasdiqlanmagan, yopilmagan */
+const needsAck = (t) => Boolean(t && t.source !== 'self' && !t.ack_at && (t.status === 'active' || t.status === 'done'));
+
+/** Hodim «tushundim» degan topshiriqlar (bergani xabardor qilinadi) */
+const unackedFor = async (employeeId) =>
+  (await db.query(`${SELECT} WHERE t.employee_id = $1 AND t.source <> 'self' AND t.ack_at IS NULL AND t.status IN ('active', 'done') ORDER BY t.id`, [Number(employeeId)]));
+
+/** Tasdiqlash — faqat o'z topshirig'i, bir marta. Tasdiqlangan topshiriq yoki null */
+const ack = async (id, employeeId, note = null) => {
+  const t = await byId(id);
+  if (!t || Number(t.employee_id) !== Number(employeeId) || !needsAck(t)) return null;
+  await db.query('UPDATE tasks SET ack_at = $1, ack_note = $2 WHERE id = $3 AND ack_at IS NULL', [time.stamp(), note ? String(note).slice(0, 300) : null, Number(id)]);
+  return byId(id);
 };
 
 /** Ochiq topshiriqlar: kechikkanlar → muhim → muddat bo'yicha */
@@ -39,6 +56,13 @@ const openFor = (employeeId) =>
 /** Tekshiruvni kutayotganlar (hodim bo'yicha) */
 const awaitingReviewFor = (employeeId) =>
   db.query(`${SELECT} WHERE t.employee_id = $1 AND t.status = 'done' ORDER BY t.done_at DESC`, [Number(employeeId)]);
+
+/** Yaqinda qabul qilinganlar (since — 'yyyy-MM-dd' dan beri), yangilari birinchi */
+const acceptedSince = (employeeId, since, limit = 50) =>
+  db.query(
+    `${SELECT} WHERE t.employee_id = $1 AND t.status = 'accepted' AND substr(t.done_at, 1, 10) >= $2 ORDER BY t.done_at DESC LIMIT ${Math.min(200, Math.max(1, Number(limit) || 50))}`,
+    [Number(employeeId), since],
+  );
 
 /** Bugun bajarilgan / qabul qilinganlar */
 const doneOn = (employeeId, date = time.today()) =>
@@ -67,17 +91,32 @@ const markDone = async (id, employeeId, proof = null) => {
   const t = await byId(id);
   if (!t || Number(t.employee_id) !== Number(employeeId)) return { ok: false, reason: 'not_found' };
   if (t.status !== 'active') return { ok: false, reason: 'not_active', task: t };
-  await db.query(
-    `UPDATE tasks SET status = 'done', done_at = $1, proof_type = $2, proof_file_id = $3, proof_note = $4, review_note = NULL WHERE id = $5`,
+  // holat o'tishlari atomik: WHERE status=... + RETURNING — parallel ikki bosishdan faqat bittasi o'tadi
+  const upd = await db.query(
+    `UPDATE tasks SET status = 'done', done_at = $1, proof_type = $2, proof_file_id = $3, proof_note = $4, review_note = NULL
+      WHERE id = $5 AND status = 'active' RETURNING id`,
     [time.stamp(), proof ? proof.type : null, proof ? proof.fileId : null, proof && proof.note ? proof.note : null, Number(id)],
   );
+  if (!upd.length) return { ok: false, reason: 'not_active', task: await byId(id) };
+  return { ok: true, task: await byId(id) };
+};
+
+/** Boshliq o'ziga yozgan missiya — isbot ixtiyoriy, tekshiruvsiz darhol «bajarildi» (accepted) */
+const isBossOwn = (emp, t) => Boolean(emp && t && emp.role === 'admin' && t.source === 'self' && Number(t.employee_id) === Number(emp.id));
+
+/** Boshliqning o'z missiyasi: done + accepted bir qadamda */
+const completeOwn = async (id, emp, proof = null) => {
+  const res = await markDone(id, emp.id, proof);
+  if (!res.ok) return res;
+  await db.query(`UPDATE tasks SET status = 'accepted', reviewed_by = $1, reviewed_at = $2 WHERE id = $3`, [Number(emp.tg_id), res.task.done_at, Number(id)]);
   return { ok: true, task: await byId(id) };
 };
 
 const accept = async (id, byTgId) => {
   const t = await byId(id);
   if (!t || t.status !== 'done') return { ok: false, task: t };
-  await db.query(`UPDATE tasks SET status = 'accepted', reviewed_by = $1, reviewed_at = $2 WHERE id = $3`, [Number(byTgId), time.stamp(), Number(id)]);
+  const upd = await db.query(`UPDATE tasks SET status = 'accepted', reviewed_by = $1, reviewed_at = $2 WHERE id = $3 AND status = 'done' RETURNING id`, [Number(byTgId), time.stamp(), Number(id)]);
+  if (!upd.length) return { ok: false, task: await byId(id) };
   return { ok: true, task: await byId(id) };
 };
 
@@ -86,16 +125,19 @@ const returnBack = async (id, byTgId, note = null) => {
   const t = await byId(id);
   if (!t || t.status !== 'done') return { ok: false, task: t };
   const due = t.due_date < time.today() ? time.today() : t.due_date;
-  await db.query(
+  const upd = await db.query(
     `UPDATE tasks SET status = 'active', reviewed_by = $1, reviewed_at = $2, review_note = $3, returned_count = returned_count + 1,
-       due_date = $4, done_at = NULL, proof_type = NULL, proof_file_id = NULL, proof_note = NULL WHERE id = $5`,
+       due_date = $4, done_at = NULL, proof_type = NULL, proof_file_id = NULL, proof_note = NULL WHERE id = $5 AND status = 'done' RETURNING id`,
     [Number(byTgId), time.stamp(), note ? String(note).slice(0, 300) : null, due, Number(id)],
   );
+  if (!upd.length) return { ok: false, task: await byId(id) };
   return { ok: true, task: await byId(id) };
 };
 
-const cancel = async (id) => {
-  await db.query(`UPDATE tasks SET status = 'cancelled', cancelled_at = $1 WHERE id = $2 AND status IN ('active','done')`, [time.stamp(), Number(id)]);
+/** Bekor qilish — yozuv o'chirilmaydi, status 'cancelled' + kim va qachon */
+const cancel = async (id, byTgId = null) => {
+  await db.query(`UPDATE tasks SET status = 'cancelled', cancelled_at = $1, cancelled_by = $2 WHERE id = $3 AND status IN ('active','done')`,
+    [time.stamp(), byTgId ? Number(byTgId) : null, Number(id)]);
   return byId(id);
 };
 
@@ -108,6 +150,40 @@ const range = (employeeId, from, to) =>
   db.query(`${SELECT} WHERE t.employee_id = $1 AND t.due_date BETWEEN $2 AND $3 AND t.status <> 'cancelled' ORDER BY t.due_date, t.id`, [
     Number(employeeId), from, to,
   ]);
+
+// ---------------------------------------------------------------------------
+// JURNAL — hamma topshiriqlar (boshliq/direktor va HR): kim, kimga, qachon, nima
+// ---------------------------------------------------------------------------
+const JOURNAL_SELECT = `SELECT t.*, e.full_name, e.tg_id, e.department_id, e.username,
+         g.full_name AS giver_name, g.is_hr AS giver_is_hr, g.role AS giver_role
+    FROM tasks t JOIN employees e ON e.id = t.employee_id
+    LEFT JOIN employees g ON g.tg_id = t.created_by`;
+
+/** Kim bergan: admin (direktor/boshliq) · hr · head (bo'lim rahbari) · self (o'zi yozgan) */
+const giverKind = (t) => {
+  if (t.source === 'self') return 'self';
+  if (t.source === 'admin') return 'admin';
+  return Number(t.giver_is_hr) === 1 ? 'hr' : 'head';
+};
+/** open · review · accepted · overdue · cancelled */
+const statusKind = (t, today = time.today()) => {
+  if (t.status === 'cancelled') return 'cancelled';
+  if (t.status === 'accepted') return 'accepted';
+  if (t.status === 'done') return 'review';
+  return t.due_date < today ? 'overdue' : 'open';
+};
+const withKinds = (t, today) => (t ? { ...t, giver_kind: giverKind(t), status_kind: statusKind(t, today) } : null);
+
+/** Berilgan sana (created_at) [from, to] oralig'ida; yangisi birinchi. filter: employeeId, giver, status */
+const journal = async ({ from, to, employeeId = null, giver = null, status = null } = {}) => {
+  const params = [from, to];
+  let where = 'substr(t.created_at, 1, 10) BETWEEN $1 AND $2';
+  if (employeeId) { params.push(Number(employeeId)); where += ` AND t.employee_id = $${params.length}`; }
+  const today = time.today();
+  const rows = await db.query(`${JOURNAL_SELECT} WHERE ${where} ORDER BY t.created_at DESC, t.id DESC`, params);
+  return rows.map((t) => withKinds(t, today)).filter((t) => (!giver || t.giver_kind === giver) && (!status || t.status_kind === status));
+};
+const journalItem = async (id) => withKinds(await db.one(`${JOURNAL_SELECT} WHERE t.id = $1`, [Number(id)]));
 
 /** Jamoa bo'yicha davr topshiriqlari */
 const rangeAll = (from, to) =>
@@ -191,19 +267,22 @@ const isOnTime = (t) => t.status === 'accepted' && t.done_at && String(t.done_at
  * (hali muddati kelmagan ish "bajarilmadi" bo'lib turmasin).
  *   total, accepted, ontime, late (qabul qilingan lekin muddatdan keyin), open, overdue, awaiting,
  *   returned — qaytarilgan ishlar soni, returns — jami qaytarishlar (bitta ish 2 marta = 2),
+ *   missed — muddatida bajarilmaganlar (kech qabul + kech topshirilgan + muddati o'tgan ochiq) — KPI sharti uchun
  *   rawPct — muddatida/jami, penalty — returns × RETURN_PENALTY_PCT, pct = rawPct − penalty (0 dan kam emas)
  */
 const stats = async (employeeId, from, to) => {
   const today = time.today();
   const rows = (await range(employeeId, from, to)).filter((t) => t.due_date <= today);
-  const res = { total: rows.length, accepted: 0, ontime: 0, late: 0, open: 0, overdue: 0, awaiting: 0, returned: 0, returns: 0 };
+  const res = { total: rows.length, accepted: 0, ontime: 0, late: 0, open: 0, overdue: 0, awaiting: 0, returned: 0, returns: 0, missed: 0 };
   for (const t of rows) {
     if (Number(t.returned_count) > 0) { res.returned += 1; res.returns += Number(t.returned_count); }
     if (t.status === 'accepted') {
       res.accepted += 1;
-      if (isOnTime(t)) res.ontime += 1; else res.late += 1;
-    } else if (t.status === 'done') res.awaiting += 1;
-    else if (t.status === 'active') { res.open += 1; if (t.due_date < today) res.overdue += 1; }
+      if (isOnTime(t)) res.ontime += 1; else { res.late += 1; res.missed += 1; }
+    } else if (t.status === 'done') {
+      res.awaiting += 1;
+      if (t.done_at && String(t.done_at).slice(0, 10) > t.due_date) res.missed += 1;
+    } else if (t.status === 'active') { res.open += 1; if (t.due_date < today) { res.overdue += 1; res.missed += 1; } }
   }
   res.rawPct = res.total ? Math.round((res.ontime / res.total) * 100) : 100;
   res.penalty = res.returns * Math.max(0, config.returnPenaltyPct);
@@ -219,7 +298,7 @@ const dayStats = async (employeeId, date = time.today()) => {
 };
 
 module.exports = {
-  byId, create, openFor, awaitingReviewFor, doneOn, overdue, pendingReview, markDone, accept, returnBack, cancel,
+  isBossOwn, completeOwn, needsAck, unackedFor, ack, journal, journalItem, giverKind, statusKind, byId, create, openFor, awaitingReviewFor, acceptedSince, doneOn, overdue, pendingReview, markDone, accept, returnBack, cancel,
   rename, setDue, setPriority, range, rangeAll, isOnTime, stats, dayStats,
   createdOn, cancelledOn, dueOn, doneBetween, createdBetween, forRange, hasCoverageFor, dayRows,
 };

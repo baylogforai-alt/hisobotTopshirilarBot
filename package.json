@@ -11,7 +11,9 @@
     "admin": "node scripts/admin.js",
     "db:check": "node scripts/db-check.js",
     "backup": "node scripts/backup.js",
-    "test": "node scripts/smoke.js"
+    "test": "node scripts/smoke.js && node scripts/smoke-bayoma.js",
+    "test:baylog": "node scripts/smoke.js",
+    "test:bayoma": "node scripts/smoke-bayoma.js"
   },
   "engines": {
     "node": ">=20"

@@ -49,10 +49,11 @@ const askDepartment = async (ctx, add) => {
 const askRole = (ctx, add) => {
   session.set(ctx.from.id, { step: 'add_role', add });
   return ctx.reply(
-    `🎖 <b>Roli?</b>\n\n👤 <b>Hodim</b> — topshiriq oladi, bajaradi.\n🎖 <b>Bo'lim boshlig'i</b> — o'z bo'limiga topshiriq beradi, tekshiradi, baholaydi.\n👑 <b>Direktor / HR</b> — hamma narsa.`,
+    `🎖 <b>Roli?</b>\n\n👤 <b>Hodim</b> — topshiriq oladi, bajaradi.\n🎖 <b>Rahbar</b> (masalan sotuv rahbari) — o'z bo'limi hodimlariga topshiriq beradi, tekshiradi, baholaydi.\n` +
+      `🧑‍💼 <b>HR</b> — rahbar + barcha hodimlarning kelmaslik/kechikish xabarlarini oladi.\n👑 <b>Direktor</b> — hamma narsa.`,
     { parse_mode: 'HTML', ...inline([
-      [cb('👤 Hodim', 'ea:role:employee'), cb("🎖 Bo'lim boshlig'i", 'ea:role:head')],
-      [cb('👑 Direktor / HR', 'ea:role:admin')],
+      [cb('👤 Hodim', 'ea:role:employee'), cb('🎖 Rahbar', 'ea:role:head')],
+      [cb('🧑‍💼 HR', 'ea:role:hr'), cb('👑 Direktor', 'ea:role:admin')],
       [cb(ui.BTN.cancel, 'ea:cancel')],
     ]) },
   );
@@ -62,7 +63,7 @@ const summary = async (add) => {
   const dept = add.departmentId ? await departments.byId(add.departmentId) : null;
   return (
     `🆔 <code>${add.tgId}</code>${add.username ? ` (@${esc(add.username)})` : ''}\n` +
-    `👤 <b>${esc(add.fullName)}</b>\n💼 ${esc(add.position || '—')}\n🏢 ${esc(dept ? dept.name : "Bo'limsiz")}\n🎖 ${employees.roleLabel(add.role)}`
+    `👤 <b>${esc(add.fullName)}</b>\n💼 ${esc(add.position || '—')}\n🏢 ${esc(dept ? dept.name : "Bo'limsiz")}\n🎖 ${add.isHr ? 'HR' : employees.roleLabel(add.role)}`
   );
 };
 
@@ -76,7 +77,7 @@ const finish = async (ctx) => {
   if (!add || !add.tgId) return ctx.answerCbQuery('Sessiya eskirgan');
   const { employee, created } = await employees.add({
     tgId: add.tgId, fullName: add.fullName, position: add.position || null, role: add.role || 'employee',
-    departmentId: add.departmentId || null, username: add.username || null,
+    departmentId: add.departmentId || null, username: add.username || null, isHr: Boolean(add.isHr),
   });
   await requests.closeFor(add.tgId, 'approved', ctx.from.id);
   session.clear(ctx.from.id);
@@ -84,14 +85,7 @@ const finish = async (ctx) => {
   await render(ctx, `🎉 <b>${esc(employee.full_name)}</b> ${created ? "qo'shildi" : 'yangilandi'}.\n\n${await summary(add)}`, ui.backKeyboard(`emp:${employee.id}`, '👤 Kartochkasi'));
   await ctx.reply('⚙️ Panel', ui.kbFor(ctx));
 
-  const kb = ui.mainKeyboard({ isAdmin: employee.role === 'admin', isHead: employee.role === 'head' });
-  await notify.toUser(
-    botOf(ctx), employee.tg_id,
-    `🎉 <b>Xush kelibsiz, ${esc(employee.full_name)}!</b>\n\n` +
-      `Siz tizimga <b>${employees.roleLabel(employee.role)}</b>${employee.department_name ? ` (${esc(employee.department_name)})` : ''} sifatida qo'shildingiz.\n\n` +
-      `Ertaga ishga kelganingizda «${ui.BTN.checkIn}» tugmasini bosing. Qo'llanma: /yordam`,
-    kb,
-  );
+  await require('../services/flows').welcome(botOf(ctx), employee);
 };
 
 // --- matn bosqichlari ---
@@ -206,12 +200,14 @@ const register = (bot) => {
     return askRole(ctx, add);
   });
 
-  bot.action(/^ea:role:(employee|head|admin)$/, async (ctx) => {
+  bot.action(/^ea:role:(employee|head|admin|hr)$/, async (ctx) => {
     if (!(await guard(ctx))) return;
     const { add } = session.get(ctx.from.id);
     if (!add) return ctx.answerCbQuery('Sessiya eskirgan');
     await ctx.answerCbQuery();
-    add.role = ctx.match[1];
+    add.isHr = ctx.match[1] === 'hr';
+    add.role = add.isHr ? 'head' : ctx.match[1];
+    if (add.isHr && !add.position) add.position = 'HR';
     return confirm(ctx, add);
   });
 

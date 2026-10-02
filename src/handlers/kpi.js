@@ -4,12 +4,13 @@ const config = require('../config');
 const ui = require('../ui');
 const time = require('../time');
 const session = require('../session');
-const { render, guard } = require('../render');
+const { render, guard, guardSee } = require('../render');
 const employees = require('../services/employees');
 const departments = require('../services/departments');
 const kpi = require('../services/kpi');
 const excel = require('../services/excel');
 const notify = require('../services/notify');
+const flows = require('../services/flows');
 
 const { esc, cb, inline } = ui;
 const botOf = (ctx) => ({ telegram: ctx.telegram });
@@ -39,17 +40,20 @@ const kpiMonth = async (ctx, month) => {
     if (k.status === 'confirmed') { confirmed += 1; totalBonus += Number(k.bonus_amount) || 0; }
     if (k.status === 'excluded') excluded += 1;
     const icon = k.status === 'confirmed' ? '✅' : k.status === 'excluded' ? '⛔' : '⏳';
+    const gate = config.kpiMode === 'gate' ? (Number(k.kpi_eligible) === 1 ? ' 🟢' : ' 🔴') : '';
     const warn = (Number(k.w_head) > 0 && k.head_score === null) || (Number(k.w_custom) > 0 && k.custom_pct === null) ? ' ⚠️' : '';
-    lines.push(`${icon} <b>${esc(k.full_name)}</b> — <b>${k.total}</b> ball${k.bonus_amount !== null ? ` · ${kpi.fmtMoney(k.bonus_amount)}` : ''}${warn}`);
+    lines.push(`${icon}${gate} <b>${esc(k.full_name)}</b> — <b>${k.total}</b> ball${k.bonus_amount !== null ? ` · ${kpi.fmtMoney(k.bonus_amount)}` : ''}${warn}`);
   }
   const text =
     `💰 <b>KPI — ${time.monthName(month)}</b>\n${ui.LINE}\n` +
     `Hodimlar: ${rows.length} · ✅ tasdiqlangan ${confirmed} · ⛔ chiqarilgan ${excluded} · ⏳ kutmoqda ${rows.length - confirmed - excluded}\n` +
-    `Tasdiqlangan bonus jami: <b>${kpi.fmtMoney(totalBonus)}</b>\n<i>⚠️ — boshliq bahosi yoki mezon kiritilmagan</i>\n` +
+    `Tasdiqlangan KPI jami: <b>${kpi.fmtMoney(totalBonus)}</b>\n<i>${config.kpiMode === 'gate' ? '🟢 KPI sharti bajarilgan · 🔴 bajarilmagan (KPI 0) · ' : ''}⚠️ — boshliq bahosi yoki mezon kiritilmagan</i>\n` +
     lines.join('\n');
   const btns = rows.map((k) => [cb(`${k.status === 'confirmed' ? '✅' : k.status === 'excluded' ? '⛔' : '⏳'} ${k.full_name} · ${k.total}`.slice(0, 60), `kpi:e:${k.employee_id}:${month}`)]);
-  btns.push([cb('📥 Excel', `kpi:xl:${month}`), cb('✅ Hammasini tasdiqlash', `kpi:okall:${month}`)]);
-  btns.push([cb('🔄 Qayta hisoblash', `kpi:recalc:${month}`), cb('⬅️ Oylar', 'kpi:home')]);
+  if (ctx.state.isAdmin) {
+    btns.push([cb('📥 Excel', `kpi:xl:${month}`), cb('✅ Hammasini tasdiqlash', `kpi:okall:${month}`)]);
+    btns.push([cb('🔄 Qayta hisoblash', `kpi:recalc:${month}`), cb('⬅️ Oylar', 'kpi:home')]);
+  } else btns.push([cb('📥 Excel', `kpi:xl:${month}`), cb('⬅️ Oylar', 'kpi:home')]);
   return render(ctx, text, inline(btns));
 };
 
@@ -65,7 +69,11 @@ const kpiCardText = (k, dept) => {
     `⭐ Boshliq bahosi: ${k.head_score === null ? '—' : `${k.head_score}/10`}${k.head_note ? ` («${esc(k.head_note)}»)` : ''}\n${line('   →', headPct, k.w_head)}\n` +
     `🎯 ${esc(customName)}\n${line('   →', k.custom_pct, k.w_custom)}\n${ui.LINE}\n` +
     `🏆 <b>KPI: ${k.total} ball</b>  ${ui.pctBar(k.total)}\n` +
-    `💵 Fond: ${kpi.fmtMoney(k.bonus_fund)} → Bonus: <b>${kpi.fmtMoney(k.bonus_amount)}</b>\n` +
+    (config.kpiMode === 'gate'
+      ? `🚦 KPI sharti: ${Number(k.kpi_eligible) === 1 ? '🟢 <b>bajarildi</b>' : `🔴 <b>bajarilmadi</b> — ${esc(k.kpi_fail || '')}`}\n`
+      : '') +
+    `💵 KPI summasi: ${kpi.fmtMoney(k.bonus_fund)} → Beriladi: <b>${kpi.fmtMoney(k.bonus_amount)}</b>\n` +
+    `💼 Oklad: ${kpi.fmtMoney(k.salary)} · 💰 Jami: <b>${kpi.fmtMoney((Number(k.salary) || 0) + (k.status === 'excluded' ? 0 : Number(k.bonus_amount) || 0))}</b>\n` +
     `Holat: ${kpi.statusLabel(k.status)}${k.note ? `\n💬 ${esc(k.note)}` : ''}` +
     (k.status === 'draft' && ((Number(k.w_head) > 0 && k.head_score === null) || (Number(k.w_custom) > 0 && k.custom_pct === null))
       ? `\n\n<i>ℹ️ Kiritilmagan komponent hisobdan chiqarilib, qolgan vaznlar 100 ga keltiriladi.</i>` : '')
@@ -78,9 +86,14 @@ const kpiCard = async (ctx, empId, month) => {
   const k = await kpi.compute(emp, month);
   const dept = emp.department_id ? await departments.byId(emp.department_id) : null;
   const p = `${emp.id}:${month}`;
+  if (!ctx.state.isAdmin) {
+    return render(ctx, `${kpiCardText(k, dept)}\n\n<i>👁 Faqat ko'rish — tahrirlash va tasdiqlash direktorda.</i>`, inline([
+      [cb('📊 Batafsil hisobot', `rp:emp:${emp.id}:${month}`), cb("⬅️ Ro'yxat", `kpi:m:${month}`)],
+    ]));
+  }
   const rows = [
     [cb('⭐ Boshliq bahosi', `kpi:score:${p}`), cb('🎯 Mezon %', `kpi:custom:${p}`)],
-    [cb('💰 Bonus fondi', `kpi:fund:${p}`), cb('💬 Izoh', `kpi:note:${p}`)],
+    [cb('🏆 KPI summasi', `kpi:fund:${p}`), cb('💬 Izoh', `kpi:note:${p}`)],
   ];
   if (k.status === 'draft') rows.push([cb('✅ Tasdiqlash', `kpi:ok:${p}`), cb('⛔ Bonusdan chiqarish', `kpi:ex:${p}`)]);
   else rows.push([cb('↩️ Qaytadan ochish', `kpi:reopen:${p}`)]);
@@ -88,19 +101,11 @@ const kpiCard = async (ctx, empId, month) => {
   return render(ctx, kpiCardText(k, dept), inline(rows));
 };
 
-const notifyDecision = async (ctx, k) => {
-  const dept = k.department_id ? await departments.byId(k.department_id) : null;
-  if (k.status === 'confirmed') {
-    await notify.toUser(
-      botOf(ctx), k.tg_id,
-      `🏆 <b>${time.monthName(k.month)} — KPI natijangiz tasdiqlandi</b>\n\n` +
-        `📋 Topshiriq: ${k.tasks_pct}% · 🕘 Davomat: ${k.att_pct}% · ⭐ Boshliq: ${k.head_score === null ? '—' : `${k.head_score}/10`} · 🎯 ${esc((dept && dept.custom_name) || 'Mezon')}: ${k.custom_pct === null ? '—' : `${k.custom_pct}%`}\n\n` +
-        `<b>KPI: ${k.total} ball</b>${k.bonus_amount !== null ? `\n💵 Bonus: <b>${kpi.fmtMoney(k.bonus_amount)}</b>` : ''}${k.note ? `\n💬 ${esc(k.note)}` : ''}`,
-    );
-  } else if (k.status === 'excluded') {
-    await notify.toUser(botOf(ctx), k.tg_id, `⛔ <b>${time.monthName(k.month)}</b> — bu oy bonusdan chiqarildingiz.${k.note ? `\n💬 ${esc(k.note)}` : ''}\n\nSavollar bo'lsa rahbariyatga murojaat qiling.`);
-  }
-};
+const notifyDecision = (ctx, k) => flows.kpiDecisionNotice(botOf(ctx), k);
+
+const LOCKED = "🔒 Bu oyning KPI si allaqachon tasdiqlangan (yoki chiqarilgan) — o'zgartirib bo'lmaydi. Direktor avval «Qayta ochish» qilsin.";
+
+const lockedReply = (ctx) => ctx.reply(LOCKED, ui.kbFor(ctx));
 
 const handleKpiText = async (ctx, field, { skip = false } = {}) => {
   const s = session.get(ctx.from.id);
@@ -110,12 +115,12 @@ const handleKpiText = async (ctx, field, { skip = false } = {}) => {
   if (field === 'custom') {
     const n = Number(text.replace('%', ''));
     if (!Number.isFinite(n) || n < 0 || n > 100) { session.set(ctx.from.id, { step: 'kpi_custom', empId: s.empId, month: s.month }); return ctx.reply('0–100 oralig\'ida son yozing:', ui.cancelKeyboard()); }
-    await kpi.setCustomPct(s.empId, s.month, n);
+    if (!(await kpi.setCustomPct(s.empId, s.month, n))) return lockedReply(ctx, s.empId, s.month);
   }
   if (field === 'fund') {
-    const n = Number(text.replace(/[^\d]/g, ''));
+    const n = /^\s*\d[\d\s.,]*$/.test(text) ? Number(text.replace(/[^\d]/g, '')) : NaN;
     if (!Number.isFinite(n)) { session.set(ctx.from.id, { step: 'kpi_fund', empId: s.empId, month: s.month }); return ctx.reply('Faqat raqam (so\'mda):', ui.cancelKeyboard()); }
-    await kpi.setBonusFund(s.empId, s.month, n > 0 ? n : null);
+    if (!(await kpi.setBonusFund(s.empId, s.month, n > 0 ? n : null))) return lockedReply(ctx, s.empId, s.month);
   }
   if (field === 'note') await kpi.setNote(s.empId, s.month, skip ? null : text);
   if (field === 'exclude_note') {
@@ -125,7 +130,7 @@ const handleKpiText = async (ctx, field, { skip = false } = {}) => {
   }
   if (field === 'head_note') {
     const k = await kpi.get(s.empId, s.month);
-    await kpi.setHeadScore(s.empId, s.month, k.head_score, skip ? null : text);
+    if (!(await kpi.setHeadScore(s.empId, s.month, k.head_score, skip ? null : text))) return lockedReply(ctx, s.empId, s.month);
     await ctx.reply('✅ Saqlandi.', ui.kbFor(ctx));
     return s.from === 'hs' ? hsList(ctx, s.month) : kpiCard(ctx, s.empId, s.month);
   }
@@ -148,7 +153,7 @@ const hsHome = (ctx) => {
 const hsList = async (ctx, month) => {
   const deptId = hsScope(ctx);
   const me = ctx.state.employee ? Number(ctx.state.employee.id) : -1;
-  const list = (deptId ? await employees.listByDepartment(deptId) : await employees.listActive()).filter((e) => Number(e.id) !== me);
+  const list = (await employees.listStaff(deptId)).filter((e) => Number(e.id) !== me);
   const lines = [];
   const rows = [];
   for (const e of list) {
@@ -160,9 +165,14 @@ const hsList = async (ctx, month) => {
   return render(ctx, `⭐ <b>BAHOLASH — ${time.monthName(month)}</b>\n<i>📋 topshiriq % · 🕘 davomat % (ma'lumot uchun)</i>\n\n${lines.join('\n') || "<i>hodim yo'q</i>"}`, inline(rows));
 };
 
+/** Baho qo'yish huquqi: faqat boshliq/direktor, o'z bo'limidagiga, o'ziga emas (canManage o'zini ham "boshqara oladi" deydi) */
+const canRate = (ctx, e) =>
+  Boolean(e) && ctx.state.isManager && Number(e.tg_id) !== Number(ctx.from.id) &&
+  employees.canManage(ctx.state.employee, ctx.state.isAdmin, e);
+
 const hsPick = async (ctx, empId, month) => {
   const e = await employees.byId(empId);
-  if (!e || !employees.canManage(ctx.state.employee, ctx.state.isAdmin, e)) return ctx.answerCbQuery('⛔️');
+  if (!canRate(ctx, e)) return ctx.answerCbQuery('⛔️');
   await ctx.answerCbQuery();
   const k = await kpi.compute(e, month);
   return render(ctx, `⭐ <b>${esc(e.full_name)}</b> — ${time.monthName(month)}\n📋 topshiriq ${k.tasks_pct}% · 🕘 davomat ${k.att_pct}%\nHozirgi baho: ${k.head_score === null ? '—' : `${k.head_score}/10`}\n\nBahoni tanlang (1 — juda yomon, 10 — a'lo):`, ui.scoreKeyboard(`hs:s:${e.id}:${month}`));
@@ -170,25 +180,25 @@ const hsPick = async (ctx, empId, month) => {
 
 const hsSet = async (ctx, empId, month, score, from = 'hs') => {
   const e = await employees.byId(empId);
-  if (!e || !employees.canManage(ctx.state.employee, ctx.state.isAdmin, e)) return ctx.answerCbQuery('⛔️');
-  await kpi.setHeadScore(e.id, month, score);
+  if (!canRate(ctx, e) || !(score >= 1 && score <= 10)) return ctx.answerCbQuery('⛔️');
+  if (!(await kpi.setHeadScore(e.id, month, score))) return ctx.answerCbQuery(LOCKED.slice(0, 190), { show_alert: true });
   await ctx.answerCbQuery(`⭐ ${score}/10`);
   session.set(ctx.from.id, { step: 'head_note', empId: e.id, month, from });
   return ctx.reply(`⭐ ${esc(e.full_name)}: <b>${score}/10</b>. Qisqa izoh (ixtiyoriy) yoki «${ui.BTN.skip}»:`, { parse_mode: 'HTML', ...ui.skipKeyboard() });
 };
 
 const register = (bot) => {
-  bot.hears(ui.BTN.kpi, async (ctx) => { if (await guard(ctx)) await kpiHome(ctx); });
-  bot.command('kpi', async (ctx) => { if (await guard(ctx)) await kpiHome(ctx); });
-  bot.action('kpi:home', async (ctx) => { if (await guard(ctx)) { await ctx.answerCbQuery(); await kpiHome(ctx); } });
-  bot.action(/^kpi:m:(\d{4}-\d{2})$/, async (ctx) => { if (await guard(ctx)) { await ctx.answerCbQuery(); await kpiMonth(ctx, ctx.match[1]); } });
+  bot.hears(ui.BTN.kpi, async (ctx) => { if (await guardSee(ctx)) await kpiHome(ctx); });
+  bot.command('kpi', async (ctx) => { if (await guardSee(ctx)) await kpiHome(ctx); });
+  bot.action('kpi:home', async (ctx) => { if (await guardSee(ctx)) { await ctx.answerCbQuery(); await kpiHome(ctx); } });
+  bot.action(/^kpi:m:(\d{4}-\d{2})$/, async (ctx) => { if (await guardSee(ctx)) { await ctx.answerCbQuery(); await kpiMonth(ctx, ctx.match[1]); } });
   bot.action(/^kpi:recalc:(\d{4}-\d{2})$/, async (ctx) => {
     if (!(await guard(ctx))) return;
     await kpi.computeAll(ctx.match[1], { force: false });
     await ctx.answerCbQuery('Qayta hisoblandi (kutilayotganlar)');
     await kpiMonth(ctx, ctx.match[1]);
   });
-  bot.action(/^kpi:e:(\d+):(\d{4}-\d{2})$/, async (ctx) => { if (await guard(ctx)) { await ctx.answerCbQuery(); await kpiCard(ctx, ctx.match[1], ctx.match[2]); } });
+  bot.action(/^kpi:e:(\d+):(\d{4}-\d{2})$/, async (ctx) => { if (await guardSee(ctx)) { await ctx.answerCbQuery(); await kpiCard(ctx, ctx.match[1], ctx.match[2]); } });
   bot.action(/^kpi:score:(\d+):(\d{4}-\d{2})$/, async (ctx) => {
     if (!(await guard(ctx))) return;
     await ctx.answerCbQuery();
@@ -258,7 +268,7 @@ const register = (bot) => {
     return kpiMonth(ctx, ctx.match[1]);
   });
   bot.action(/^kpi:xl:(\d{4}-\d{2})$/, async (ctx) => {
-    if (!(await guard(ctx))) return;
+    if (!(await guardSee(ctx))) return;
     await ctx.answerCbQuery('Tayyorlanmoqda…');
     const { buffer, filename } = await excel.buildMonthly(ctx.match[1]);
     await notify.docToUser(botOf(ctx), ctx.from.id, buffer, filename, `📥 <b>${time.monthName(ctx.match[1])}</b> — KPI, topshiriqlar, davomat`);

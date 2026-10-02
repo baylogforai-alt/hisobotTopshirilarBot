@@ -1,0 +1,191 @@
+/* BayLog Web App — Telegram mavzu ranglari (--tg-theme-*) bilan, brauzerda ochilsa o'z ranglari */
+:root {
+  --bg: var(--tg-theme-secondary-bg-color, #f1f2f6);
+  --card: var(--tg-theme-section-bg-color, var(--tg-theme-bg-color, #ffffff));
+  --text: var(--tg-theme-text-color, #15171a);
+  --hint: var(--tg-theme-hint-color, #7d8590);
+  --link: var(--tg-theme-link-color, #2a7de1);
+  --btn: var(--tg-theme-button-color, #2a7de1);
+  --btn-text: var(--tg-theme-button-text-color, #ffffff);
+  --accent: var(--tg-theme-accent-text-color, var(--btn));
+  --danger: var(--tg-theme-destructive-text-color, #e5484d);
+  --head: var(--tg-theme-section-header-text-color, var(--hint));
+  --line: color-mix(in srgb, var(--hint) 22%, transparent);
+  --soft: color-mix(in srgb, var(--btn) 12%, transparent);
+  --ok: #2fa84f;
+  --warn: #e09a1a;
+  --bad: #e5484d;
+  --radius: 14px;
+  --gap: 12px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-tg]) {
+    --bg: #0f1115; --card: #1a1d23; --text: #e8eaed; --hint: #8b929c; --link: #5aa2f0; --btn: #3b8beb;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f1f2f6; --card: #ffffff; --text: #15171a; --hint: #7d8590; --link: #2a7de1;
+  --btn: #2a7de1; --btn-text: #ffffff; --accent: #2a7de1; --danger: #e5484d; --head: #7d8590;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --bg: #0f1115; --card: #1a1d23; --text: #e8eaed; --hint: #8b929c; --link: #5aa2f0;
+  --btn: #3b8beb; --btn-text: #ffffff; --accent: #5aa2f0; --danger: #ff6b6b; --head: #8b929c;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+button, input, textarea, select { font: inherit; color: inherit; }
+a { color: var(--link); text-decoration: none; }
+
+.top { padding: 14px 16px 6px; max-width: 720px; margin: 0 auto; }
+.top-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.theme-btn { flex: none; width: 40px; height: 40px; border: 0; border-radius: 12px; background: var(--card); font-size: 19px; cursor: pointer; }
+.theme-btn:active { transform: scale(0.94); }
+.top h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+.top .sub { margin: 2px 0 0; color: var(--hint); font-size: 13px; min-height: 1em; }
+
+.app { padding: 4px 12px 96px; max-width: 720px; margin: 0 auto; }
+.loading, .empty { color: var(--hint); text-align: center; padding: 28px 12px; }
+.error-box { background: var(--card); border-radius: var(--radius); padding: 18px; text-align: center; }
+.error-box p { margin: 6px 0 14px; color: var(--hint); }
+
+/* kartalar va bo'limlar */
+.card { background: var(--card); border-radius: var(--radius); padding: 14px; margin-bottom: var(--gap); }
+.card h2, .section-title { margin: 0 0 8px; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--head); }
+.section-title { margin: 18px 4px 8px; }
+.card p { margin: 4px 0; }
+.muted { color: var(--hint); font-size: 13px; }
+.row { display: flex; align-items: center; gap: 10px; }
+.row.between { justify-content: space-between; }
+.wrap { flex-wrap: wrap; }
+.grow { flex: 1; min-width: 0; }
+.stack > * + * { margin-top: 8px; }
+.big { font-size: 22px; font-weight: 700; }
+.mono { font-variant-numeric: tabular-nums; }
+
+/* plitkalar (bosh sahifa) */
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: var(--gap); }
+@media (min-width: 520px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.tile {
+  position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  background: var(--card); border: 0; border-radius: var(--radius); padding: 14px; text-align: left; cursor: pointer; min-height: 84px;
+}
+.tile:active { transform: scale(0.98); }
+.tile .ic { font-size: 22px; line-height: 1; }
+.tile .lb { font-weight: 600; font-size: 14px; }
+.tile .badge { position: absolute; top: 10px; right: 10px; }
+
+/* ro'yxatlar */
+.list { background: var(--card); border-radius: var(--radius); overflow: hidden; margin-bottom: var(--gap); }
+.item { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 0; background: none; width: 100%; text-align: left; cursor: pointer; }
+.item + .item { border-top: 1px solid var(--line); }
+.item.static { cursor: default; }
+.item .t { font-weight: 600; word-break: break-word; }
+.item .s { color: var(--hint); font-size: 13px; margin-top: 2px; word-break: break-word; }
+.item .end { margin-left: auto; text-align: right; white-space: nowrap; color: var(--hint); font-size: 13px; }
+.item .chev { color: var(--hint); margin-left: auto; align-self: center; }
+.dot { width: 10px; height: 10px; border-radius: 50%; flex: none; margin-top: 6px; background: var(--hint); }
+.dot.ontime { background: var(--ok); } .dot.late { background: var(--warn); } .dot.absent { background: var(--bad); }
+.dot.excused, .dot.pending { background: var(--link); } .dot.future, .dot.off { background: var(--line); }
+
+/* chiplar va belgilar */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--soft); color: var(--text); }
+.chip.red { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+.chip.green { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.chip.amber { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.badge { display: inline-block; min-width: 20px; padding: 1px 6px; border-radius: 999px; background: var(--bad); color: #fff; font-size: 12px; font-weight: 700; text-align: center; }
+.badge.soft { background: var(--soft); color: var(--text); }
+
+/* filtr / tab tugmalari */
+.seg { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: none; }
+.seg::-webkit-scrollbar { display: none; }
+.seg button { flex: none; border: 0; padding: 7px 12px; border-radius: 999px; background: var(--card); color: var(--text); font-size: 14px; cursor: pointer; }
+.seg button.on { background: var(--btn); color: var(--btn-text); }
+
+/* tugmalar */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  border: 0; border-radius: 12px; padding: 11px 16px; font-weight: 600; cursor: pointer;
+  background: var(--btn); color: var(--btn-text); min-height: 44px;
+}
+.btn.block { width: 100%; }
+.btn.ghost { background: var(--soft); color: var(--accent); }
+.btn.danger { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
+.btn.ok { background: var(--ok); color: #fff; }
+.btn.small { padding: 7px 12px; min-height: 34px; font-size: 14px; border-radius: 10px; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.btns > .btn { flex: 1 1 auto; }
+.btns.end { justify-content: flex-end; }
+.btns.end > .btn { flex: 0 0 auto; }
+.card .seg button:not(.on) { background: var(--bg); }
+
+/* formalar */
+.field { display: block; margin-bottom: 12px; }
+.field > span { display: block; font-size: 13px; color: var(--hint); margin-bottom: 5px; }
+.input, textarea.input, select.input {
+  width: 100%; border: 1px solid var(--line); background: var(--bg); border-radius: 12px; padding: 11px 12px; outline: none;
+}
+.input:focus { border-color: var(--btn); }
+textarea.input { min-height: 96px; resize: vertical; }
+.check { display: flex; align-items: center; gap: 10px; padding: 10px 0; cursor: pointer; }
+.check input { width: 20px; height: 20px; accent-color: var(--btn); flex: none; }
+.switch-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; }
+.switch-row + .switch-row { border-top: 1px solid var(--line); }
+.switch-row input { width: 22px; height: 22px; accent-color: var(--btn); }
+.hint { font-size: 12px; color: var(--hint); margin-top: 4px; }
+
+/* tanlash ro'yxati (topshiriq berish) */
+.pick { display: flex; align-items: center; gap: 10px; padding: 11px 14px; cursor: pointer; }
+.pick + .pick { border-top: 1px solid var(--line); }
+.pick input { width: 20px; height: 20px; accent-color: var(--btn); flex: none; }
+.sticky-bar { position: sticky; bottom: 0; padding: 10px 0 calc(10px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--bg) 30%); }
+
+/* baho tugmalari */
+.score { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
+.score button { border: 0; border-radius: 10px; padding: 9px 0; background: var(--soft); font-weight: 700; cursor: pointer; }
+.score button.on { background: var(--btn); color: var(--btn-text); }
+
+/* progress */
+.bar { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; margin-top: 6px; }
+.bar > i { display: block; height: 100%; background: var(--btn); border-radius: 999px; width: 0; }
+.kv { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; }
+.kv .k { color: var(--hint); }
+.kv .v { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* media (isbot) */
+.media { margin-top: 10px; }
+.media img, .media video { width: 100%; max-height: 60vh; border-radius: 12px; background: #000; object-fit: contain; }
+.media audio { width: 100%; }
+
+/* pastki oyna (sheet) */
+.sheet { position: fixed; inset: 0; z-index: 30; display: flex; align-items: flex-end; justify-content: center; background: rgba(0,0,0,0.45); }
+.sheet[hidden] { display: none; }
+.sheet .panel {
+  width: 100%; max-width: 720px; max-height: 88vh; overflow-y: auto; background: var(--card);
+  border-radius: 18px 18px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+}
+.sheet .panel h3 { margin: 0 0 12px; font-size: 17px; }
+
+/* xabarcha */
+.toast {
+  position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 40;
+  max-width: calc(100% - 32px); padding: 10px 16px; border-radius: 12px; background: rgba(20,22,26,0.92); color: #fff; font-size: 14px;
+}
+.toast[hidden] { display: none; }
+.toast.err { background: var(--bad); }
+
+.banner { border-radius: var(--radius); padding: 14px; margin-bottom: var(--gap); background: color-mix(in srgb, var(--warn) 16%, var(--card)); }
+.banner p { margin: 0 0 10px; }
+.status-big { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 700; }
+.status-big .dot { width: 14px; height: 14px; margin: 0; }

@@ -8,6 +8,8 @@ const employees = require('../services/employees');
 const requests = require('../services/requests');
 const notify = require('../services/notify');
 const activity = require('../services/activity');
+const access = require('../services/access');
+const webapp = require('../services/webapp');
 
 const { esc } = ui;
 
@@ -15,12 +17,14 @@ const { esc } = ui;
 const attachEmployee = async (ctx, next) => {
   const from = ctx.from;
   if (from) {
-    const emp = await employees.byTgId(from.id);
-    if (emp) await employees.touchUsername(from.id, from.username);
-    ctx.state.employee = emp && emp.active ? emp : null;
-    ctx.state.isAdmin = employees.isAdmin(ctx.state.employee, from.id);
-    ctx.state.isHead = employees.isHead(ctx.state.employee);
-    ctx.state.isManager = ctx.state.isAdmin || ctx.state.isHead;
+    const actor = await access.resolve(from.id, from);
+    if (actor.employee) await employees.touchUsername(from.id, from.username);
+    ctx.state.actor = actor;
+    ctx.state.employee = actor.employee;
+    ctx.state.isAdmin = actor.isAdmin;
+    ctx.state.isHead = actor.isHead;
+    ctx.state.isHr = actor.isHr;
+    ctx.state.isManager = actor.isManager;
     // Ro'yxatda yo'qlar tugma bossa — hech qanday handler ishlamasin
     if (ctx.updateType === 'callback_query' && !ctx.state.employee && !ctx.state.isAdmin) {
       return ctx.answerCbQuery("⛔️ Siz ro'yxatda yo'qsiz", { show_alert: true }).catch(() => {});
@@ -87,24 +91,33 @@ const HELP_EMPLOYEE = `
 <b>📖 QO'LLANMA</b>
 
 <b>Har kuni:</b>
-1️⃣ Ishga kelganingizda — <b>«${ui.BTN.checkIn}»</b> → joylashuvni yuborasiz (faqat ofisdan qabul qilinadi). Kechiksangiz sabab so'raladi.
-2️⃣ Missiyalaringiz «${ui.BTN.myTasks}» da. Boshliq yangi topshiriq bersa — xabar keladi.
-3️⃣ Ishni tugatsangiz — <b>«${ui.BTN.done}»</b> → ro'yxatdan tanlang → xohlasangiz rasm/video biriktiring. Boshliq tekshirib qabul qiladi yoki qaytaradi.
+0️⃣ Har oyning 1-kuni «yangi ish oyi» xabari keladi — «✅ Tanishdim» ni bosing.
+1️⃣ Ishga kelganingizda — <b>«${ui.BTN.checkIn}»</b> → joylashuvni yuborasiz (ofis radiusida; hudud agenti — uyidan 1 km dan uzoqda). Kechiksangiz sabab so'raladi.
+📍 Hudud agenti borgan joyida — «${ui.BTN.visit}» → joylashuv → video yoki audio → izoh.
+2️⃣ Missiyalaringiz «${ui.BTN.myTasks}» da. Boshliq yangi topshiriq bersa (matn, 🎤 ovoz, 🎥 video yoki 📄 fayl) — xabar keladi, <b>«✅ Eshitdim, tushundim»</b> ni bosing (yoki «tushundim» deb yozing).
+3️⃣ Ishni tugatsangiz — <b>«${ui.BTN.done}»</b> → ro'yxatdan tanlang → isbot: rasm, video, audio yoki fayl (PDF, Excel, Word…). Boshliq tekshirib qabul qiladi yoki qaytaradi.
 4️⃣ O'zingizga reja yozish — «${ui.BTN.selfTask}» (har birini yangi qatorda; boshiga <b>!</b> — muhim). Kun ichida paydo bo'lgan ish: <code>/bugun matn</code>.
 5️⃣ Kun oxirida — <b>«${ui.BTN.dailyReport}»</b>: bugun nima qildingiz, qanday muammo bo'ldi — o'z so'zingiz bilan (rasm ham mumkin). Boshliq o'qiydi.
 6️⃣ Ketishda — «${ui.BTN.checkOut}».
 
-🙋 Kela olmasangiz — «${ui.BTN.absence}» → sababini yozing, boshliq tasdiqlasa kun sababli hisoblanadi.
+⏰ Kech qolsangiz — «${ui.BTN.late}» → sababini yozing yoki video/audio yuboring. Ish boshlanishidan kamida 1 soat oldin aytsangiz — kechikish hisoblanmaydi.
+🙋 Kela olmasangiz — «${ui.BTN.absence}» → sabab (matn, video, audio yoki rasm). Rahbariyat tasdiqlasa kun sababli hisoblanadi.
 🔴 Muddati o'tgan topshiriqlar qizil belgi bilan ko'rinadi va KPI ga ta'sir qiladi. Bajarilmagan ish yo'qolmaydi — ertangi ro'yxatda turadi.
 📊 «${ui.BTN.myReport}» — shu oydagi natijalaringiz va KPI. /excel — hisobotingiz Excel faylda.
+🔔 «${ui.BTN.reminders}» — topshiriq eslatmalari qachon kelsin (har N soat yoki o'z vaqtlaringiz) — direktor tasdiqlaydi.
+💵 «${ui.BTN.salary}» — oklad, KPI va jami summa oyma-oy.
+📢 Direktor e'lon yuborsa — «👁 O'qidim» ni bosing.
 
-<b>Buyruqlar:</b> /menu · /keldim · /ketdim · /missiyalarim · /bajardim · /vazifa · /bugun · /kunlik · /hisobot · /excel · /id · /yordam
+📱 /ilova — xuddi shu ishlar qulay oynada (agar ulangan bo'lsa).
+
+<b>Buyruqlar:</b> /menu · /ilova · /keldim · /kech · /kelmayman · /ketdim · /missiyalarim · /bajardim · /vazifa · /bugun · /kunlik · /hisobot · /oylik · /eslatma · /tashrif · /excel · /id · /yordam
 `.trim();
 
 const HELP_MANAGER = `
 
-<b>Boshliq / direktor uchun:</b>
-📤 «${ui.BTN.assign}» — hodimga topshiriq (matn + muddat). Hodimga darhol xabar boradi.
+<b>Boshliq / direktor / HR uchun:</b>
+👥 «${ui.BTN.myTeam}» — jamoangiz: bugun kim keldi, har bir hodim hisoboti, topshiriq berish.
+📤 «${ui.BTN.assign}» — topshiriq (matn, 🎤 ovoz, 🎥 video yoki 📄 fayl + muddat; hodim «✅ Tushundim» bilan tasdiqlaydi). Direktor avval rahbarni (HR, sotuv rahbari) ko'radi: o'ziga yoki «👥 Hodimlariga» → hodimni tanlaydi.
 🔎 «${ui.BTN.review}» — «Bajardim» deganlarni qabul qilish / qaytarish.
 ⭐ «${ui.BTN.score}» — oy oxirida bo'lim hodimlarini 1–10 baholash (KPI ga kiradi).
 🏢 «${ui.BTN.myDept}» — bo'lim holati (bugun va oy).
@@ -115,19 +128,26 @@ const HELP_MANAGER = `
 const HELP_ADMIN = `
 
 <b>Direktor:</b>
-⚙️ «${ui.BTN.panel}» — hodimlar, bo'limlar, so'rovlar, ofis, bugungi holat, kunlik hisobotlar, eslatma.
+⚙️ «${ui.BTN.panel}» — hodimlar, bo'limlar, so'rovlar, ofis va filiallar, ish vaqti, yo'nalishlar, eslatmalar, bugungi holat, kunlik hisobotlar.
+📢 «${ui.BTN.announce}» — hammaga yoki tanlangan hodimlarga bitta e'lon (matn, rasm, video, ovoz, fayl) — kim o'qiganini ko'rasiz.
+📋 «${ui.BTN.journal}» — barcha topshiriqlar jurnali: kim kimga qachon nima bergan, holati, «tushundi», isbot.
 💰 «${ui.BTN.kpi}» — oylik KPI: hodimni tanlab ko'rish, tahrirlash, tasdiqlash, chiqarish, Excel.
 📈 «${ui.BTN.reports}» — jamoa/bo'lim hisobotlari, davr hisoboti (istalgan sana oralig'i), Excel.
 🗂 «${ui.BTN.archive}» — hodimlar arxivi: kun daftari, harakatlar tarixi, 7/30 kunlik, Excel.
-/panel · /kpi · /hisobotlar · /arxiv · /davr · /oraliq · /jamoa_excel · /hodim_qosh · /ofis · /holat · /guruh_ulash (guruh ichida)
+Hodim kartochkasida: filial, ish turi (ofis/hudud), video, oklad, KPI summasi, HR belgisi, davomat nazorati.
+/panel · /elon · /jurnal · /kpi · /hisobotlar · /arxiv · /davr · /oraliq · /jamoa_excel · /hodim_qosh · /hodimlarim · /ish_vaqti · /nomlar · /filiallar · /tashriflar · /ofis · /holat · /guruh_ulash · /arxiv_ulash (guruh ichida)
 `.trim();
+
+const WEBAPP_HINT =
+  `📱 <b>Ilova</b> — botning o'zi, faqat qulay oynada: topshiriq berish (bir nechta hodimga birdan), ro'yxatlar, tekshiruv, KPI, sozlamalar.\n` +
+  `<i>Keldim (GPS + video) va «Bajardim» isboti — shu chatda. Qaysi biri qulay bo'lsa — o'shandan foydalaning.</i>`;
 
 const helpText = (ctx) => HELP_EMPLOYEE + (ctx.state.isManager ? HELP_MANAGER : '') + (ctx.state.isAdmin ? HELP_ADMIN : '');
 
 const welcome = (ctx) => {
   const emp = ctx.state.employee;
-  const name = emp ? emp.full_name : ctx.from.first_name || 'Rahbar';
-  const role = emp ? employees.roleLabel(emp.role) : 'Direktor / HR';
+  const name = emp ? emp.full_name : require('../services/org').actorName(ctx);
+  const role = emp ? employees.roleLabel(emp.role) : 'Direktor';
   return (
     `👋 Salom, <b>${esc(name)}</b>!\n` +
     `<i>${esc(config.companyName)} · ${esc(emp && emp.position ? emp.position : role)}${emp && emp.department_name ? ` · ${esc(emp.department_name)}` : ''}</i>\n\n` +
@@ -149,12 +169,33 @@ const register = (bot) => {
     return ctx.reply(`✅ Bu guruh ishchi guruh sifatida ulandi (<code>${ctx.chat.id}</code>). Ertalabki chaqiriq, eslatmalar va kun yakuni shu yerga tushadi.`, { parse_mode: 'HTML' });
   });
 
+  bot.command('arxiv_ulash', async (ctx) => {
+    if (ctx.chat.type === 'private') return ctx.reply('Bu buyruqni <b>yopiq arxiv guruhi ichida</b> yozing (hodimlar a\'zo bo\'lmagan guruh).', { parse_mode: 'HTML' });
+    if (!ctx.state.isAdmin) return ctx.reply('⛔️ Faqat direktor ulay oladi.');
+    await notify.setArchiveId(ctx.chat.id);
+    return ctx.reply(`🗄 Bu guruh <b>arxiv</b> sifatida ulandi (<code>${ctx.chat.id}</code>).\nKeldim videolari, tashriflar va «Bajardim» isbotlari shu yerga nusxalanadi — hodim o'z chatidan o'chirsa ham bu yerda va bazada qoladi.`, { parse_mode: 'HTML' });
+  });
+
   bot.start(async (ctx) => {
     if (ctx.chat.type !== 'private') return;
     session.clear(ctx.from.id);
     if (!ctx.state.employee && !ctx.state.isAdmin) return notRegistered(ctx);
+    // direktor (ADMIN_IDS) hodim sifatida qo'shilmagan bo'lsa ham eski «qo'shish» so'rovi osilib qolmasin
+    if (!ctx.state.employee && ctx.state.isAdmin) await requests.closeFor(ctx.from.id, 'approved', ctx.from.id);
     activity.mark(ctx, 'start');
-    return ctx.reply(welcome(ctx), { parse_mode: 'HTML', ...ui.kbFor(ctx) });
+    await ctx.reply(welcome(ctx), { parse_mode: 'HTML', ...ui.kbFor(ctx) });
+    if (webapp.enabled()) {
+      await webapp.setMenuFor({ telegram: ctx.telegram }, ctx.from.id);
+      await ctx.reply(WEBAPP_HINT, { parse_mode: 'HTML', ...webapp.keyboard('📱 Ilovani ochish') });
+    }
+  });
+
+  bot.command('ilova', async (ctx) => {
+    if (ctx.chat.type !== 'private') return;
+    if (!ctx.state.employee && !ctx.state.isAdmin) return notRegistered(ctx);
+    if (!webapp.enabled()) return ctx.reply("📱 Web ilova hali ulanmagan — barcha amallar shu botda ishlaydi.");
+    await webapp.setMenuFor({ telegram: ctx.telegram }, ctx.from.id);
+    return ctx.reply(WEBAPP_HINT, { parse_mode: 'HTML', ...webapp.keyboard('📱 Ilovani ochish') });
   });
 
   bot.command('menu', (ctx) => {

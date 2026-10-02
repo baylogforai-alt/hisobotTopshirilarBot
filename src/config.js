@@ -24,6 +24,13 @@ const ids = (value) =>
 
 const str = (value) => String(value || '').trim();
 
+/** '8:50' / '08.50' / '9' → '08:50'; tushunilmasa null */
+const hhmm = (value) => {
+  const m = str(value).match(/^(\d{1,2})(?:[:.](\d{2}))?$/);
+  if (!m || Number(m[1]) > 23 || (m[2] && Number(m[2]) > 59)) return null;
+  return `${String(Number(m[1])).padStart(2, '0')}:${m[2] || '00'}`;
+};
+
 /**
  * Baza manzilini aniqlaydi. Uchta yo'l bor (yuqoridagisi ustun):
  *  1. DATABASE_URL — to'liq ulanish satri
@@ -67,11 +74,17 @@ const config = {
   databaseSource: database.source,
   supabaseRef: str(process.env.SUPABASE_PROJECT_REF),
   groupChatId: process.env.GROUP_CHAT_ID ? Number(process.env.GROUP_CHAT_ID) : null,
-  /** Direktor / HR — bazadagi role='admin' bilan birga */
+  /** Direktorlar (bir nechta bo'lishi mumkin) — bazadagi role='admin' bilan birga. HR — employees.is_hr */
   adminIds: ids(process.env.ADMIN_IDS),
   companyName: str(process.env.COMPANY_NAME) || 'BayLog Cargo',
+  // Boshliq (direktor) ismi — xabarlarda ko'rinadi; botda Panel → «🏷 Nomlar» dan o'zgartiriladi
+  bossName: str(process.env.BOSS_NAME) || 'Direktor',
+  // 1 — bazadagi role='admin' hodim ham oddiy hodim kabi davomat/KPI ga kiradi (standart: boshliq hodim emas)
+  bossIsStaff: bool(process.env.BOSS_IS_STAFF, false),
   timezone: str(process.env.TIMEZONE) || 'Asia/Tashkent',
-  workStartHour: num(process.env.WORK_START_HOUR, 9),
+  // Umumiy ish boshlanishi (standart 08:50). Direktor botda o'zgartirsa bazadagi qiymat ustun (services/worktime.js).
+  // WORK_START bo'lmasa eski WORK_START_HOUR (masalan 9 → 09:00) olinadi.
+  workStart: hhmm(process.env.WORK_START) || hhmm(process.env.WORK_START_HOUR) || '09:00',
   workEndHour: num(process.env.WORK_END_HOUR, 18),
   reminderIntervalHours: num(process.env.REMINDER_INTERVAL_HOURS, 2),
   /** cron ko'rinishida: '1-6' = dushanba–shanba, '1-5' = dushanba–juma */
@@ -80,6 +93,11 @@ const config = {
   // Kechikish
   lateGraceMinutes: num(process.env.LATE_GRACE_MINUTES, 10),
   askLateReason: bool(process.env.ASK_LATE_REASON, true),
+  // «Kech qolaman» ish boshlanishidan kamida shuncha daqiqa OLDIN yuborilsa — o'sha kungi kechikish hisoblanmaydi (0 — o'chirilgan)
+  lateNoticeMinBefore: num(process.env.LATE_NOTICE_MIN_BEFORE, 60),
+
+  // «Bajardim» isboti (rasm/video/audio/fayl) majburiymi. 0 — «⏭ Isbotsiz yuborish» tugmasi bor (BayLog standarti)
+  proofRequired: bool(process.env.PROOF_REQUIRED, false),
 
   // KPI: har bir qaytarilgan ish topshiriq foizidan necha % ayiradi (0 — jarima yo'q)
   returnPenaltyPct: num(process.env.RETURN_PENALTY_PCT, 5),
@@ -98,23 +116,49 @@ const config = {
   officeLat: process.env.OFFICE_LAT && Number.isFinite(Number(process.env.OFFICE_LAT)) ? Number(process.env.OFFICE_LAT) : null,
   officeLon: process.env.OFFICE_LON && Number.isFinite(Number(process.env.OFFICE_LON)) ? Number(process.env.OFFICE_LON) : null,
   officeRadiusM: num(process.env.OFFICE_RADIUS_M, 250),
+  /** 1 — aniqligi (horizontal_accuracy) yo'q joylashuv rad etiladi; 0 — qabul qilinib, tekshiruvchiga ⚠️ bilan boradi */
+  strictGps: ['1', 'true', 'yes'].includes(String(process.env.STRICT_GPS || '').toLowerCase()),
 
   // CRM uchun faqat o'qiladigan HTTP manzil (kalit bo'lmasa ochilmaydi)
   crmApiSecret: str(process.env.CRM_API_SECRET),
 
+  // Hudud (agent) rejimi: "Keldim" uchun uydan kamida shuncha metr uzoqda bo'lishi kerak
+  fieldMinDistanceM: num(process.env.FIELD_MIN_DISTANCE_M, 1000),
+  // Ofis rejimida "Keldim" uchun video (yoki dumaloq video) majburiy (BayLog'da standart: yo'q)
+  officeCheckinVideo: bool(process.env.OFFICE_CHECKIN_VIDEO, false),
+  // Oy boshini tasdiqlamaguncha "Keldim" yopiq (BayLog'da standart: yo'q — xabar baribir boradi)
+  monthStartRequired: bool(process.env.MONTH_START_REQUIRED, false),
+
+  // KPI sharti. score — summa × ball / 100 (BayLog standarti); gate — shart bajarilsa KPI summasi TO'LIQ, bajarilmasa 0
+  kpiMode: str(process.env.KPI_MODE).toLowerCase() === 'gate' ? 'gate' : 'score',
+  kpiMaxLate: num(process.env.KPI_MAX_LATE, 0),          // oyda ruxsat etilgan kechikishlar soni
+  kpiMaxAbsent: num(process.env.KPI_MAX_ABSENT, 0),      // sababsiz kelmagan kunlar
+  kpiMaxMissedTasks: num(process.env.KPI_MAX_MISSED_TASKS, 0), // muddatida bajarilmagan topshiriqlar
+  kpiExcusedOk: bool(process.env.KPI_EXCUSED_OK, true),  // tasdiqlangan sababli kun KPI ga zarar qilmaydi
+
   dbPath: path.resolve(process.env.DB_PATH || path.join(__dirname, '..', 'data', 'bot.db')),
   backupKeep: num(process.env.BACKUP_KEEP, 14),
   port: num(process.env.PORT, 8000),
+
+  // Web App (Telegram Mini App). Bo'sh bo'lsa ilova tugmalari ko'rinmaydi (server baribir ishlaydi).
+  // Masalan: https://missiya-bot-production.up.railway.app/app — faqat https.
+  webAppUrl: /^https:\/\/[^\s]+$/.test(str(process.env.WEBAPP_URL)) ? str(process.env.WEBAPP_URL).replace(/\/+$/, '') : '',
+  // initData necha soniya amal qiladi (Telegram har ochilishda yangisini beradi)
+  webAuthTtlSec: num(process.env.WEBAPP_AUTH_TTL, 86400),
 };
+
+if (str(process.env.WEBAPP_URL) && !config.webAppUrl) {
+  console.warn('⚠️  WEBAPP_URL https:// bilan boshlanishi kerak — Web App tugmalari o\'chirildi.');
+}
 
 if (!config.botToken) {
   console.error("BOT_TOKEN topilmadi. .env faylini to'ldiring (.env.example dan nusxa oling).");
   process.exit(1);
 }
 
+config.workStartHour = Number(config.workStart.slice(0, 2));
 if (config.workEndHour <= config.workStartHour) {
-  console.warn("⚠️  WORK_END_HOUR WORK_START_HOUR dan katta bo'lishi kerak — standart 9–18 ishlatiladi.");
-  config.workStartHour = 9;
+  console.warn("⚠️  WORK_END_HOUR ish boshlanishidan katta bo'lishi kerak — 18 ishlatiladi.");
   config.workEndHour = 18;
 }
 

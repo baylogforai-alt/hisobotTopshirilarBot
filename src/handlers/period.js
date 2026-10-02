@@ -174,7 +174,7 @@ const handleTypedDates = async (ctx) => {
 const showWho = async (ctx) => {
   if (!(await guard(ctx))) return null;
   const sel = getSel(ctx);
-  const list = await employees.listActive();
+  const list = await employees.listStaff();
   const rows = [[cb('🏢 Butun jamoa (hammasi bitta hisobotda)', 'pr:w:all')]];
   list.forEach((e) => rows.push([cb(`${String(e.id) === String(sel.empId) ? '✅ ' : '👤 '}${e.full_name}`, `pr:w:${e.id}`)]));
   rows.push([cb('⬅️ Orqaga', 'pr:home')]);

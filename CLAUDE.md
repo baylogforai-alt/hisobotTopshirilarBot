@@ -22,7 +22,9 @@ funksiyalari ko'chirildi + yangi «kunlik hisobot» qo'shildi:
 
 Node ≥20 (muhitda 24), CommonJS, `telegraf` 4.16 long polling, `pg` **yoki** `better-sqlite3` ^12 (v11 Node 24 da yiqiladi),
 `node-cron` (Asia/Tashkent), `exceljs`, `luxon`, `dotenv`. Test: `npm test` → `scripts/smoke.js` (alohida SQLite, `Telegram.prototype.callApi` stub,
-**106 tekshiruv**, v1 baza soxtalashtirilib migratsiya ham sinaladi). Deploy: `Dockerfile`, `railway.json`, `Procfile`.
+**133 tekshiruv**, v1 baza soxtalashtirilib migratsiya ham sinaladi) **+ `scripts/smoke-bayoma.js`** (BAYOMA'ning 504 tekshiruvi,
+BAYOMA sozlamalari bilan: video, oy boshi, gate KPI, majburiy isbot; tugma nomlari `LABELS` bilan BayLog'ga o'giriladi). `npm test` ikkalasini ishlatadi.
+Deploy: `Dockerfile`, `railway.json`, `Procfile`.
 
 ## 3. Fayl strukturasi (BAYOMA CLAUDE.md dagi bilan bir xil + qo'shimchalar)
 
@@ -59,7 +61,7 @@ src/handlers/
   excelMenu.js        xl:* (davr → kim → fayl), xlme:* hodim
 src/jobs.js           pre-start-intent (start−5), morning-group (start), morning-call (0,30), morning-digest, overdue-alert, reminder (har N soat),
                       report-nudge (end−30), daily-report (end: guruh + direktor + hodimlarga reja), plan-nudge (end:45), weekly-report (Du 9:10),
-                      score-nudge (25-kun), monthly-kpi (1-kun 9:20, + oylik davr hisoboti matni), backup (23:50, SQLite)
+                      score-nudge (25-kun), monthly-kpi (1-kun 9:20, + oylik davr hisoboti matni), backup (23:50, SQLite) / backup-export (23:50, Postgres → direktorga JSON)
 ```
 
 ## 4. Baza — BAYOMA jadvallari + `daily_reports` (employee_id+work_date UNIQUE, text, photo_file_id, submitted_at, reviewed_by/at, review_note),
@@ -84,6 +86,16 @@ src/jobs.js           pre-start-intent (start−5), morning-group (start), morni
   Yangi ixtiyoriy kalitlar (standart bilan ishlaydi): DAILY_REPORT_REQUIRED, DAILY_REPORT_REMIND_MIN, LATE_GRACE_MINUTES, RETURN_PENALTY_PCT, OFFICE_RADIUS_M, BACKUP_KEEP.
 - ⬜ Haqiqiy Telegramda hodimlar bilan to'liq oqim (GPS, rasm bilan Bajardim, kunlik hisobot) hali sinalmagan. Lokal `npm start` prod bilan 409 beradi.
 - ⚠️ Auto-mode: `railway ssh` (prod o'qish) rad etiladi — prod bazani zaxiralash uchun foydalanuvchi o'zi Railway dashboard'dan qilishi kerak.
+- ✅ 23-sen-2026 **audit tuzatishlari** (hisobot: sessiya scratchpad `audit-hisobot.md`, 5/10 edi) — commit/deploy qilinmagan bo'lsa, git status'ga qarang:
+  K1 `hs:*` da `canRate` (faqat boshliq/direktor, o'ziga emas) · Y1 `kpi_monthly.fund_manual` — oylik fond compute'da saqlanadi ·
+  Y2 `kpi.editable()` — draft bo'lmagan qatorda setHeadScore/setCustomPct/setBonusFund null qaytaradi («Qayta ochish» kerak) ·
+  Y3 hodim muddati o'tgan o'z ishini ko'chira/o'chira olmaydi (`scheduleGuard`), ko'chirish/o'chirishda tekshiruvchiga xabar ·
+  Y4 aniqligi (`horizontal_accuracy`) yo'q joylashuv — qabul + tekshiruvchiga ⚠️; `STRICT_GPS=1` — rad etiladi (haqiqiy Telegramda sinalmagan) ·
+  Y5 `attendance.stats` — `created_at` dan oldingi yozuvsiz kunlar hisobga kirmaydi · Y6 Postgres'da 23:50 `backup-export` → direktorga `.json.gz` (Panel «💾 Zaxira nusxa» ham) ·
+  O2 tasks holat o'tishlari `WHERE status=… RETURNING id` · O3 bo'limsiz boshliq kompaniya ro'yxatini ko'rmaydi · O4 `adminLossBlock` (o'zini/oxirgi adminni) ·
+  O5 fond maydoniga faqat raqam · O7 `dropPendingUpdates: false` · P12 `splitText` uzun qatorni ham bo'ladi.
+  Qolgan (qilinmagan): O1 bayramlar, O6 `fixes.js` regex, O8 og'ir Excel botni to'xtatadi, O9 klaviatura sahifalash, O10 eslatma filtrlari, 🟢 past darajalar.
+  Taqdimot: `Desktop\BAYCARGO\BayLog_Missiya_Bot_taqdimot.pptx` (generator: scratchpad `pptx/gen.js` + `post.py` — Morph + kirish animatsiyalari) va veb-versiya https://claude.ai/artifact/QiGck8z5VtM87nvvsdWeeX
 
 ## Ishga tushirish
 
@@ -94,3 +106,38 @@ npm start
 npm run admin -- 7802923308 "Islombek"   # botsiz admin
 npm run db:check
 ```
+
+## 7. 2-okt-2026: BAYOMA (1–2-okt holati) yangiliklari ko'chirildi + 📢 E'lon
+
+Foydalanuvchi: «BAYOMA botiga qara, bizni ham shunaqa takomillashtir, hammaga birdaniga 1 ta e'lon bo'lsin» → «bizda yo'q hammasini qo'sh»;
+e'lon — «hammaga yoki hodimga degan tugma, 1–2 hodim tanlab yuborish».
+
+**Usul:** v2 BAYOMA `a530279` (21-sen) asosida qurilgan edi → har bir fayl `git merge-file` (ours / base a530279 / BAYOMA HEAD `cfdcb77`) bilan
+3 tomonlama birlashtirildi, ~77 konflikt qo'lda hal qilindi. Zaxira: sessiya scratchpad `src-before-port.tgz`, `audit-fixes.patch`.
+
+**Ko'chirilganlar (BAYOMA §1–§7):** HR roli (`is_hr`), «👥 Hodimlarim» (team.js), yo'nalishlar (directions — callback **`dn:`**, chunki `dr:` bizda
+kunlik hisobot; seed: Moliya, Logistika, Ombor, Sotuv), davomat nazoratchisi (`can_view_att`, `vw:`), «📋 Barcha topshiriqlar» jurnali (`tj:`),
+topshiriq ovoz/video/fayl/rasm bilan + «✅ Eshitdim, tushundim» (`ak:`, `ackByText`), «⏰ Kech qolaman» (1 soat oldin — kechikish emas),
+sabablar media bilan, rahbariyat (direktor + HR) tasdig'i, boshliq rejimi (`employees.isBoss` — role=admin hodim davomat/KPI/ro'yxatlardan chiqadi),
+eslatmalar hodim/bo'lim bo'yicha (`rm:`/`rs:`, tick), umumiy ish vaqti (Panel «🕘 Ish vaqti», `worktime`), «🏷 Nomlar», rahbar nusxasi (`adm:htc`),
+filiallar (`br:`), ofis/hudud rejimi + uy joylashuvi + «📍 Hududga keldim» (field.js, visits), Keldim videosi, oy boshi (`ms:`), «💵 Oylik va KPI»
+(`pay:`, oklad `salary`), shartli KPI (gate), arxiv guruhi (`/arxiv_ulash`), `flows.js`/`access.js` (bot va Web App bitta mantiq),
+**Web App** (`src/web/*`, `/app`, `/api/*`; `WEBAPP_URL` bo'sh — tugmalar o'chiq). `/crm/snapshot` endi `web/server.js` ichida (`health.handleCrm`).
+
+**BayLog standartlari saqlandi (config):** `OFFICE_CHECKIN_VIDEO=false`, `MONTH_START_REQUIRED=false`, `KPI_MODE=score`, `PROOF_REQUIRED=0`
+(«⏭ Isbotsiz yuborish» bor), `WORK_START` bo'lmasa `WORK_START_HOUR` (prod: 9 → 09:00), `BOSS_NAME=Direktor`, `BOSS_IS_STAFF=0`
+(1 — direktor ham hodimdek hisoblanadi). Guruh e'lonlari (`ANNOUNCE_DONE`), kunlik hisobot, arxiv/davr/Excel, CRM, intent — o'z joyida;
+pre-start-intent va morning-group endi tick ichida (ish vaqti dinamik). BayLog modullari (arxiv, davr, Excel menyusi, CRM, kunlik hisobot) `listStaff` ishlatadi.
+O'zgargan qoidalar (BAYOMA'dan): hodim o'z topshirig'ini **bekor qila olmaydi** (faqat rahbar/HR/direktor; o'chirilmaydi — `cancelled`);
+sababli kunni faqat direktor/HR hal qiladi (bo'lim rahbari faqat xabar oladi).
+
+**📢 E'lon (yangi, BAYOMA'da yo'q):** `handlers/announce.js` + `services/announcements.js`; jadvallar `announcements`, `announcement_recipients`.
+Kim: direktor/HR — hammaga, bo'lim rahbari — o'z jamoasiga. «👥 Hammaga» yoki «👤 Hodim tanlash» (✅/☐, sahifalab, «hammasini belgilash») →
+matn yoki rasm/video/ovoz/fayl → ko'rib chiqish (direktor: «💬 Guruhga ham») → yuborish. Oluvchida «👁 O'qidim» (`an:r:<id>`),
+yuboruvchida «📊 Kim o'qidi» (`an:v`), «🔔 O'qimaganlarga qayta yuborish» (`an:rs`), tarix (`an:list`). Kirish: tugma «📢 E'lon», `/elon`, Panel.
+Sessiya: `announce_pick` → `announce_text` → `announce_confirm`. Activity: `announce`, `announce_read` (+ `task_ack`, `late_notice`, `visit`).
+
+**Holat (2-okt):** `npm test` — 133/133 + 504/504, handler xatosi 0. Lokal v1 va v2 baza nusxalarida migratsiya o'tdi (`db:check`).
+⬜ **Commit va deploy qilinmagan** (foydalanuvchi aytganda: `git push origin master:main` + `railway up --detach`). Postgres'da yangi SQL sinalmagan
+(faqat ikkala dialektdagi konstruksiyalar ishlatilgan). Web App ga «📢 E'lon», kunlik hisobot, arxiv qo'shilmagan (faqat botda).
+Web App yoqish uchun Railway'da `WEBAPP_URL=https://missiya-bot-production.up.railway.app/app`.

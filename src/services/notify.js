@@ -77,6 +77,27 @@ const adminIds = async () => {
   return [...ids].filter(Boolean);
 };
 
+/** Direktorlar + HR — "direktor ko'rgan hamma narsa" boradiganlar */
+const seeAllIds = async () => {
+  const employees = require('./employees');
+  const ids = new Set(await adminIds());
+  try {
+    (await employees.listHr()).forEach((e) => ids.add(Number(e.tg_id)));
+  } catch (err) {
+    console.error("[notify] HR ro'yxati olinmadi:", err.message);
+  }
+  return [...ids].filter(Boolean);
+};
+
+const toSeeAll = async (bot, text, extra = {}, exceptTgId = null) => {
+  const ids = (await seeAllIds()).filter((id) => Number(id) !== Number(exceptTgId));
+  for (const id of ids) {
+    await toUser(bot, id, text, extra);
+    await tg.throttle();
+  }
+  return ids.length;
+};
+
 /**
  * Barcha adminlarga xabar. exceptTgId — hodimning o'zi admin bo'lsa, o'ziga yubormaslik uchun.
  * Har biriga alohida extra (masalan tugma) bir xil ketadi.
@@ -116,25 +137,91 @@ const toMany = async (bot, tgIds, text, extra = {}) => {
 const toReviewers = async (bot, emp, text, extra = {}, proof = null) => {
   const employees = require('./employees');
   const ids = await employees.reviewersOf(emp);
+  return sendWithInfoCopies(bot, emp, ids, text, extra, proof);
+};
+
+/** ids ga tugmalar bilan; texnik direktorlarga (ADMIN_IDS, rahbariyatda yo'q) — tugmasiz nusxa */
+const sendWithInfoCopies = async (bot, emp, ids, text, extra = {}, proof = null) => {
+  let sent = 0;
+  const send = async (id, ex) => {
+    const ok = proof && proof.fileId ? await sendProof(bot, id, proof, text, ex) : await toUser(bot, id, text, ex);
+    if (ok) sent += 1;
+    await tg.throttle();
+  };
+  for (const id of ids) await send(id, extra);
+  const info = await require('./org').infoOnlyIds([...ids, Number(emp.tg_id)]);
+  for (const id of info) await send(id, {});
+  return sent;
+};
+
+const PROOF_METHOD = {
+  photo: 'sendPhoto', video: 'sendVideo', document: 'sendDocument', video_note: 'sendVideoNote', voice: 'sendVoice', audio: 'sendAudio',
+};
+
+/**
+ * Rasm / video / dumaloq video / audio / ovozli xabar (file_id bo'yicha) + HTML caption.
+ * Caption 1024 dan uzun bo'lsa yoki dumaloq video bo'lsa (caption qo'llamaydi) — matn alohida xabar.
+ */
+const sendProof = async (bot, chatId, proof, caption, extra = {}) => {
+  const method = PROOF_METHOD[proof.type] || 'sendDocument';
+  const inline = caption.length <= 1000 && proof.type !== 'video_note';
+  const opts = inline ? { caption, parse_mode: 'HTML', ...extra } : {};
+  const res = await tg.safe(() => bot.telegram[method](chatId, proof.fileId, opts), `proof→${chatId}`);
+  if (!inline) await sendText(bot, chatId, caption, extra);
+  return res;
+};
+
+/** Kelmaslik / kechikish xabari: HR + boshliq (direktorlar) + bo'lim rahbari */
+const toHrAndBoss = async (bot, emp, text, extra = {}, proof = null, { decideExtra = null } = {}) => {
+  const org = require('./org');
+  const ids = await org.absenceRecipientsOf(emp);
+  if (!decideExtra) return sendWithInfoCopies(bot, emp, ids, text, extra, proof);
+  // tasdiqlash tugmalari faqat rahbariyatga (boshliq + HR); bo'lim rahbari va boshqalarga — tugmasiz
+  const top = new Set(await org.approversOf(emp));
   let sent = 0;
   for (const id of ids) {
-    const ok = proof ? await sendProof(bot, id, proof, text, extra) : await toUser(bot, id, text, extra);
+    const ex = top.has(Number(id)) ? decideExtra : extra;
+    const ok = proof && proof.fileId ? await sendProof(bot, id, proof, text, ex) : await toUser(bot, id, text, ex);
+    if (ok) sent += 1;
+    await tg.throttle();
+  }
+  for (const id of await org.infoOnlyIds([...ids, Number(emp.tg_id)])) {
+    const ok = proof && proof.fileId ? await sendProof(bot, id, proof, text, extra) : await toUser(bot, id, text, extra);
     if (ok) sent += 1;
     await tg.throttle();
   }
   return sent;
 };
 
-/** Rasm yoki video (file_id bo'yicha) + HTML caption. Caption 1024 dan uzun bo'lsa alohida matn. */
-const sendProof = async (bot, chatId, proof, caption, extra = {}) => {
-  const short = caption.length <= 1000;
-  const opts = short ? { caption, parse_mode: 'HTML', ...extra } : {};
-  const method = proof.type === 'video' ? 'sendVideo' : proof.type === 'document' ? 'sendDocument' : 'sendPhoto';
-  const res = await tg.safe(() => bot.telegram[method](chatId, proof.fileId, opts), `proof→${chatId}`);
-  if (!short) await sendText(bot, chatId, caption, extra);
-  return res;
+// ---------------------------------------------------------------------------
+// ARXIV GURUHI — hodimlar o'chira olmaydigan nusxa.
+// Telegram shaxsiy chatda foydalanuvchiga xabarni o'chirishni taqiqlashga imkon bermaydi,
+// shuning uchun barcha isbotlar (Keldim videosi, tashriflar, Bajardim isboti) direktor egasi bo'lgan
+// yopiq guruhga ham nusxalanadi. Hodim o'z chatidan o'chirsa ham arxivda va bazada qoladi.
+// ---------------------------------------------------------------------------
+const ARCHIVE_KEY = 'archive_chat_id';
+let cachedArchiveId;
+
+const getArchiveId = async () => {
+  if (cachedArchiveId !== undefined) return cachedArchiveId;
+  const fromDb = await db.getSetting(ARCHIVE_KEY);
+  cachedArchiveId = fromDb ? Number(fromDb) : null;
+  return cachedArchiveId;
+};
+
+const setArchiveId = async (chatId) => {
+  await db.setSetting(ARCHIVE_KEY, String(chatId));
+  cachedArchiveId = Number(chatId);
+};
+
+/** Arxivga matn yoki isbot. Arxiv ulanmagan bo'lsa jim. */
+const toArchive = async (bot, text, proof = null) => {
+  const chatId = await getArchiveId();
+  if (!chatId) return null;
+  return proof && proof.fileId ? sendProof(bot, chatId, proof, text) : sendText(bot, chatId, text);
 };
 
 module.exports = {
   getGroupId, setGroupId, toGroup, toUser, docToGroup, docToUser, adminIds, toAdmins, docToAdmins, toMany, toReviewers, sendProof,
+  getArchiveId, setArchiveId, toArchive, toHrAndBoss, seeAllIds, toSeeAll,
 };

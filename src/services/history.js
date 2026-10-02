@@ -160,7 +160,7 @@ const timeline = async (emp, date, { all = true } = {}) => {
 const teamOverview = async (days = 7) => {
   const to = time.today();
   const from = time.addDays(to, -(days - 1));
-  const list = await employees.listActive();
+  const list = await employees.listStaff();
   const lines = [];
   for (const emp of list) {
     const at = await attendance.stats(emp, from, to);

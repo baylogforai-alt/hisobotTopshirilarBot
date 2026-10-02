@@ -8,7 +8,9 @@ const db = require('./db');
 const tg = require('./telegram');
 const employees = require('./services/employees');
 const tasks = require('./services/tasks');
+const worktime = require('./services/worktime');
 const attendance = require('./services/attendance');
+const reminders = require('./services/reminders');
 const notify = require('./services/notify');
 const reports = require('./services/reports');
 const period = require('./services/period');
@@ -18,20 +20,24 @@ const backup = require('./services/backup');
 const dailyReport = require('./handlers/dailyReport');
 
 /**
- * REJALASHTIRUVCHI (standart 9:00–18:00, dushanba–shanba, Asia/Tashkent):
- *   start−5 daq  pre-start-intent — «Ishga kelyapsizmi?» (Ha/Yo'q) hali kelmaganlarga
- *   start        morning-group   — guruhga «Xayrli tong» + kutilayotganlar (guruh ulangan bo'lsa)
- *   har 30 daq   morning-call    — ish boshlanishi kelgan (umumiy yoki o'ziniki) va hali kelmaganlarga "Keldim" eslatmasi
- *   start+grace+5 morning-digest — direktorga hamma, boshliqqa o'z bo'limi: kim keldi / kech / yo'q
- *   start:30     overdue-alert   — tekshiruvchilarga muddati o'tgan ishlar
- *   har N soat   reminder        — ochiq topshiriqli hodimlarga (tugmali), guruhga ro'yxat, tekshiruvchilarga
+ * REJALASHTIRUVCHI (Asia/Tashkent, WORK_DAYS). Ish boshlanishi bazada (Panel → «🕘 Ish vaqti»), shuning uchun
+ * ertalabki ishlar 5 daqiqalik tick ichida dinamik:
+ *   har 5 daq (06:00–21:55) tick:
+ *       pre-start-intent — umumiy boshlanish − 5 daq: «Ishga kelyapsizmi?» (Ha/Yo'q) hali kelmaganlarga
+ *       morning-group    — umumiy boshlanish: guruhga «Xayrli tong» + kutilayotganlar
+ *       morning-call     — hodimning ish boshlanishi (umumiy yoki o'ziniki) kelganda, hali kelmaganlarga "Keldim" eslatmasi
+ *       morning-digest   — umumiy boshlanish + kechikish ruxsati + 5 daq: direktor/HR ga hamma, rahbarga o'z bo'limi
+ *       overdue-alert    — umumiy boshlanish + 40 daq: muddati o'tgan ishlar
+ *       reminder         — har hodimga o'z vaqtlarida (hodim → bo'lim → umumiy «har N soat»); tekshiruvchilarga va
+ *                          guruhga (ANNOUNCE_DONE) — umumiy vaqtlarda
  *   end−30 daq   report-nudge    — kunlik hisobot topshirmaganlarga eslatma
- *   end          daily-report    — guruhga kun yakuni (itemli), direktorga batafsil + kunlik hisobotlar holati; hodimlarga ertangi reja so'rovi
+ *   end          daily-report    — guruhga kun yakuni (itemli), direktor/HR ga batafsil; hodimlarga ertangi reja so'rovi
  *   end:45       plan-nudge      — ertangi kunga rejasi yo'q hodimlarga eslatma
  *   dushanba     weekly-report   — o'tgan hafta jamoa hisoboti + Excel → direktorga
  *   25-kun 10:00 score-nudge     — boshliqlarga: joriy oyni baholang
- *   1-kun 09:20  monthly-kpi     — o'tgan oy KPI + oylik Excel → direktorga; boshliqlarga baholash eslatmasi
- *   23:50        backup          — SQLite zaxira
+ *   1-kun 09:00  month-start     — hammaga «yangi ish oyi boshlandi» + tasdiqlash tugmasi
+ *   1-kun 09:20  monthly-kpi     — o'tgan oy KPI + oylik Excel → direktor/HR; boshliqlarga baholash eslatmasi
+ *   23:50        backup          — SQLite zaxira / Postgres'da JSON eksport direktorga (backup-export)
  */
 
 const logRun = (kind, detail = '') =>
@@ -46,98 +52,115 @@ const schedule = (name, expr, fn) => {
   }, { timezone: config.timezone });
 };
 
-/** Boshliqlarga o'z bo'limi, direktorlarga hamma */
+/** Rahbarlarga o'z bo'limi, direktorlar va HR ga hamma */
 const sendToManagers = async (bot, buildFor) => {
   let sent = 0;
-  for (const id of await notify.adminIds()) {
+  const full = await notify.seeAllIds();
+  for (const id of full) {
     const msg = await buildFor(null);
     if (msg) { await notify.toUser(bot, id, msg.text, msg.extra || {}); sent += 1; await tg.throttle(); }
   }
   for (const h of await employees.listHeads()) {
-    if (!h.department_id || config.adminIds.includes(Number(h.tg_id))) continue;
+    if (!h.department_id || full.includes(Number(h.tg_id))) continue;
     const msg = await buildFor(h.department_id);
     if (msg) { await notify.toUser(bot, h.tg_id, msg.text, msg.extra || {}); sent += 1; await tg.throttle(); }
   }
   return sent;
 };
 
-/** 'HH:MM' → cron "MM HH" (soat manfiy bo'lsa 0 ga tortiladi) */
+/** Soat → cron "MM HH" (manfiy bo'lsa 0 ga tortiladi) */
 const minusMinutes = (hour, minutes) => {
   const total = Math.max(0, hour * 60 - minutes);
   return { h: Math.floor(total / 60), m: total % 60 };
 };
 
-const start = (bot) => {
-  const { workStartHour: startH, workEndHour: endH, reminderIntervalHours: step, workDays: dow } = config;
-  const graceMin = Math.min(59, config.lateGraceMinutes + 5);
+/** [nowMin−4, nowMin] oynasiga tushadimi (5 daqiqalik tick) */
+const inSlot = (targetMin, nowMin) => targetMin > nowMin - 5 && targetMin <= nowMin;
 
-  // Ish boshlanishidan 5 daqiqa oldin: "Ishga kelyapsizmi?" (umumiy vaqtdagilar)
-  const pre = minusMinutes(startH, 5);
-  schedule('pre-start-intent', `${pre.m} ${pre.h} * * ${dow}`, async () => {
-    let asked = 0;
-    for (const e of await employees.listActive()) {
-      if (employees.isFlexible(e) || e.work_start) continue;
-      const row = await attendance.get(e.id);
-      if (row && (row.checked_in || row.excuse_status || row.intent)) continue;
-      await notify.toUser(bot, e.tg_id, `🕘 <b>${startH}:00 ga 5 daqiqa qoldi.</b>\n\nBugun ishga kelyapsizmi?`, ui.intentKeyboard());
-      asked += 1;
-      await tg.throttle();
-    }
-    await logRun('pre-start-intent', `${asked} ta hodimdan so'raldi`);
-  });
+/** Umumiy ish boshlanishidan 5 daqiqa oldin: «Ishga kelyapsizmi?» (alohida vaqti yo'qlarga) */
+const preStartIntent = async (bot) => {
+  let asked = 0;
+  for (const e of await employees.listStaff()) {
+    if (employees.isFlexible(e) || e.work_start) continue;
+    const row = await attendance.get(e.id);
+    if (row && (row.checked_in || row.excuse_status || row.intent || row.late_notice_at)) continue;
+    await notify.toUser(bot, e.tg_id, `🕘 <b>${worktime.get()} ga 5 daqiqa qoldi.</b>\n\nBugun ishga kelyapsizmi?`, ui.intentKeyboard());
+    asked += 1;
+    await tg.throttle();
+  }
+  await logRun('pre-start-intent', `${asked} ta hodimdan so'raldi`);
+  return asked;
+};
 
-  // Ish boshlanishida guruhga chaqiriq
-  schedule('morning-group', `0 ${startH} * * ${dow}`, async () => {
+const morningCall = async (bot, nowMin) => {
+  let n = 0;
+  for (const e of await employees.listStaff()) {
+    if (employees.isFlexible(e) || !inSlot(employees.startMinutesOf(e), nowMin)) continue;
+    const row = await attendance.get(e.id);
+    if (row && (row.checked_in || row.excuse_status || row.late_reason || row.intent === 'no')) continue;
+    const open = await tasks.openFor(e.id);
+    await notify.toUser(
+      bot, e.tg_id,
+      `🌅 <b>Xayrli tong, ${ui.esc(e.full_name)}!</b> Ish vaqti boshlandi.\n` +
+        (open.length ? `Bugun uchun <b>${open.length} ta</b> missiya kutmoqda.\n` : "Bugunga yozilgan missiya yo'q.\n") +
+        `\nIsh joyiga yetib kelgach «${ui.BTN.checkIn}» tugmasini bosing.\nKechiksangiz — «${ui.BTN.late}», kela olmasangiz — «${ui.BTN.absence}».`,
+    );
+    n += 1;
+    await tg.throttle();
+  }
+  if (n) await logRun('morning-call', `${n} ta hodimga`);
+  return n;
+};
+
+/** Topshiriq eslatmalari — har hodimning o'z vaqtida; tekshiruvchilar va guruh — umumiy vaqtlarda */
+const remindTick = async (bot, nowMin) => {
+  const step = await reminders.globalStep();
+  let n = 0;
+  for (const e of await employees.listActive()) {
+    const times = reminders.timesFor(e, step, employees.startMinutesOf(e));
+    if (!times.some((t) => inSlot(reminders.toMin(t), nowMin))) continue;
+    if (await reports.sendReminderTo(bot, e)) { n += 1; await tg.throttle(); }
+  }
+  let rv = 0;
+  let grp = false;
+  if (reminders.intervalTimes(worktime.minutes(), step).some((t) => inSlot(reminders.toMin(t), nowMin))) {
+    rv = await reports.sendReviewerDigest(bot);
+    if (config.announceDone) grp = await reports.sendGroupReminder(bot);
+  }
+  if (n || rv || grp) await logRun('reminder', `${n} hodim, ${rv} tekshiruvchi${grp ? ', guruh' : ''}`);
+  return n;
+};
+
+/** Har 5 daqiqada: dinamik vaqtli ishlar */
+const tick = async (bot, now = time.now()) => {
+  const nowMin = now.hour * 60 + now.minute;
+  const g = worktime.minutes();
+  await remindTick(bot, nowMin);
+  if (now.hour >= config.workEndHour) return;
+  if (inSlot(g - 5, nowMin)) await preStartIntent(bot);
+  if (inSlot(g, nowMin)) {
     const r = await reports.sendMorningGroupCall(bot);
     await logRun('morning-group', JSON.stringify(r));
-  });
-
-  // Har yarim soatda: kimning ish boshlanishi shu 30 daqiqaga to'g'ri kelsa — shaxsiy eslatma (alohida ish vaqti bo'lganlar ham)
-  schedule('morning-call', `0,30 ${startH}-${endH - 1} * * ${dow}`, async () => {
-    const now = time.now();
-    const nowMin = now.hour * 60 + now.minute;
-    let n = 0;
-    for (const e of await employees.listActive()) {
-      if (employees.isFlexible(e)) continue;
-      const st = employees.startMinutesOf(e);
-      if (st < nowMin - 15 || st > nowMin + 15) continue;
-      const row = await attendance.get(e.id);
-      if (row && (row.checked_in || row.excuse_status || row.intent === 'no')) continue;
-      const open = await tasks.openFor(e.id);
-      await notify.toUser(
-        bot, e.tg_id,
-        `🌅 <b>Xayrli tong, ${ui.esc(e.full_name)}!</b>\n` +
-          (open.length ? `Bugun uchun <b>${open.length} ta</b> missiya kutmoqda.\n` : "Bugunga yozilgan missiya yo'q.\n") +
-          `\nOfisga yetib kelgach «${ui.BTN.checkIn}» tugmasini bosing. Kela olmasangiz — «${ui.BTN.absence}».`,
-      );
-      n += 1;
-      await tg.throttle();
-    }
-    await logRun('morning-call', `${n} ta hodimga`);
-  });
-
-  schedule('morning-digest', `${graceMin} ${startH} * * ${dow}`, async () => {
+  }
+  await morningCall(bot, nowMin);
+  if (inSlot(g + config.lateGraceMinutes + 5, nowMin)) {
     const n = await sendToManagers(bot, async (deptId) => ({ text: (await reports.buildMorningDigest({ deptId })).text }));
     await logRun('morning-digest', `${n} ta rahbarga`);
-  });
-
-  schedule('overdue-alert', `30 ${startH} * * ${dow}`, async () => {
+  }
+  if (inSlot(g + 40, nowMin)) {
     const n = await sendToManagers(bot, async (deptId) => {
       const list = await tasks.overdue(deptId);
       if (!list.length) return null;
       return { text: `⚠️ <b>MUDDATI O'TGAN TOPSHIRIQLAR (${list.length})</b>\n\n${ui.taskList(list, { withName: true })}` };
     });
     await logRun('overdue-alert', `${n} ta rahbarga`);
-  });
+  }
+};
 
-  const first = startH + step;
-  const last = endH - 1;
-  if (first <= last) {
-    schedule('reminder', `0 ${first}-${last}/${step} * * ${dow}`, async () => {
-      const r = await reports.sendReminder(bot);
-      await logRun('reminder', JSON.stringify(r));
-    });
-  } else console.warn("[jobs] Ish vaqti juda qisqa — oraliq eslatmalar o'chirildi.");
+const start = (bot) => {
+  const { workEndHour: endH, workDays: dow } = config;
+
+  schedule('tick', `*/5 6-21 * * ${dow}`, () => tick(bot));
 
   // Kunlik hisobot eslatmasi (ish tugashidan N daqiqa oldin)
   if (config.dailyReportRequired) {
@@ -151,10 +174,10 @@ const start = (bot) => {
   schedule('daily-report', `0 ${endH} * * ${dow}`, async () => {
     if (config.dailyGroupReport) await notify.toGroup(bot, await reports.buildDailyGroupText());
     const { text } = await reports.buildToday({ title: 'KUN YAKUNI' });
-    await notify.toAdmins(bot, text, ui.inline([[ui.cb('📋 Kunlik hisobotlar', 'dr:today'), ui.cb('📥 Excel (bugun)', 'rp:xlday')]]));
+    await notify.toSeeAll(bot, text, ui.inline([[ui.cb('📋 Kunlik hisobotlar', 'dr:today'), ui.cb('📥 Excel (bugun)', 'rp:xlday')]]));
     // hodimlarga: ertangi rejani yozish
     let asked = 0;
-    for (const e of await employees.listActive()) {
+    for (const e of await employees.listStaff()) {
       if (!(await attendance.isCheckedIn(e.id))) continue;
       const open = await tasks.openFor(e.id);
       const rep = await require('./services/dailyReports').get(e.id);
@@ -168,7 +191,7 @@ const start = (bot) => {
       asked += 1;
       await tg.throttle();
     }
-    await logRun('daily-report', `guruh + direktor · ${asked} hodimga`);
+    await logRun('daily-report', `guruh + direktor/HR · ${asked} hodimga`);
   });
 
   // Ertangi kun uchun reja yozilmagan bo'lsa eslatish
@@ -176,7 +199,7 @@ const start = (bot) => {
     const tomorrow = time.addDays(time.today(), 1);
     if (!time.isWorkDay(tomorrow)) return;
     let nudged = 0;
-    for (const e of await employees.listActive()) {
+    for (const e of await employees.listStaff()) {
       if (employees.isFlexible(e)) continue;
       if (await tasks.hasCoverageFor(e.id, tomorrow)) continue;
       await notify.toUser(bot, e.tg_id, `⏰ <b>Eslatma:</b> ertangi (${time.prettyDate(tomorrow)}) missiyalaringizni hali yozmadingiz.\n\n«${ui.BTN.selfTask}» tugmasi orqali ertangi rejani yozib qo'ying.`);
@@ -188,14 +211,17 @@ const start = (bot) => {
   });
 
   // Har dushanba: o'tgan hafta hisoboti + Excel — direktorga
-  schedule('weekly-report', `10 ${startH} * * 1`, async () => {
+  schedule('weekly-report', `10 ${config.workStartHour} * * 1`, async () => {
     const anchor = time.addDays(time.startOfWeek(time.today()), -1);
     const from = time.startOfWeek(anchor);
     const to = time.endOfWeek(anchor);
     const text = await period.teamReport(from, to);
-    await notify.toAdmins(bot, `🔔 <b>HAFTALIK AVTOMATIK HISOBOT</b>\n\n${text}`);
+    await notify.toSeeAll(bot, `🔔 <b>HAFTALIK AVTOMATIK HISOBOT</b>\n\n${text}`);
     const { buffer, filename } = await excel.buildTeamPeriod(from, to);
-    await notify.docToAdmins(bot, buffer, filename, `📥 <b>O'tgan hafta</b> — ${time.prettyRange(from, to)} (Excel)`);
+    for (const id of await notify.seeAllIds()) {
+      await notify.docToUser(bot, id, buffer, filename, `📥 <b>O'tgan hafta</b> — ${time.prettyRange(from, to)} (Excel)`);
+      await tg.throttle();
+    }
     await logRun('weekly-report', `${from} → ${to}`);
   });
 
@@ -211,14 +237,19 @@ const start = (bot) => {
     await logRun('score-nudge', `${n} ta boshliqqa`);
   });
 
-  schedule('monthly-kpi', `20 ${startH} 1 * *`, async () => {
+  schedule('month-start', '0 9 1 * *', async () => {
+    const n = await require('./handlers/month').sendMonthStart(bot);
+    await logRun('month-start', `${n} ta hodimga`);
+  });
+
+  schedule('monthly-kpi', '20 9 1 * *', async () => {
     const m = time.prevMonth();
     const rows = await kpi.computeAll(m);
     const { from, to } = time.monthRange(m);
-    await notify.toAdmins(bot, `🔔 <b>OYLIK AVTOMATIK HISOBOT</b>\n\n${await period.teamReport(from, to)}`);
+    await notify.toSeeAll(bot, `🔔 <b>OYLIK AVTOMATIK HISOBOT</b>\n\n${await period.teamReport(from, to)}`);
     const { buffer, filename } = await excel.buildMonthly(m);
     const missingScore = rows.filter((k) => Number(k.w_head) > 0 && k.head_score === null).length;
-    for (const id of await notify.adminIds()) {
+    for (const id of await notify.seeAllIds()) {
       await notify.docToUser(bot, id, buffer, filename, `📥 <b>${time.monthName(m)}</b> — oylik hisobot (KPI, topshiriqlar, davomat, kunlik hisobotlar)`);
       await notify.toUser(
         bot, id,
@@ -242,9 +273,16 @@ const start = (bot) => {
       const res = await backup.run();
       await logRun('backup', res.skipped ? 'skipped' : res.file);
     });
+  } else {
+    // Postgres: konteyner diski vaqtinchalik — zaxira direktorga Telegram fayli sifatida boradi
+    schedule('backup-export', '50 23 * * *', async () => {
+      const { buffer, filename, rows } = await backup.exportJson();
+      const n = await notify.docToAdmins(bot, buffer, filename, `💾 <b>Kunlik zaxira</b> — ${time.prettyDate(time.today())} · ${rows} ta yozuv\n<i>Faylni saqlab qo'ying: baza yo'qolsa shundan tiklanadi.</i>`);
+      await logRun('backup', `export ${rows} yozuv → ${n} admin`);
+    });
   }
 
   console.log('[jobs] Rejalashtiruvchi ishga tushdi.');
 };
 
-module.exports = { start };
+module.exports = { start, tick, inSlot, remindTick, preStartIntent };

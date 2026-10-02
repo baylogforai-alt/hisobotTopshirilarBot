@@ -19,6 +19,12 @@
  *  sessions       — sehrgar (wizard) holati — restartdan keyin ham saqlanadi
  *  settings       — kalit/qiymat (guruh ID, ofis GPS)
  *  reminder_log   — cron ishlari jurnali
+ *  branches       — filiallar (Toshkent, Andijon …) — har birining o'z ofis nuqtasi va radiusi
+ *  month_starts   — hodim yangi ish oyini tasdiqlagan payt (oy hisobi shundan boshlanadi)
+ *  visits         — hudud agentlarining tashriflari (lokatsiya + video/audio + izoh)
+ *  directions     — yo'nalishlar (Moliya, Logistika …) va employee_directions — kim mas'ul (HR topshiriq beradi)
+ *  announcements  — direktor/HR/rahbar e'lonlari (hammaga yoki tanlanganlarga; matn yoki media)
+ *  announcement_recipients — e'lon kimga bordi va kim «👁 O'qidim» bosdi
  */
 
 const tables = (pk, big) => `
@@ -30,6 +36,17 @@ CREATE TABLE IF NOT EXISTS departments (
   w_head        INTEGER NOT NULL DEFAULT 20,
   w_custom      INTEGER NOT NULL DEFAULT 20,
   custom_name   TEXT,
+  active        INTEGER NOT NULL DEFAULT 1,
+  created_at    TEXT    NOT NULL,
+  remind_times  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS branches (
+  id            ${pk},
+  name          TEXT    NOT NULL UNIQUE,
+  office_lat    TEXT,
+  office_lon    TEXT,
+  radius_m      INTEGER,
   active        INTEGER NOT NULL DEFAULT 1,
   created_at    TEXT    NOT NULL
 );
@@ -46,6 +63,16 @@ CREATE TABLE IF NOT EXISTS employees (
   work_start     TEXT,
   active         INTEGER NOT NULL DEFAULT 1,
   flexible       INTEGER NOT NULL DEFAULT 0,
+  branch_id      INTEGER REFERENCES branches(id) ON DELETE SET NULL,
+  work_mode      TEXT    NOT NULL DEFAULT 'office',
+  home_lat       TEXT,
+  home_lon       TEXT,
+  video_required INTEGER NOT NULL DEFAULT 0,
+  salary         INTEGER,
+  is_hr          INTEGER NOT NULL DEFAULT 0,
+  remind_times   TEXT,
+  remind_pending TEXT,
+  can_view_att   INTEGER NOT NULL DEFAULT 0,
   created_at     TEXT    NOT NULL
 );
 
@@ -68,7 +95,13 @@ CREATE TABLE IF NOT EXISTS tasks (
   reviewed_at   TEXT,
   review_note   TEXT,
   returned_count INTEGER NOT NULL DEFAULT 0,
-  cancelled_at  TEXT
+  cancelled_at  TEXT,
+  cancelled_by  ${big},
+  task_media_type TEXT,
+  task_file_id  TEXT,
+  task_file_name TEXT,
+  ack_at        TEXT,
+  ack_note      TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_emp_status ON tasks(employee_id, status);
@@ -91,6 +124,15 @@ CREATE TABLE IF NOT EXISTS attendance (
   excuse_reason  TEXT,
   excuse_by      ${big},
   excuse_at      TEXT,
+  checkin_mode   TEXT,
+  checkin_proof_type    TEXT,
+  checkin_proof_file_id TEXT,
+  checkin_note   TEXT,
+  late_notice_at TEXT,
+  late_proof_type       TEXT,
+  late_proof_file_id    TEXT,
+  excuse_proof_type     TEXT,
+  excuse_proof_file_id  TEXT,
   UNIQUE (employee_id, work_date)
 );
 
@@ -154,8 +196,80 @@ CREATE TABLE IF NOT EXISTS kpi_monthly (
   decided_by    ${big},
   decided_at    TEXT,
   updated_at    TEXT    NOT NULL,
+  kpi_eligible  INTEGER,
+  kpi_fail      TEXT,
+  tasks_missed  INTEGER NOT NULL DEFAULT 0,
+  salary        INTEGER,
   UNIQUE (employee_id, month)
 );
+
+CREATE TABLE IF NOT EXISTS month_starts (
+  id            ${pk},
+  employee_id   INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  month         TEXT    NOT NULL,
+  confirmed_at  TEXT    NOT NULL,
+  UNIQUE (employee_id, month)
+);
+
+CREATE TABLE IF NOT EXISTS visits (
+  id            ${pk},
+  employee_id   INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  visit_date    TEXT    NOT NULL,
+  created_at    TEXT    NOT NULL,
+  lat           TEXT,
+  lon           TEXT,
+  home_dist     TEXT,
+  proof_type    TEXT,
+  proof_file_id TEXT,
+  note          TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_visits_emp_date ON visits(employee_id, visit_date);
+
+CREATE TABLE IF NOT EXISTS directions (
+  id          ${pk},
+  name        TEXT    NOT NULL UNIQUE,
+  icon        TEXT,
+  active      INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS employee_directions (
+  employee_id   INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  direction_id  INTEGER NOT NULL REFERENCES directions(id) ON DELETE CASCADE,
+  UNIQUE (employee_id, direction_id)
+);
+
+INSERT INTO directions (name, icon, active, created_at) VALUES ('Moliya', '💰', 1, '2026-10-02') ON CONFLICT (name) DO NOTHING;
+INSERT INTO directions (name, icon, active, created_at) VALUES ('Logistika', '🚚', 1, '2026-10-02') ON CONFLICT (name) DO NOTHING;
+INSERT INTO directions (name, icon, active, created_at) VALUES ('Ombor', '📦', 1, '2026-10-02') ON CONFLICT (name) DO NOTHING;
+INSERT INTO directions (name, icon, active, created_at) VALUES ('Sotuv', '🛒', 1, '2026-10-02') ON CONFLICT (name) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS announcements (
+  id            ${pk},
+  created_by    ${big}  NOT NULL,
+  sender_name   TEXT,
+  target        TEXT    NOT NULL DEFAULT 'all',
+  text          TEXT,
+  media_type    TEXT,
+  file_id       TEXT,
+  file_name     TEXT,
+  recipients    INTEGER NOT NULL DEFAULT 0,
+  delivered     INTEGER NOT NULL DEFAULT 0,
+  to_group      INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS announcement_recipients (
+  id               ${pk},
+  announcement_id  INTEGER NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+  employee_id      INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  delivered        INTEGER NOT NULL DEFAULT 0,
+  read_at          TEXT,
+  UNIQUE (announcement_id, employee_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ann_rcp_emp ON announcement_recipients(employee_id);
 
 CREATE TABLE IF NOT EXISTS join_requests (
   id          ${pk},
@@ -207,6 +321,7 @@ const MIGRATIONS = [
   col('employees', 'work_start', 'TEXT'),
   col('employees', 'flexible', 'INTEGER NOT NULL DEFAULT 0'),
   col('kpi_monthly', 'tasks_returned', 'INTEGER NOT NULL DEFAULT 0'),
+  col('kpi_monthly', 'fund_manual', 'INTEGER NOT NULL DEFAULT 0'),
   col('attendance', 'intent', 'TEXT'),
   col('attendance', 'intent_at', 'TEXT'),
   col('attendance', 'checkin_lat', 'TEXT'),
@@ -218,6 +333,38 @@ const MIGRATIONS = [
   col('attendance', 'excuse_reason', 'TEXT'),
   col('attendance', 'excuse_by', 'INTEGER', 'BIGINT'),
   col('attendance', 'excuse_at', 'TEXT'),
+  // 30-sen-2026: filial, ofis/hudud rejimi, video isbot, oklad, KPI sharti
+  col('employees', 'branch_id', 'INTEGER'),
+  col('employees', 'work_mode', "TEXT NOT NULL DEFAULT 'office'"),
+  col('employees', 'home_lat', 'TEXT'),
+  col('employees', 'home_lon', 'TEXT'),
+  col('employees', 'video_required', 'INTEGER NOT NULL DEFAULT 0'),
+  col('employees', 'salary', 'INTEGER'),
+  col('attendance', 'checkin_mode', 'TEXT'),
+  col('attendance', 'checkin_proof_type', 'TEXT'),
+  col('attendance', 'checkin_proof_file_id', 'TEXT'),
+  col('attendance', 'checkin_note', 'TEXT'),
+  col('kpi_monthly', 'kpi_eligible', 'INTEGER'),
+  col('kpi_monthly', 'kpi_fail', 'TEXT'),
+  col('kpi_monthly', 'salary', 'INTEGER'),
+  col('kpi_monthly', 'tasks_missed', 'INTEGER NOT NULL DEFAULT 0'),
+  // 30-sen-2026 (2): HR belgisi
+  col('employees', 'is_hr', 'INTEGER NOT NULL DEFAULT 0'),
+  col('attendance', 'late_notice_at', 'TEXT'),
+  col('employees', 'remind_times', 'TEXT'),
+  col('employees', 'remind_pending', 'TEXT'),
+  col('employees', 'can_view_att', 'INTEGER NOT NULL DEFAULT 0'),
+  col('tasks', 'cancelled_by', 'INTEGER', 'BIGINT'),
+  col('attendance', 'late_proof_type', 'TEXT'),
+  col('attendance', 'late_proof_file_id', 'TEXT'),
+  col('attendance', 'excuse_proof_type', 'TEXT'),
+  col('attendance', 'excuse_proof_file_id', 'TEXT'),
+  col('tasks', 'task_media_type', 'TEXT'),
+  col('tasks', 'task_file_id', 'TEXT'),
+  col('tasks', 'task_file_name', 'TEXT'),
+  col('tasks', 'ack_at', 'TEXT'),
+  col('tasks', 'ack_note', 'TEXT'),
+  col('departments', 'remind_times', 'TEXT'),
 ];
 
 /**

@@ -87,7 +87,7 @@ const showWho = async (ctx, key) => {
   if (!(await guard(ctx))) return null;
   const r = resolve(key);
   if (!r) return showHome(ctx);
-  const list = await employees.listActive();
+  const list = await employees.listStaff();
   const rows = [
     [cb('🏢 Butun jamoa — bitta fayl', `xl:s:${key}:team`)],
     [cb(`👥 Har bir hodim alohida — ${list.length} ta fayl`, `xl:s:${key}:each`)],
@@ -109,7 +109,7 @@ const send = async (ctx, key, scope) => {
   activity.mark(ctx, 'excel', { title: `Excel: ${r.title}`, detail: `${r.from} → ${r.to} · ${scope}` });
   if (scope === 'team') return sendDoc(ctx, await teamFile(r), teamCaption(r));
   if (scope === 'each') {
-    const list = await employees.listActive();
+    const list = await employees.listStaff();
     if (!list.length) return ctx.reply("Hodimlar ro'yxati bo'sh.");
     await ctx.reply(`📥 <b>${list.length} ta fayl</b> tayyorlanmoqda — ${esc(r.title)} (${r.days} kun).`, { parse_mode: 'HTML' });
     let sent = 0;

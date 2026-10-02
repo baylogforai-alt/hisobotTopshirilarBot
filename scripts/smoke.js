@@ -461,6 +461,79 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await send(msg(20001, '/yordam'));
   ok('boshliq yordami', lastText(20001).includes('Boshliq / direktor'));
 
+  // =========================================================================
+  console.log("\n— 14. 📢 E'lon (hammaga / tanlanganlarga) —");
+  const announcements = require('../src/services/announcements');
+  const everyone = (await employees.listActive()).filter((e) => Number(e.tg_id) !== 1000);
+  await send(msg(1000, '/elon'));
+  ok("e'lon menyusi: hammaga + hodim tanlash", Boolean(findCb(1000, /^an:all$/)) && Boolean(findCb(1000, /^an:pick$/)) && lastText(1000).includes(`${everyone.length} kishi`));
+  await send(cbq(1000, 'an:all'));
+  ok("matn so'raldi", session.get(1000).step === 'announce_text' && lastText(1000).includes("E'lon matnini yozing"));
+  await send(msg(1000, "Ertaga soat 9:00 da umumiy yig'ilish. Hamma kelsin!"));
+  ok("ko'rib chiqish oynasi", session.get(1000).step === 'announce_confirm' && lastText(1000).includes("Ko'rib chiqing") && Boolean(findCb(1000, /^an:send$/)));
+  ok('guruhga ham — tugma bor (guruh ulangan)', Boolean(findCb(1000, /^an:grp$/)));
+  await send(cbq(1000, 'an:grp'));
+  ok('guruhga ham: yoqildi', session.get(1000).ann.toGroup === true);
+  mark = sent.length;
+  await send(cbq(1000, 'an:send'));
+  const ann1 = (await announcements.list(1))[0];
+  ok("e'lon bazada: hammaga", ann1 && ann1.target === 'all' && Number(ann1.recipients) === everyone.length && Number(ann1.delivered) === everyone.length);
+  ok("har bir hodimga «O'qidim» tugmasi bilan bordi", everyone.every((e) => sent.slice(mark).some((s) => Number(s.payload.chat_id) === Number(e.tg_id) && (s.payload.text || '').includes("E'LON") &&
+    JSON.stringify(s.payload.reply_markup || {}).includes(`an:r:${ann1.id}`))));
+  ok('guruhga ham ketdi', allText(GROUP, mark).includes("umumiy yig'ilish"));
+  ok("yuboruvchiga natija: N / N", lastText(1000).includes(`${everyone.length} / ${everyone.length}`) && Boolean(findCb(1000, new RegExp(`^an:v:${ann1.id}$`))));
+  ok("sessiya tozalandi", !session.get(1000).step);
+
+  await send(cbq(99999, `an:r:${ann1.id}`));
+  let st = await announcements.stats(ann1.id);
+  ok("Akbar «O'qidim» bosdi", st.read === 1 && st.rows.find((r) => Number(r.tg_id) === 99999).read_at);
+  ok("o'qidi — arxivga yozildi", (await activity.forDay(akbar.id, bugun)).some((a) => a.action === 'announce_read'));
+  await send(cbq(99999, `an:r:${ann1.id}`));
+  st = await announcements.stats(ann1.id);
+  ok('ikkinchi bosish — sanog\'i o\'zgarmaydi', st.read === 1);
+  await send(cbq(1000, `an:v:${ann1.id}`));
+  ok("kim o'qidi: 1 / N, Akbar o'qigan, qolganlar kutilmoqda", lastText(1000).includes(`1 / ${everyone.length}`) && lastText(1000).includes('Akbar') && lastText(1000).includes("Hali o'qimagan"));
+  mark = sent.length;
+  await send(cbq(1000, `an:rs:${ann1.id}`));
+  ok("o'qimaganlarga qayta yuborildi (Akbarga emas)", countSince(mark, 30001) >= 1 && countSince(mark, 99999) === 0);
+
+  // tanlab yuborish: 2 hodim + rasm
+  await send(cbq(1000, 'an:start'));
+  await send(cbq(1000, 'an:pick'));
+  ok("hodim tanlash ro'yxati", lastText(1000).includes('Kimlarga yuboramiz') && Boolean(findCb(1000, new RegExp(`^an:t:${akbar.id}:0$`))));
+  await send(cbq(1000, 'an:go'));
+  ok('hech kim tanlanmasa — davom etmaydi', session.get(1000).step === 'announce_pick');
+  await send(cbq(1000, `an:t:${akbar.id}:0`));
+  await send(cbq(1000, `an:t:${sardor.id}:0`));
+  ok('2 kishi belgilandi', session.get(1000).ann.ids.length === 2 && lastText(1000).includes('Tanlangan: <b>2</b>'));
+  await send(cbq(1000, `an:t:${sardor.id}:0`));
+  ok('qayta bosish — olib tashlandi', session.get(1000).ann.ids.length === 1);
+  await send(cbq(1000, `an:t:${sardor.id}:0`));
+  await send(cbq(1000, 'an:go'));
+  await send(photo(1000, 'Yangi ish tartibi — rasmda'));
+  ok("rasmli e'lon — ko'rib chiqish", session.get(1000).step === 'announce_confirm' && session.get(1000).ann.media && session.get(1000).ann.media.type === 'photo');
+  mark = sent.length;
+  await send(cbq(1000, 'an:send'));
+  const ann2 = (await announcements.list(1))[0];
+  ok("faqat tanlangan 2 kishiga bordi (rasm bilan)", ann2.target === 'some' && Number(ann2.recipients) === 2 &&
+    sent.slice(mark).filter((s) => s.method === 'sendPhoto').map((s) => Number(s.payload.chat_id)).sort().join(',') === [30001, 99999].sort().join(','));
+  ok("boshqalarga bormadi", countSince(mark, 20001) === 0 && countSince(mark, GROUP) === 0);
+
+  // rahbar — faqat o'z jamoasiga; hodim — umuman yo'q
+  await send(msg(20001, '/elon'));
+  const team = await employees.teamOf(bobur);
+  ok("rahbar: «Jamoamga» (faqat o'z bo'limi)", lastText(20001).includes(`${team.length} kishi`) && lastText(20001).includes('Jamoamga'));
+  await send(cbq(20001, 'an:pick'));
+  await send(cbq(20001, `an:t:${eski.id}:0`));
+  ok("rahbar boshqa bo'lim hodimini tanlay olmaydi", !(session.get(20001).ann.ids || []).includes(Number(eski.id)) || Number(eski.department_id) === Number(bobur.department_id));
+  await send(msg(20001, '❌ Bekor qilish'));
+  await send(msg(99999, '/elon'));
+  ok("oddiy hodim e'lon bera olmaydi", lastText(99999).includes("faqat direktor, HR va bo'lim rahbari"));
+  await send(cbq(1000, 'an:list'));
+  ok("e'lonlar tarixi", lastText(1000).includes("Oxirgi e'lonlar") && Boolean(findCb(1000, new RegExp(`^an:v:${ann2.id}$`))));
+  await send(msg(1000, '⚙️ Panel'));
+  ok("Panelda «📢 E'lon yuborish»", Boolean(findCb(1000, /^an:start$/)));
+
   await sleep(50);
   await db.close();
   console.log(`\n${failed ? '❌' : '🎉'} ${passed} o'tdi, ${failed} yiqildi · handler xatolari: ${errors.length}`);

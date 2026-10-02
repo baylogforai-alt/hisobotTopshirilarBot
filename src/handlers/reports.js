@@ -2,7 +2,7 @@
 
 const ui = require('../ui');
 const time = require('../time');
-const { render, guard } = require('../render');
+const { render, guardSee: guard } = require('../render');
 const employees = require('../services/employees');
 const departments = require('../services/departments');
 const reports = require('../services/reports');
@@ -53,12 +53,14 @@ const myDept = async (ctx, month = time.month()) => {
 
 // --- direktor ---
 const reportsHome = (ctx) =>
-  render(ctx, `📈 <b>HISOBOTLAR</b>\n<i>${time.prettyDate(time.today())}</i>`, inline([
+  render(ctx, `📈 <b>HISOBOTLAR</b>
+<i>${time.prettyDate(time.today())}</i>`, inline([
     [cb('📊 Bugungi holat', 'adm:today'), cb('📋 Kun yakuni (batafsil)', 'rp:daily')],
     [cb('📈 Davr hisoboti (sana tanlab)', 'pr:home'), cb('🗂 Hodimlar arxivi', 'hr:home')],
+    [cb('🎥 Keldim videolari', 'vw:vids'), cb('🚶 Tashriflar', 'adm:visits')],
     [cb(`👥 Jamoa — ${time.monthName(time.month())}`, `rp:team:${time.month()}`)],
     [cb(`👥 Jamoa — ${time.monthName(time.prevMonth())}`, `rp:team:${time.prevMonth()}`)],
-    [cb("🏢 Bo'lim bo'yicha", 'rp:depts'), cb("👤 Hodim bo'yicha", 'emp:list')],
+    [cb("🏢 Bo'lim bo'yicha", 'rp:depts'), cb("👤 Hodim bo'yicha", ctx.state.isAdmin ? 'emp:list' : 'tm:home')],
     [cb('📥 Excel yuklab olish (kun / hafta / oy)', 'xl:home')],
     [cb(`📥 KPI Excel — ${time.monthName(time.prevMonth())}`, `kpi:xl:${time.prevMonth()}`), cb(`📥 KPI Excel — ${time.monthName(time.month())}`, `kpi:xl:${time.month()}`)],
   ]));

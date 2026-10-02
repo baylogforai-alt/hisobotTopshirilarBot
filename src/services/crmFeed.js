@@ -81,9 +81,9 @@ const snapshot = async () => {
        FROM employees e
        LEFT JOIN daily_reports r ON r.employee_id = e.id AND r.work_date = $1
        LEFT JOIN attendance a ON a.employee_id = e.id AND a.work_date = $1
-      WHERE e.active = 1
+      WHERE e.active = 1 AND (e.role <> 'admin' OR $2 = 1)
       ORDER BY lower(e.full_name)`,
-    [today],
+    [today, require('../config').bossIsStaff ? 1 : 0],
   );
 
   const attendance = attRows.map((r) => {

@@ -10,6 +10,7 @@ const tasks = require('./tasks');
 const attendance = require('./attendance');
 const dailyReports = require('./dailyReports');
 const kpi = require('./kpi');
+const visits = require('./visits');
 const notify = require('./notify');
 
 const { esc, LINE } = ui;
@@ -25,7 +26,7 @@ const deptTag = (e) => (e.department_name ? ` · ${esc(e.department_name)}` : ''
 
 /** Kunlik holat: har hodim bo'yicha davomat + topshiriq + kunlik hisobot. deptId berilsa faqat shu bo'lim. */
 const buildToday = async ({ deptId = null, date = time.today(), title = 'BUGUNGI HOLAT' } = {}) => {
-  const list = deptId ? await employees.listByDepartment(deptId) : await employees.listActive();
+  const list = await employees.listStaff(deptId);
   const lines = [];
   let present = 0, late = 0, absent = 0, excused = 0, doneAll = 0, openAll = 0, overdueAll = 0, awaitingAll = 0, reportsAll = 0;
   let lastDept = null;
@@ -66,7 +67,7 @@ const buildToday = async ({ deptId = null, date = time.today(), title = 'BUGUNGI
  * va qaysilari qolgani (⏳). KPI / pul chiqmaydi.
  */
 const buildDailyGroupText = async (date = time.today()) => {
-  const list = await employees.listActive();
+  const list = await employees.listStaff();
   const blocks = [];
   let totalDone = 0, totalOpen = 0;
   const MAX_ITEMS = 12;
@@ -100,7 +101,7 @@ const buildDailyGroupText = async (date = time.today()) => {
 
 /** Ertalab direktor/boshliqlarga: kim keldi, kim kech, kim yo'q */
 const buildMorningDigest = async ({ deptId = null } = {}) => {
-  const list = deptId ? await employees.listByDepartment(deptId) : await employees.listActive();
+  const list = await employees.listStaff(deptId);
   const onTime = [], late = [], missing = [], excused = [], saidNo = [];
   for (const e of list) {
     const row = await attendance.get(e.id);
@@ -109,13 +110,13 @@ const buildMorningDigest = async ({ deptId = null } = {}) => {
     else if (st === 'late') late.push({ e, row });
     else if (st === 'excused' || st === 'pending') excused.push({ e, row });
     else if (row && row.intent === 'no') saidNo.push(e);
-    else if (!employees.isFlexible(e)) missing.push(e);
+    else if (!employees.isFlexible(e)) missing.push(Object.assign(Object.create(null), e, { _notice: row && row.late_reason && !row.checked_in ? row.late_reason : null }));
   }
   const text =
     `🌅 <b>ERTALABKI HOLAT</b> · ${time.prettyDate(time.today())} · ${time.now().toFormat('HH:mm')}\n${LINE}\n` +
     `🟢 Vaqtida: <b>${onTime.length}</b>${onTime.length ? ` — ${onTime.map((e) => esc(e.full_name)).join(', ')}` : ''}\n` +
     `🟡 Kech: <b>${late.length}</b>${late.length ? '\n' + late.map(({ e, row }) => `   • ${esc(e.full_name)} — ${time.clock(row.checked_in)}${lateTag(row)}${row.late_reason ? ` («${esc(row.late_reason)}»)` : ''}`).join('\n') : ''}\n` +
-    `🔴 Hali kelmagan: <b>${missing.length}</b>${missing.length ? '\n' + missing.map((e) => `   • ${esc(e.full_name)}${deptTag(e)}`).join('\n') : ''}` +
+    `🔴 Hali kelmagan: <b>${missing.length}</b>${missing.length ? '\n' + missing.map((e) => `   • ${esc(e.full_name)}${deptTag(e)}${e._notice ? ` ⏰ <i>kech qolishini bildirgan: «${esc(e._notice)}»</i>` : ''}`).join('\n') : ''}` +
     (saidNo.length ? `\n🙅 Kelmasligini aytgan: ${saidNo.map((e) => esc(e.full_name)).join(', ')}` : '') +
     (excused.length ? `\n📄 Sababli / so'rov: ${excused.map(({ e, row }) => `${esc(e.full_name)}${row.excuse_status === 'pending' ? ' (kutilmoqda)' : ''}`).join(', ')}` : '');
   return { text, onTime, late, missing, excused, saidNo };
@@ -127,7 +128,7 @@ const buildMorningDigest = async ({ deptId = null } = {}) => {
 
 /** Ish boshlanishida guruhga «Xayrli tong» + kelmaganlar ro'yxati (guruh ulangan bo'lsa) */
 const sendMorningGroupCall = async (bot) => {
-  const list = await employees.listActive();
+  const list = await employees.listStaff();
   const waiting = [];
   for (const e of list) {
     if (employees.isFlexible(e)) continue;
@@ -145,37 +146,54 @@ const sendMorningGroupCall = async (bot) => {
   return { sent: Boolean(ok), count: waiting.length };
 };
 
-/**
- * Ochiq topshiriqlari borlarga shaxsiy eslatma (tugmali ro'yxat bilan);
- * guruhga umumiy ro'yxat (ANNOUNCE_DONE bo'lsa); tekshiruvchilarga kutayotgan ishlar soni.
- */
+/** Bitta hodimga ochiq topshiriqlar eslatmasi (bo'lmasa — hech narsa) — «Bajardim» va «Tushundim» tugmalari bilan. true — yuborildi */
+const sendReminderTo = async (bot, e) => {
+  const open = await tasks.openFor(e.id);
+  if (!open.length) return false;
+  const overdue = open.filter((t) => t.due_date < time.today());
+  const unacked = open.filter(tasks.needsAck);
+  const doneRows = ui.doneKeyboard(open.slice(0, 10)).reply_markup.inline_keyboard.slice(0, -1);
+  await notify.toUser(
+    bot, e.tg_id,
+    `🔔 <b>Eslatma</b> · ${time.now().toFormat('HH:mm')} — sizda <b>${open.length} ta</b> ochiq topshiriq bor${overdue.length ? `, shundan <b>${overdue.length} tasi muddati o'tgan</b> 🔴` : ''}:\n\n` +
+      `${ui.taskList(open)}\n\n${unacked.length ? `👂 <b>${unacked.length} tasini</b> hali «Tushundim» qilmagansiz.\n` : ''}Bajarganini pastdan bosing 👇`,
+    ui.inline([...ui.ackRows(unacked), ...doneRows, [ui.cb("⚙️ Eslatma vaqtini o'zgartirish", 'rm:home')]]),
+  );
+  return true;
+};
+
+/** Guruhga: hozir ishdagi hodimlarning ochiq missiyalari (ANNOUNCE_DONE). true — yuborildi */
+const sendGroupReminder = async (bot) => {
+  const blocks = [];
+  for (const e of await employees.listStaff()) {
+    const open = await tasks.openFor(e.id);
+    if (!open.length || !(await attendance.isCheckedIn(e.id))) continue;
+    const overdue = open.filter((t) => t.due_date < time.today());
+    blocks.push(`${mentionHtml(e)} — <b>${open.length} ta</b>${overdue.length ? ` (🔴 ${overdue.length} kechikkan)` : ''}:\n${ui.taskList(open.slice(0, 8))}${open.length > 8 ? `\n   <i>…yana ${open.length - 8} ta</i>` : ''}`);
+  }
+  if (!blocks.length) return false;
+  return Boolean(await notify.toGroup(
+    bot,
+    `🔔 <b>${COMPANY} — MISSIYA ESLATMASI</b> · ${time.now().toFormat('HH:mm')}\n<i>${time.prettyDate(time.today())}</i>\n\n${blocks.join('\n\n')}\n\n` +
+      `👉 Bajarganingizni botga kirib <b>«${ui.BTN.done}»</b> orqali belgilang.`,
+  ));
+};
+
+/** Hammaga birdan (Panel → «🔔 Eslatma yuborish», /eslat): hodimlarga, guruhga, tekshiruvchilarga */
 const sendReminder = async (bot, { group = config.announceDone } = {}) => {
   const list = await employees.listActive();
   let sent = 0;
-  const blocks = [];
   for (const e of list) {
-    const open = await tasks.openFor(e.id);
-    if (!open.length) continue;
-    const overdue = open.filter((t) => t.due_date < time.today());
-    const working = await attendance.isCheckedIn(e.id);
-    if (working) blocks.push(`${mentionHtml(e)} — <b>${open.length} ta</b>${overdue.length ? ` (🔴 ${overdue.length} kechikkan)` : ''}:\n${ui.taskList(open.slice(0, 8))}${open.length > 8 ? `\n   <i>…yana ${open.length - 8} ta</i>` : ''}`);
-    await notify.toUser(
-      bot, e.tg_id,
-      `🔔 <b>Eslatma</b> · ${time.now().toFormat('HH:mm')} — sizda <b>${open.length} ta</b> ochiq topshiriq bor${overdue.length ? `, shundan <b>${overdue.length} tasi muddati o'tgan</b> 🔴` : ''}:\n\n` +
-        `${ui.taskList(open)}\n\nBajarganini pastdan bosing 👇`,
-      ui.doneKeyboard(open),
-    );
+    if (!(await sendReminderTo(bot, e))) continue;
     sent += 1;
     await tg.throttle();
   }
-  if (group && blocks.length) {
-    await notify.toGroup(
-      bot,
-      `🔔 <b>${COMPANY} — MISSIYA ESLATMASI</b> · ${time.now().toFormat('HH:mm')}\n<i>${time.prettyDate(time.today())}</i>\n\n${blocks.join('\n\n')}\n\n` +
-        `👉 Bajarganingizni botga kirib <b>«${ui.BTN.done}»</b> orqali belgilang.`,
-    );
-  }
-  // tekshiruvchilar
+  const grouped = group ? await sendGroupReminder(bot) : false;
+  return { sent, reviewers: await sendReviewerDigest(bot), group: grouped };
+};
+
+/** Tekshiruvchilarga: tekshiruvni kutayotgan ishlar soni */
+const sendReviewerDigest = async (bot) => {
   const pending = await tasks.pendingReview();
   const byReviewer = new Map();
   for (const t of pending) {
@@ -186,7 +204,7 @@ const sendReminder = async (bot, { group = config.announceDone } = {}) => {
     await notify.toUser(bot, id, `🕓 Tekshiruvni kutayotgan <b>${n} ta</b> topshiriq bor — «${ui.BTN.review}» tugmasini bosing.`);
     await tg.throttle();
   }
-  return { sent, reviewers: byReviewer.size, group: group && blocks.length > 0 };
+  return byReviewer.size;
 };
 
 // ---------------------------------------------------------------------------
@@ -221,7 +239,10 @@ const buildMyReport = async (emp, month = time.month()) => {
     `   topshiriq ${k.tasks_pct}%×${k.w_tasks} · davomat ${k.att_pct}%×${k.w_attendance}` +
       ` · boshliq ${k.head_score === null ? '—' : `${k.head_score}/10`}×${k.w_head} · ${esc(customName)} ${k.custom_pct === null ? '—' : `${k.custom_pct}%`}×${k.w_custom}`,
   ];
-  if (k.status === 'confirmed' && k.bonus_amount !== null) lines.push(`   💵 Bonus: <b>${kpi.fmtMoney(k.bonus_amount)}</b>`);
+  if (config.kpiMode === 'gate') lines.push(`   🚦 KPI sharti: ${Number(k.kpi_eligible) === 1 ? '🟢 bajarilyapti' : `🔴 bajarilmadi — ${esc(k.kpi_fail || '')}`}`);
+  if (k.status === 'confirmed' && k.bonus_amount !== null) lines.push(`   💵 KPI: <b>${kpi.fmtMoney(k.bonus_amount)}</b>`);
+  const vCount = employees.isField(emp) ? await visits.countFor(emp.id, from, to) : 0;
+  if (vCount) lines.push('', `📍 <b>Tashriflar</b>: ${vCount} ta`);
   if (k.status === 'excluded') lines.push(`   ⛔ Bu oy bonusdan chiqarilgan${k.note ? `: ${esc(k.note)}` : ''}`);
   if (open.length) lines.push('', `⏳ <b>Hozir ochiq (${open.length}):</b>`, ui.taskList(open));
   return lines.join('\n');
@@ -229,7 +250,7 @@ const buildMyReport = async (emp, month = time.month()) => {
 
 /** Bo'lim boshlig'i / direktor uchun oylik jadval (bo'lim yoki hamma) */
 const buildMonthTable = async ({ month = time.month(), deptId = null } = {}) => {
-  const list = deptId ? await employees.listByDepartment(deptId) : await employees.listActive();
+  const list = await employees.listStaff(deptId);
   const { from, to } = time.monthRange(month);
   const rows = [];
   for (const e of list) {
@@ -268,6 +289,6 @@ const buildEmployeeTasks = async (emp) => {
 };
 
 module.exports = {
-  lateTag, mentionHtml, buildToday, buildDailyGroupText, buildMorningDigest, sendMorningGroupCall, sendReminder,
-  buildMyReport, buildMonthTable, buildEmployeeTasks,
+  lateTag, mentionHtml, buildToday, buildDailyGroupText, buildMorningDigest, sendMorningGroupCall, sendReminder, sendReminderTo, sendGroupReminder,
+  sendReviewerDigest, buildMyReport, buildMonthTable, buildEmployeeTasks,
 };

@@ -27,31 +27,58 @@ const lateMinutesOf = (iso, emp = null) => {
   return late > config.lateGraceMinutes ? late : 0;
 };
 
-/** employee — id yoki hodim obyekti (work_start uchun) */
+/**
+ * employee — id yoki hodim obyekti (work_start uchun).
+ * location: { lat, lon, dist, at?, mode?, proof?: {type, fileId}, note? } — at berilsa kelish vaqti shu (lokatsiya yuborilgan payt).
+ */
 const checkIn = async (employee, location = null, date = time.today()) => {
   const emp = typeof employee === 'object' && employee ? employee : null;
   const employeeId = emp ? emp.id : employee;
   const existing = await get(employeeId, date);
   if (existing && existing.checked_in) return { already: true, row: existing };
-  const stamp = time.stamp();
+  const stamp = (location && location.at) || time.stamp();
   const late = lateMinutesOf(stamp, emp);
+  const proof = location && location.proof ? location.proof : null;
   await db.query(
-    `INSERT INTO attendance (employee_id, work_date, checked_in, checkin_lat, checkin_lon, checkin_dist, late_minutes)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO attendance (employee_id, work_date, checked_in, checkin_lat, checkin_lon, checkin_dist, late_minutes,
+       checkin_mode, checkin_proof_type, checkin_proof_file_id, checkin_note)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ON CONFLICT (employee_id, work_date) DO UPDATE SET
        checked_in = EXCLUDED.checked_in, checkin_lat = EXCLUDED.checkin_lat, checkin_lon = EXCLUDED.checkin_lon,
-       checkin_dist = EXCLUDED.checkin_dist, late_minutes = EXCLUDED.late_minutes`,
+       checkin_dist = EXCLUDED.checkin_dist, late_minutes = EXCLUDED.late_minutes, checkin_mode = EXCLUDED.checkin_mode,
+       checkin_proof_type = EXCLUDED.checkin_proof_type, checkin_proof_file_id = EXCLUDED.checkin_proof_file_id,
+       checkin_note = EXCLUDED.checkin_note`,
     [
       Number(employeeId), date, stamp,
       location ? String(location.lat) : null, location ? String(location.lon) : null,
-      location && location.dist != null ? String(location.dist) : null, late,
+      location && location.dist != null ? String(Math.round(location.dist)) : null, late,
+      (location && location.mode) || null, proof ? proof.type : null, proof ? proof.fileId : null,
+      location && location.note ? String(location.note).slice(0, 300) : null,
     ],
   );
   return { already: false, late, row: await get(employeeId, date) };
 };
 
-const setLateReason = async (employeeId, reason, date = time.today()) => {
-  await db.query('UPDATE attendance SET late_reason = $1 WHERE employee_id = $2 AND work_date = $3', [reason, Number(employeeId), date]);
+/** Kechikish sababi (kelgandan keyin). proof — video/audio/rasm isboti (ixtiyoriy) */
+const setLateReason = async (employeeId, reason, date = time.today(), proof = null) => {
+  await db.query(
+    `UPDATE attendance SET late_reason = $1, late_proof_type = COALESCE($2, late_proof_type), late_proof_file_id = COALESCE($3, late_proof_file_id)
+     WHERE employee_id = $4 AND work_date = $5`,
+    [reason, proof ? proof.type : null, proof ? proof.fileId : null, Number(employeeId), date],
+  );
+  return get(employeeId, date);
+};
+
+/** «Kech qolaman» — kelishdan OLDIN ogohlantirish (qator check-insiz yaratiladi, Keldim keyin ustiga yozadi) */
+const lateNotice = async (employeeId, reason, proof = null, date = time.today()) => {
+  await db.query(
+    `INSERT INTO attendance (employee_id, work_date, late_reason, late_notice_at, late_proof_type, late_proof_file_id)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (employee_id, work_date) DO UPDATE SET
+       late_reason = EXCLUDED.late_reason, late_notice_at = EXCLUDED.late_notice_at,
+       late_proof_type = EXCLUDED.late_proof_type, late_proof_file_id = EXCLUDED.late_proof_file_id`,
+    [Number(employeeId), date, String(reason).slice(0, 300), time.stamp(), proof ? proof.type : null, proof ? proof.fileId : null],
+  );
   return get(employeeId, date);
 };
 
@@ -90,13 +117,14 @@ const isCheckedOut = async (employeeId, date = time.today()) => Boolean((await g
 // ---------------------------------------------------------------------------
 
 /** Hodim o'zi so'raydi → pending */
-const requestExcuse = async (employeeId, reason, date = time.today()) => {
+const requestExcuse = async (employeeId, reason, date = time.today(), proof = null) => {
   await db.query(
-    `INSERT INTO attendance (employee_id, work_date, excuse_status, excuse_reason, excuse_at)
-     VALUES ($1, $2, 'pending', $3, $4)
+    `INSERT INTO attendance (employee_id, work_date, excuse_status, excuse_reason, excuse_at, excuse_proof_type, excuse_proof_file_id)
+     VALUES ($1, $2, 'pending', $3, $4, $5, $6)
      ON CONFLICT (employee_id, work_date) DO UPDATE SET
-       excuse_status = 'pending', excuse_reason = EXCLUDED.excuse_reason, excuse_at = EXCLUDED.excuse_at, excuse_by = NULL`,
-    [Number(employeeId), date, String(reason).slice(0, 300), time.stamp()],
+       excuse_status = 'pending', excuse_reason = EXCLUDED.excuse_reason, excuse_at = EXCLUDED.excuse_at, excuse_by = NULL,
+       excuse_proof_type = EXCLUDED.excuse_proof_type, excuse_proof_file_id = EXCLUDED.excuse_proof_file_id`,
+    [Number(employeeId), date, String(reason).slice(0, 300), time.stamp(), proof ? proof.type : null, proof ? proof.fileId : null],
   );
   return get(employeeId, date);
 };
@@ -171,10 +199,21 @@ const workedMinutes = (row) => {
 // ---------------------------------------------------------------------------
 
 /** Bitta kunning holati. emp berilsa "hali vaqti kelmagan" hodimning o'z ish boshlanishiga qarab aniqlanadi. */
+/**
+ * «Kech qolaman» o'z vaqtida (ish boshlanishidan ≥ LATE_NOTICE_MIN_BEFORE daqiqa oldin, o'sha kuni) yuborilganmi.
+ * Shunday bo'lsa o'sha kungi kechikish «vaqtida» hisoblanadi (KPI va davomat % ga ta'sir qilmaydi).
+ */
+const noticedInTime = (row, emp = null) => {
+  if (!row || !row.late_notice_at || !config.lateNoticeMinBefore) return false;
+  if (String(row.late_notice_at).slice(0, 10) !== row.work_date) return false;
+  const m = time.minutesOfDay(row.late_notice_at);
+  return m !== null && m <= startMinutesOf(emp) - config.lateNoticeMinBefore;
+};
+
 const dayStatus = (row, date, today = time.today(), emp = null) => {
   if (!time.isWorkDay(date) && !(row && row.checked_in)) return 'off';
   if (row && row.excuse_status === 'approved') return 'excused';
-  if (row && row.checked_in) return Number(row.late_minutes) > 0 ? 'late' : 'ontime';
+  if (row && row.checked_in) return Number(row.late_minutes) > 0 && !noticedInTime(row, emp) ? 'late' : 'ontime';
   if (row && row.excuse_status === 'pending') return 'pending';
   if (date > today) return 'future';
   if (date === today) {
@@ -194,8 +233,11 @@ const stats = async (emp, from, to) => {
   const today = time.today();
   const res = { workDays: 0, ontime: 0, late: 0, absent: 0, excused: 0, pending: 0, lateMinutes: 0, days: [] };
   const flexible = Number(emp.flexible) === 1;
+  // Hodim qo'shilgan kundan oldingi kunlar hisobga olinmaydi (oy o'rtasida qo'shilgan hodim "kelmagan" bo'lib qolmasin)
+  const hired = emp.created_at ? String(emp.created_at).slice(0, 10) : null;
   for (let d = from; d <= to; d = time.addDays(d, 1)) {
     const row = map.get(d) || null;
+    if (hired && d < hired && !(row && (row.checked_in || row.excuse_status))) continue;
     let st = dayStatus(row, d, today, emp);
     if (flexible && st === 'late') st = 'ontime';
     if (flexible && st === 'absent') st = 'excused';
@@ -213,7 +255,7 @@ const stats = async (emp, from, to) => {
 };
 
 module.exports = {
-  get, byId, startMinutesOf, lateMinutesOf, checkIn, setLateReason, checkOut, setIntent, workingNow, isCheckedIn, isCheckedOut,
+  get, byId, startMinutesOf, lateMinutesOf, checkIn, setLateReason, lateNotice, checkOut, setIntent, workingNow, isCheckedIn, isCheckedOut,
   requestExcuse, decideExcuse, pendingExcuses, presentToday, absentToday, lateToday, range, workedMinutes,
-  dayStatus, stats,
+  dayStatus, stats, noticedInTime,
 };

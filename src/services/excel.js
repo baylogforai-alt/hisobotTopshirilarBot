@@ -10,14 +10,16 @@ const attendance = require('./attendance');
 const kpi = require('./kpi');
 const activity = require('./activity');
 const dailyReports = require('./dailyReports');
+const visits = require('./visits');
 
 /**
  * EXCEL HISOBOTLAR.
- *   buildMonthly(month)             — direktor: KPI · Topshiriqlar · Davomat · Kunlik hisobotlar · Bo'limlar
- *   buildEmployeeMonth(emp, month)  — bitta hodim (oy): Xulosa · Topshiriqlar · Davomat · Kunlik hisobotlar
+ *   buildMonthly(month)             — direktor: KPI · Topshiriqlar · Davomat · Kunlik hisobotlar · Tashriflar · Bo'limlar
+ *   buildEmployeeMonth(emp, month)  — bitta hodim (oy): Xulosa · Topshiriqlar · Davomat · Kunlik hisobotlar (· Tashriflar)
  *   buildDay(date, {employeeId})    — bitta kun: davomat + topshiriqlar + kunlik hisobotlar
  *   buildEmployeePeriod(emp, from, to) — istalgan davr, bitta hodim: Xulosa · Bajarilgan ishlar · Kunlar · Missiyalar · Kunlik hisobotlar · Harakatlar
  *   buildTeamPeriod(from, to)       — istalgan davr, jamoa: Jamlanma · Kunlar · Missiyalar · Kechikkanlar · Bajarilganlar · Kunlik hisobotlar
+ *   buildJournal(rows, sub)         — topshiriqlar jurnali (filtrlangan)
  * Raqamlar tasks.stats / attendance.stats / period.employeeStats dan — ekran bilan bir xil.
  */
 
@@ -154,7 +156,9 @@ const addAttendanceSheet = (wb, entries, title, sub, { withName = true } = {}) =
     { key: 'late', header: 'Kechikish (daq)', width: 14 },
     { key: 'status', header: 'Holat', width: 16 },
     { key: 'reason', header: 'Sabab / izoh', width: 36 },
-    { key: 'dist', header: 'Ofisdan (m)', width: 11 },
+    { key: 'mode', header: 'Rejim', width: 8 },
+    { key: 'dist', header: 'Ofis/uydan (m)', width: 13 },
+    { key: 'video', header: 'Video', width: 7 },
   ];
   decorate(ws, cols, title, sub);
   for (const { e, day } of entries) {
@@ -167,7 +171,9 @@ const addAttendanceSheet = (wb, entries, title, sub, { withName = true } = {}) =
       h: hours(attendance.workedMinutes(row)),
       late: row && Number(row.late_minutes) > 0 ? Number(row.late_minutes) : '',
       status: label, reason: (row && (row.excuse_reason || row.late_reason)) || '',
+      mode: row && row.checkin_mode ? (row.checkin_mode === 'field' ? 'Hudud' : 'Ofis') : '',
       dist: row && row.checkin_dist ? Number(row.checkin_dist) : '',
+      video: row && row.checkin_proof_file_id ? 'Bor' : '',
     });
     r.getCell('h').numFmt = '0.00';
     if (DAY_COLOR[label]) colorCell(r.getCell('status'), DAY_COLOR[label]);
@@ -220,6 +226,9 @@ const kpiRowOf = (k, dept) => ({
   custom_name: (dept && dept.custom_name) || '',
   weights: `${k.w_tasks}/${k.w_attendance}/${k.w_head}/${k.w_custom}`,
   total: k.total, fund: k.bonus_fund === null ? '' : k.bonus_fund, bonus: k.bonus_amount === null ? '' : k.bonus_amount,
+  gate: Number(k.kpi_eligible) === 1 ? 'Bajarildi' : 'Bajarilmadi', fail: k.kpi_fail || '', missed: Number(k.tasks_missed) || 0,
+  salary: k.salary === null || k.salary === undefined ? '' : Number(k.salary),
+  pay: (Number(k.salary) || 0) + (k.status === 'excluded' ? 0 : Number(k.bonus_amount) || 0),
   status: kpi.statusLabel(k.status).replace(/^\S+\s/, ''), note: k.note || '',
 });
 
@@ -230,7 +239,9 @@ const KPI_COLS = [
   { key: 'absent', header: 'Kelmagan', width: 9 }, { key: 'excused', header: 'Sababli', width: 8 }, { key: 'a_pct', header: 'Davomat %', width: 10 },
   { key: 'head', header: 'Boshliq bahosi (1-10)', width: 12 }, { key: 'custom', header: "Qo'shimcha mezon %", width: 12 }, { key: 'custom_name', header: 'Mezon nomi', width: 16 },
   { key: 'weights', header: 'Vaznlar T/D/B/Q', width: 13 }, { key: 'total', header: 'KPI ball', width: 9 },
-  { key: 'fund', header: "Bonus fondi (so'm)", width: 15 }, { key: 'bonus', header: "Bonus (so'm)", width: 15 },
+  { key: 'gate', header: 'KPI sharti', width: 12 }, { key: 'fail', header: 'Sabab', width: 30 }, { key: 'missed', header: 'Kech topshiriq', width: 10 },
+  { key: 'fund', header: "KPI summasi (so'm)", width: 15 }, { key: 'bonus', header: "KPI beriladi (so'm)", width: 15 },
+  { key: 'salary', header: "Oklad (so'm)", width: 15 }, { key: 'pay', header: "Jami (so'm)", width: 15 },
   { key: 'status', header: 'Holat', width: 13 }, { key: 'note', header: 'Izoh', width: 30 },
 ];
 
@@ -239,6 +250,27 @@ const styleKpiRow = (r) => {
   colorCell(r.getCell('total'), total >= 80 ? GREEN : total >= 60 ? AMBER : RED);
   r.getCell('fund').numFmt = '#,##0';
   r.getCell('bonus').numFmt = '#,##0';
+  r.getCell('salary').numFmt = '#,##0';
+  r.getCell('pay').numFmt = '#,##0';
+  colorCell(r.getCell('gate'), r.getCell('gate').value === 'Bajarildi' ? GREEN : RED);
+};
+
+const addVisitsSheet = (wb, rows, title, sub, { withName = true } = {}) => {
+  const ws = wb.addWorksheet('Tashriflar');
+  decorate(ws, [
+    ...(withName ? [{ key: 'name', header: 'Hodim', width: 24 }] : []),
+    { key: 'date', header: 'Sana', width: 12 }, { key: 'time', header: 'Vaqt', width: 8 },
+    { key: 'proof', header: 'Isbot', width: 16 }, { key: 'note', header: 'Izoh', width: 40 },
+    { key: 'home', header: 'Uydan (m)', width: 10 }, { key: 'map', header: 'Xarita', width: 44 },
+  ], title, sub);
+  for (const v of rows) {
+    ws.addRow({
+      name: v.full_name, date: v.visit_date, time: time.clock(v.created_at), proof: visits.proofLabel(v.proof_type).replace(/^\S+\s/, ''),
+      note: v.note || '', home: v.home_dist ? Number(v.home_dist) : '', map: v.lat ? `https://maps.google.com/?q=${v.lat},${v.lon}` : '',
+    });
+  }
+  zebra(ws);
+  return ws;
 };
 
 /** Direktor uchun oylik fayl */
@@ -247,7 +279,7 @@ const buildMonthly = async (month) => {
   const wb = new ExcelJS.Workbook();
   wb.creator = `${config.companyName} bot`;
   const sub = `${config.companyName} · ${time.monthName(month)} · tuzildi ${time.now().toFormat('dd.MM.yyyy HH:mm')}`;
-  const list = await employees.listActive();
+  const list = await employees.listStaff();
   const deptMap = new Map((await departments.listAll()).map((d) => [Number(d.id), d]));
 
   const wsK = wb.addWorksheet('KPI');
@@ -263,6 +295,10 @@ const buildMonthly = async (month) => {
 
   addReportsSheet(wb, await dailyReports.rangeAll(from, to), `Kunlik hisobotlar — ${time.monthName(month)}`, sub);
 
+  // Tashriflar (hudud agentlari)
+  addVisitsSheet(wb, await visits.range(from, to), `Tashriflar — ${time.monthName(month)}`, sub);
+
+  // Bo'limlar (vaznlar)
   const wsD = wb.addWorksheet("Bo'limlar");
   decorate(wsD, [
     { key: 'name', header: "Bo'lim", width: 22 }, { key: 'n', header: 'Hodimlar', width: 9 },
@@ -290,13 +326,14 @@ const buildEmployeeMonth = async (emp, month) => {
   const st = await attendance.stats(emp, from, to);
   addAttendanceSheet(wb, st.days.map((day) => ({ e: emp, day })), `Davomat — ${time.monthName(month)}`, sub, { withName: false });
   addReportsSheet(wb, await dailyReports.range(emp.id, from, to), `Kunlik hisobotlar — ${time.monthName(month)}`, sub, { withName: false });
+  if (employees.isField(emp)) addVisitsSheet(wb, await visits.forEmployee(emp.id, from, to), `Tashriflar — ${time.monthName(month)}`, sub, { withName: false });
   return { buffer: await wb.xlsx.writeBuffer(), filename: `${slug(emp.full_name)}-${month}.xlsx` };
 };
 
 /** Bitta kun — jamoa (yoki bitta hodim): davomat + bugungi ishlar + kunlik hisobotlar */
 const buildDay = async (date = time.today(), { employeeId = null } = {}) => {
   const wb = new ExcelJS.Workbook();
-  const list = employeeId ? [await employees.byId(employeeId)].filter(Boolean) : await employees.listActive();
+  const list = employeeId ? [await employees.byId(employeeId)].filter(Boolean) : await employees.listStaff();
   const sub = `${config.companyName} · ${time.prettyDate(date)}${employeeId && list[0] ? ` · ${list[0].full_name}` : ''}`;
 
   const ws = wb.addWorksheet('Kun');

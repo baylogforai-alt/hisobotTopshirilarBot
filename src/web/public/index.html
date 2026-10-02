@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>BayLog Cargo</title>
+  <link rel="stylesheet" href="/app/app.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="/app/app.js" defer></script>
+</head>
+<body>
+  <header class="top" id="top">
+    <div class="top-row">
+      <h1 id="title">BayLog Cargo</h1>
+      <button id="theme" class="theme-btn" type="button" aria-label="Kunduzgi / tungi rejim">🌓</button>
+    </div>
+    <p class="sub" id="subtitle"></p>
+  </header>
+  <main id="app" class="app" aria-live="polite">
+    <div class="loading">Yuklanmoqda…</div>
+  </main>
+  <div id="sheet" class="sheet" hidden></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <noscript>Ilova uchun JavaScript kerak.</noscript>
+</body>
+</html>

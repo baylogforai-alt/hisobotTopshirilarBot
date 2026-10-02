@@ -149,7 +149,8 @@ const handleReviewNote = async (ctx) => {
 const listToday = async (ctx, date = time.today()) => {
   if (!ctx.state.isManager) return ctx.reply('⛔️ Faqat boshliq va direktor uchun.');
   const deptId = ctx.state.isAdmin ? null : ctx.state.employee.department_id;
-  const list = deptId ? await employees.listByDepartment(deptId) : await employees.listActive();
+  if (!ctx.state.isAdmin && !deptId) return ctx.reply("Sizga bo'lim biriktirilmagan — direktorga ayting.");
+  const list = await employees.listStaff(deptId);
   const reps = new Map((await dailyReports.forDate(date, deptId)).map((r) => [Number(r.employee_id), r]));
   const submitted = [], missing = [];
   for (const e of list) (reps.get(Number(e.id)) ? submitted : missing).push(e);

@@ -30,7 +30,19 @@ const splitText = (text, limit = TG_LIMIT) => {
     buf += (buf ? '\n' : '') + line;
   }
   if (buf) parts.push(buf);
-  return parts;
+  // bitta qatorning o'zi limitdan uzun bo'lsa (masalan uzun izoh) — bo'shliq bo'yicha, bo'lmasa qattiq kesiladi
+  return parts.flatMap((p) => {
+    if (p.length <= limit) return [p];
+    const out = [];
+    let rest = p;
+    while (rest.length > limit) {
+      const cut = rest.lastIndexOf(' ', limit) > limit / 2 ? rest.lastIndexOf(' ', limit) : limit;
+      out.push(rest.slice(0, cut));
+      rest = rest.slice(cut).replace(/^ /, '');
+    }
+    if (rest) out.push(rest);
+    return out;
+  });
 };
 
 const isNotModified = (err) => /message is not modified/i.test((err && (err.description || err.message)) || '');
@@ -63,7 +75,15 @@ const guard = async (ctx) => {
   return false;
 };
 
+/** Direktor yoki HR (ko'rish huquqi) */
+const guardSee = async (ctx) => {
+  if (ctx.state.isAdmin || ctx.state.isHr) return true;
+  if (ctx.updateType === 'callback_query') await ctx.answerCbQuery('⛔️ Faqat direktor va HR uchun');
+  else await ctx.reply("⛔️ Bu bo'lim faqat direktor va HR uchun.");
+  return false;
+};
+
 /** Buyruq argumentlari: '/hodim_qosh 123 Akbar' → '123 Akbar' */
 const args = (ctx) => String((ctx.message && ctx.message.text) || '').replace(/^\/\S+\s*/, '').trim();
 
-module.exports = { render, guard, splitText, args, HTML, TG_LIMIT };
+module.exports = { render, guard, guardSee, splitText, args, HTML, TG_LIMIT };

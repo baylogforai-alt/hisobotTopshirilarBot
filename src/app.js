@@ -17,6 +17,13 @@ const reportsHandler = require('./handlers/reports');
 const hrHandler = require('./handlers/hr');
 const periodHandler = require('./handlers/period');
 const excelMenuHandler = require('./handlers/excelMenu');
+const announceHandler = require('./handlers/announce');
+const fieldHandler = require('./handlers/field');
+const monthHandler = require('./handlers/month');
+const teamHandler = require('./handlers/team');
+const remindersHandler = require('./handlers/reminders');
+const directionsHandler = require('./handlers/directions');
+const journalHandler = require('./handlers/journal');
 
 /**
  * SESSIYA BOSQICHIDAGI MATN — kim nima kutayotganiga qarab yo'naltiriladi.
@@ -27,11 +34,17 @@ const STEP_HANDLERS = {
   // hodim
   late_reason: { emp: true, run: (ctx, skip) => attendanceHandler.handleLateReason(ctx, { skip }) },
   absence_reason: { emp: true, run: (ctx) => attendanceHandler.handleAbsenceReason(ctx) },
+  late_notice: { emp: true, run: (ctx) => attendanceHandler.handleLateNotice(ctx) },
   self_task_text: { emp: true, run: (ctx) => tasksHandler.handleSelfTaskText(ctx) },
   daily_report_text: { emp: true, run: (ctx, skip) => dailyReportHandler.handleReportText(ctx, { skip }) },
   edit_title: { run: (ctx) => tasksHandler.handleEditTitle(ctx) },
   typed_date: { run: (ctx) => tasksHandler.handleTypedDate(ctx) },
-  // boshliq / direktor
+  remind_times: { emp: true, run: (ctx) => remindersHandler.handleCustomText(ctx) },
+  remind_dept_times: { admin: true, run: (ctx) => remindersHandler.handleAdminTimesText(ctx) },
+  remind_emp_times: { admin: true, run: (ctx) => remindersHandler.handleAdminTimesText(ctx) },
+  visit_note: { emp: true, run: (ctx, skip) => fieldHandler.handleVisitNote(ctx, { skip }) },
+  // boshliq / direktor / HR
+  announce_text: { mgr: true, run: (ctx) => announceHandler.handleText(ctx) },
   assign_text: { mgr: true, run: (ctx) => tasksHandler.handleAssignText(ctx) },
   return_note: { mgr: true, run: (ctx, skip) => tasksHandler.handleReturnNote(ctx, { skip }) },
   head_note: { mgr: true, run: (ctx, skip) => kpiHandler.handleKpiText(ctx, 'head_note', { skip }) },
@@ -46,6 +59,14 @@ const STEP_HANDLERS = {
   edit_position: { admin: true, run: (ctx) => adminHandler.handleEmpText(ctx, 'position') },
   edit_fund: { admin: true, run: (ctx) => adminHandler.handleEmpText(ctx, 'fund') },
   edit_work_start: { admin: true, run: (ctx) => adminHandler.handleEmpText(ctx, 'work_start') },
+  edit_salary: { admin: true, run: (ctx) => adminHandler.handleEmpText(ctx, 'salary') },
+  dir_new: { admin: true, run: (ctx) => directionsHandler.handleDirText(ctx, 'new') },
+  dir_name: { admin: true, run: (ctx) => directionsHandler.handleDirText(ctx, 'name') },
+  boss_name: { admin: true, run: (ctx) => adminHandler.handleBossName(ctx) },
+  worktime_global: { admin: true, run: (ctx) => adminHandler.handleWorktimeText(ctx) },
+  branch_new: { admin: true, run: (ctx) => adminHandler.handleBranchText(ctx, 'new') },
+  branch_name: { admin: true, run: (ctx) => adminHandler.handleBranchText(ctx, 'name') },
+  branch_radius: { admin: true, run: (ctx) => adminHandler.handleBranchText(ctx, 'radius') },
   excuse_date: { admin: true, run: (ctx) => adminHandler.handleEmpText(ctx, 'excuse_date') },
   excuse_reason_admin: { admin: true, run: (ctx) => adminHandler.handleEmpText(ctx, 'excuse_reason') },
   dept_new: { admin: true, run: (ctx) => adminHandler.handleDeptText(ctx, 'new') },
@@ -73,7 +94,14 @@ const createBot = () => {
   commonHandler.register(bot);
   joinHandler.register(bot);
   attendanceHandler.register(bot);
-  tasksHandler.register(bot); // rasm/video: done_proof bosqichida isbot, aks holda next()
+  fieldHandler.register(bot);
+  monthHandler.register(bot);
+  teamHandler.register(bot);
+  remindersHandler.register(bot);
+  directionsHandler.register(bot);
+  journalHandler.register(bot);
+  announceHandler.register(bot); // media: announce_text bosqichida e'lon, aks holda next()
+  tasksHandler.register(bot); // media: done_proof / assign_text / self_task_text bosqichida, aks holda next()
   dailyReportHandler.register(bot); // rasm: daily_report_text bosqichida hisobot
   adminHandler.register(bot);
   kpiHandler.register(bot);
@@ -97,14 +125,22 @@ const createBot = () => {
       if (allowed(ctx, step)) return step.run(ctx, skip);
       session.clear(ctx.from.id);
     }
-    if (s.step === 'awaiting_checkin_location' || s.step === 'awaiting_office_location') {
+    if (['awaiting_checkin_location', 'awaiting_office_location', 'awaiting_home_location', 'visit_location'].includes(s.step)) {
       return ctx.reply(`📍 Pastdagi «${ui.BTN.sendLocation}» tugmasini bosing (yoki «${ui.BTN.cancel}»).`, ui.locationKeyboard());
     }
-    if (s.step === 'done_proof') return ctx.reply('📎 Rasm yoki video yuboring, yoki yuqoridagi «⏭ Isbotsiz yuborish» tugmasini bosing.');
+    if (s.step === 'done_proof') {
+      return ctx.reply(config.proofRequired
+        ? '📎 Isbot majburiy: rasm, video, audio yoki fayl yuboring (izohni ostiga yozing). Bekor qilish — yuqoridagi tugma.'
+        : '📎 Rasm, video, audio yoki fayl yuboring, yoki yuqoridagi «⏭ Isbotsiz yuborish» tugmasini bosing.');
+    }
+    if (s.step === 'awaiting_checkin_video') return ctx.reply(`🎥 Video yuboring (oddiy yoki dumaloq) yoki «${ui.BTN.cancel}».`, ui.cancelKeyboard());
+    if (s.step === 'visit_proof') return ctx.reply(`🎥 Video yoki 🎙 audio yuboring (izohni video ostiga yozing) yoki «${ui.BTN.cancel}».`, ui.cancelKeyboard());
+    if (s.step === 'worktime_confirm' || s.step === 'announce_confirm' || s.step === 'announce_pick') return ctx.reply('⬆️ Yuqoridagi tugmalardan tanlang.');
     if (['self_task_due', 'assign_due', 'add_dept', 'add_role', 'add_confirm', 'assign_pick'].includes(s.step)) {
       return ctx.reply('⬆️ Yuqoridagi tugmalardan tanlang (yoki /menu).');
     }
     if (skip) return ctx.reply('Hozir hech narsa kutilmayapti.', ui.kbFor(ctx));
+    if (await tasksHandler.ackByText(ctx)) return;
 
     // Tanilmagan matn ham yo'qolmasin — hodim nima yozganini direktor arxivda ko'ra oladi
     if (ctx.state.employee) activity.mark(ctx, 'note', { title: text, detail: 'erkin matn' });
