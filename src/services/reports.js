@@ -44,7 +44,7 @@ const buildToday = async ({ deptId = null, date = time.today(), title = 'BUGUNGI
     doneAll += ds.done; openAll += ds.open; overdueAll += ds.overdue; awaitingAll += awaiting;
     if (rep) reportsAll += 1;
     let att;
-    if (st === 'ontime' || (st === 'late' && employees.isFlexible(e))) { present += 1; att = `🟢 ${time.clock(row.checked_in)}`; }
+    if (st === 'ontime' || st === 'extra' || (st === 'late' && employees.isFlexible(e))) { present += 1; att = `🟢 ${time.clock(row.checked_in)}`; }
     else if (st === 'late') { present += 1; late += 1; att = `🟡 ${time.clock(row.checked_in)}${lateTag(row)}`; }
     else if (st === 'excused') { excused += 1; att = `📄 sababli${row && row.excuse_reason ? ` (${esc(row.excuse_reason)})` : ''}`; }
     else if (st === 'pending') { absent += 1; att = `🙋 sabab kutilmoqda${row && row.excuse_reason ? ` (${esc(row.excuse_reason)})` : ''}`; }
@@ -77,7 +77,7 @@ const buildDailyGroupText = async (date = time.today()) => {
     const done = await tasks.doneOn(e.id, date);
     const open = await tasks.openFor(e.id);
     totalDone += done.length; totalOpen += open.length;
-    const att = st === 'ontime' ? `🟢 ${time.clock(row.checked_in)}`
+    const att = st === 'ontime' || st === 'extra' ? `🟢 ${time.clock(row.checked_in)}`
       : st === 'late' ? (employees.isFlexible(e) ? `🟢 ${time.clock(row.checked_in)}` : `🟡 ${time.clock(row.checked_in)} (${time.prettyDuration(Number(row.late_minutes))} kech)`)
       : st === 'excused' ? '📄 sababli' : employees.isFlexible(e) ? '🕊 erkin jadval' : '🔴 kelmadi';
     const total = done.length + open.length;
@@ -198,7 +198,7 @@ const sendReviewerDigest = async (bot) => {
   const byReviewer = new Map();
   for (const t of pending) {
     const emp = await employees.byId(t.employee_id);
-    for (const id of await employees.reviewersOf(emp)) byReviewer.set(id, (byReviewer.get(id) || 0) + 1);
+    for (const id of await employees.doneReviewersOf(emp, t)) byReviewer.set(id, (byReviewer.get(id) || 0) + 1);
   }
   for (const [id, n] of byReviewer) {
     await notify.toUser(bot, id, `🕓 Tekshiruvni kutayotgan <b>${n} ta</b> topshiriq bor — «${ui.BTN.review}» tugmasini bosing.`);
@@ -211,12 +211,12 @@ const sendReviewerDigest = async (bot) => {
 // OYLIK / SHAXSIY
 // ---------------------------------------------------------------------------
 
-/** Hodimning o'z hisoboti (oy bo'yicha) */
-const buildMyReport = async (emp, month = time.month()) => {
+/** Hodimning o'z hisoboti (oy bo'yicha). viewer — boshqa odam ko'rsa (HR boshliq/direktor bergan topshiriqlarni ko'rmaydi) */
+const buildMyReport = async (emp, month = time.month(), viewer = null) => {
   const { from, to } = time.monthRange(month);
   const ts = await tasks.stats(emp.id, from, to);
   const at = await attendance.stats(emp, from, to);
-  const open = await tasks.openFor(emp.id);
+  const open = viewer ? tasks.visibleFor(viewer, await tasks.openFor(emp.id)) : await tasks.openFor(emp.id);
   const k = await kpi.compute(emp, month);
   const reports = await dailyReports.countBetween(emp.id, from, to);
   const dept = emp.department_id ? await departments.byId(emp.department_id) : null;
@@ -240,7 +240,10 @@ const buildMyReport = async (emp, month = time.month()) => {
       ` · boshliq ${k.head_score === null ? '—' : `${k.head_score}/10`}×${k.w_head} · ${esc(customName)} ${k.custom_pct === null ? '—' : `${k.custom_pct}%`}×${k.w_custom}`,
   ];
   if (config.kpiMode === 'gate') lines.push(`   🚦 KPI sharti: ${Number(k.kpi_eligible) === 1 ? '🟢 bajarilyapti' : `🔴 bajarilmadi — ${esc(k.kpi_fail || '')}`}`);
-  if (k.status === 'confirmed' && k.bonus_amount !== null) lines.push(`   💵 KPI: <b>${kpi.fmtMoney(k.bonus_amount)}</b>`);
+  // KPI summasi: o'zi, direktor/HR; bo'lim rahbari — faqat boshliq ruxsat bersa
+  const self = !viewer || (viewer.employee && Number(viewer.employee.id) === Number(emp.id));
+  const seeMoney = self || (viewer && (viewer.isAdmin || viewer.isHr)) || (viewer && viewer.isHead && (await require('./org').headSeesMoney()));
+  if (seeMoney && k.status === 'confirmed' && k.bonus_amount !== null) lines.push(`   💵 KPI: <b>${kpi.fmtMoney(k.bonus_amount)}</b>`);
   const vCount = employees.isField(emp) ? await visits.countFor(emp.id, from, to) : 0;
   if (vCount) lines.push('', `📍 <b>Tashriflar</b>: ${vCount} ta`);
   if (k.status === 'excluded') lines.push(`   ⛔ Bu oy bonusdan chiqarilgan${k.note ? `: ${esc(k.note)}` : ''}`);

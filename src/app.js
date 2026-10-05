@@ -24,6 +24,9 @@ const teamHandler = require('./handlers/team');
 const remindersHandler = require('./handlers/reminders');
 const directionsHandler = require('./handlers/directions');
 const journalHandler = require('./handlers/journal');
+const chatHandler = require('./handlers/chat');
+const statusHandler = require('./handlers/status');
+const extraHandler = require('./handlers/extra');
 
 /**
  * SESSIYA BOSQICHIDAGI MATN — kim nima kutayotganiga qarab yo'naltiriladi.
@@ -35,17 +38,25 @@ const STEP_HANDLERS = {
   late_reason: { emp: true, run: (ctx, skip) => attendanceHandler.handleLateReason(ctx, { skip }) },
   absence_reason: { emp: true, run: (ctx) => attendanceHandler.handleAbsenceReason(ctx) },
   late_notice: { emp: true, run: (ctx) => attendanceHandler.handleLateNotice(ctx) },
+  checkout_note: { emp: true, run: (ctx) => attendanceHandler.handleCheckoutNote(ctx) },
   self_task_text: { emp: true, run: (ctx) => tasksHandler.handleSelfTaskText(ctx) },
   daily_report_text: { emp: true, run: (ctx, skip) => dailyReportHandler.handleReportText(ctx, { skip }) },
+  self_media_title: { emp: true, run: (ctx) => tasksHandler.handleSelfMediaTitle(ctx) },
   edit_title: { run: (ctx) => tasksHandler.handleEditTitle(ctx) },
   typed_date: { run: (ctx) => tasksHandler.handleTypedDate(ctx) },
+  typed_time: { run: (ctx) => tasksHandler.handleTypedTime(ctx) },
   remind_times: { emp: true, run: (ctx) => remindersHandler.handleCustomText(ctx) },
   remind_dept_times: { admin: true, run: (ctx) => remindersHandler.handleAdminTimesText(ctx) },
   remind_emp_times: { admin: true, run: (ctx) => remindersHandler.handleAdminTimesText(ctx) },
   visit_note: { emp: true, run: (ctx, skip) => fieldHandler.handleVisitNote(ctx, { skip }) },
+  // savol-javob chati va qaytarilgan topshiriqqa javob — hamma ro'yxatdagi (texnik direktor ham)
+  chat_text: { run: (ctx) => chatHandler.handleText(ctx) },
+  chat_reply: { run: (ctx) => chatHandler.handleText(ctx) },
+  task_reply: { run: (ctx) => chatHandler.handleText(ctx) },
   // boshliq / direktor / HR
-  announce_text: { mgr: true, run: (ctx) => announceHandler.handleText(ctx) },
   assign_text: { mgr: true, run: (ctx) => tasksHandler.handleAssignText(ctx) },
+  assign_media_title: { mgr: true, run: (ctx) => tasksHandler.handleAssignMediaTitle(ctx) },
+  announce_text: { mgr: true, run: (ctx) => announceHandler.handleText(ctx) },
   return_note: { mgr: true, run: (ctx, skip) => tasksHandler.handleReturnNote(ctx, { skip }) },
   head_note: { mgr: true, run: (ctx, skip) => kpiHandler.handleKpiText(ctx, 'head_note', { skip }) },
   daily_review_note: { mgr: true, run: (ctx) => dailyReportHandler.handleReviewNote(ctx) },
@@ -59,6 +70,9 @@ const STEP_HANDLERS = {
   edit_position: { admin: true, run: (ctx) => adminHandler.handleEmpText(ctx, 'position') },
   edit_fund: { admin: true, run: (ctx) => adminHandler.handleEmpText(ctx, 'fund') },
   edit_work_start: { admin: true, run: (ctx) => adminHandler.handleEmpText(ctx, 'work_start') },
+  edit_work_end: { admin: true, run: (ctx) => adminHandler.handleEmpText(ctx, 'work_end') },
+  xc_date: { admin: true, run: (ctx) => extraHandler.handleDate(ctx) },
+  xc_amount: { admin: true, run: (ctx) => extraHandler.handleAmount(ctx) },
   edit_salary: { admin: true, run: (ctx) => adminHandler.handleEmpText(ctx, 'salary') },
   dir_new: { admin: true, run: (ctx) => directionsHandler.handleDirText(ctx, 'new') },
   dir_name: { admin: true, run: (ctx) => directionsHandler.handleDirText(ctx, 'name') },
@@ -77,6 +91,8 @@ const STEP_HANDLERS = {
   kpi_fund: { admin: true, run: (ctx) => kpiHandler.handleKpiText(ctx, 'fund') },
   kpi_note: { admin: true, run: (ctx, skip) => kpiHandler.handleKpiText(ctx, 'note', { skip }) },
   kpi_exclude_note: { admin: true, run: (ctx, skip) => kpiHandler.handleKpiText(ctx, 'exclude_note', { skip }) },
+  kpi_gate_days: { admin: true, run: (ctx) => adminHandler.handleGateText(ctx, 'days') },
+  kpi_gate_pct: { admin: true, run: (ctx) => adminHandler.handleGateText(ctx, 'pct') },
 };
 
 const allowed = (ctx, step) => {
@@ -101,8 +117,11 @@ const createBot = () => {
   directionsHandler.register(bot);
   journalHandler.register(bot);
   announceHandler.register(bot); // media: announce_text bosqichida e'lon, aks holda next()
+  chatHandler.register(bot);
   tasksHandler.register(bot); // media: done_proof / assign_text / self_task_text bosqichida, aks holda next()
   dailyReportHandler.register(bot); // rasm: daily_report_text bosqichida hisobot
+  statusHandler.register(bot);
+  extraHandler.register(bot);
   adminHandler.register(bot);
   kpiHandler.register(bot);
   reportsHandler.register(bot);
@@ -125,7 +144,7 @@ const createBot = () => {
       if (allowed(ctx, step)) return step.run(ctx, skip);
       session.clear(ctx.from.id);
     }
-    if (['awaiting_checkin_location', 'awaiting_office_location', 'awaiting_home_location', 'visit_location'].includes(s.step)) {
+    if (['awaiting_checkin_location', 'awaiting_office_location', 'awaiting_home_location', 'visit_location', 'awaiting_checkout_location'].includes(s.step)) {
       return ctx.reply(`📍 Pastdagi «${ui.BTN.sendLocation}» tugmasini bosing (yoki «${ui.BTN.cancel}»).`, ui.locationKeyboard());
     }
     if (s.step === 'done_proof') {
@@ -135,8 +154,9 @@ const createBot = () => {
     }
     if (s.step === 'awaiting_checkin_video') return ctx.reply(`🎥 Video yuboring (oddiy yoki dumaloq) yoki «${ui.BTN.cancel}».`, ui.cancelKeyboard());
     if (s.step === 'visit_proof') return ctx.reply(`🎥 Video yoki 🎙 audio yuboring (izohni video ostiga yozing) yoki «${ui.BTN.cancel}».`, ui.cancelKeyboard());
-    if (s.step === 'worktime_confirm' || s.step === 'announce_confirm' || s.step === 'announce_pick' || s.step === 'done_pick') return ctx.reply('⬆️ Yuqoridagi tugmalardan tanlang.');
-    if (['self_task_due', 'assign_due', 'add_dept', 'add_role', 'add_confirm', 'assign_pick'].includes(s.step)) {
+    if (s.step === 'announce_confirm') return ctx.reply("⬆️ «📤 Yuborish» yoki «❌ Bekor qilish» ni bosing.");
+    if (s.step === 'worktime_confirm' || s.step === 'announce_pick' || s.step === 'done_pick') return ctx.reply('⬆️ Yuqoridagi tugmalardan tanlang.');
+    if (['self_task_due', 'assign_due', 'self_task_time', 'assign_time', 'add_dept', 'add_role', 'add_confirm', 'assign_pick', 'return_late', 'return_due', 'xc_confirm'].includes(s.step)) {
       return ctx.reply('⬆️ Yuqoridagi tugmalardan tanlang (yoki /menu).');
     }
     if (skip) return ctx.reply('Hozir hech narsa kutilmayapti.', ui.kbFor(ctx));

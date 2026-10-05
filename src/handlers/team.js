@@ -17,7 +17,7 @@ const { esc, cb, inline } = ui;
  *   Rahbar: o'z jamoasi → hodim (oylik hisobot + topshiriq berish).
  */
 
-const DAY_ICON = { ontime: '🟢', late: '🟡', absent: '🔴', excused: '📄', pending: '🙋', future: '⚪', off: '⚪' };
+const DAY_ICON = { ontime: '🟢', late: '🟡', absent: '🔴', excused: '📄', pending: '🙋', future: '⚪', off: '⚪', extra: '🟢' };
 
 const todayIcon = async (e) => DAY_ICON[attendance.dayStatus(await attendance.get(e.id), time.today(), time.today(), e)] || '⚪';
 
@@ -78,8 +78,8 @@ const memberView = async (ctx, empId) => {
   if (!e) return teamHome(ctx);
   if (ctx.state.isAdmin) return require('./admin').employeeCard(ctx, e.id);
   if (!employees.canManage(ctx.state.employee, false, e)) return ctx.answerCbQuery ? ctx.answerCbQuery('⛔️') : null;
-  const open = await tasks.openFor(e.id);
-  const text = `${await reports.buildMyReport(e, time.month())}\n\n💬 Lichka: ${employees.contactHtml(e)}`;
+  const open = tasks.visibleFor(ctx.state.actor, await tasks.openFor(e.id));
+  const text = `${await reports.buildMyReport(e, time.month(), ctx.state.actor)}\n\n💬 Lichka: ${employees.contactHtml(e)}`;
   const rows = [[cb('📤 Topshiriq berish', `as:emp:${e.id}`), cb(`📋 Ochiq (${open.length})`, `rp:emp:${e.id}:${time.month()}`)]];
   if (ctx.state.isHr) {
     rows.push([cb("🧭 Yo'nalishlari", `ed:${e.id}`), cb(employees.isViewer(e) ? '👁 Nazorat: ha' : "👁 Nazorat: yo'q", `vw:grant:${e.id}`)]);

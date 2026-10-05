@@ -82,11 +82,14 @@ const lateNotice = async (employeeId, reason, proof = null, date = time.today())
   return get(employeeId, date);
 };
 
-const checkOut = async (employeeId, date = time.today()) => {
+/** place — { lat, lon, dist } (Ketdim lokatsiyasi), note — izoh */
+const checkOut = async (employeeId, date = time.today(), { place = null, note = null } = {}) => {
   await db.query(
-    `INSERT INTO attendance (employee_id, work_date, checked_out) VALUES ($1, $2, $3)
-     ON CONFLICT (employee_id, work_date) DO UPDATE SET checked_out = EXCLUDED.checked_out`,
-    [Number(employeeId), date, time.stamp()],
+    `INSERT INTO attendance (employee_id, work_date, checked_out, checkout_lat, checkout_lon, checkout_dist, checkout_note) VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (employee_id, work_date) DO UPDATE SET checked_out = EXCLUDED.checked_out, checkout_lat = EXCLUDED.checkout_lat,
+       checkout_lon = EXCLUDED.checkout_lon, checkout_dist = EXCLUDED.checkout_dist, checkout_note = EXCLUDED.checkout_note`,
+    [Number(employeeId), date, time.stamp(), place ? String(place.lat) : null, place ? String(place.lon) : null,
+      place && place.dist != null ? String(Math.round(place.dist)) : null, note ? String(note).slice(0, 300) : null],
   );
   return get(employeeId, date);
 };
@@ -210,10 +213,20 @@ const noticedInTime = (row, emp = null) => {
   return m !== null && m <= startMinutesOf(emp) - config.lateNoticeMinBefore;
 };
 
+/** Kechikish hisoblanmaydimi: oldindan ogohlantirgan yoki rahbariyat sababli deb belgilagan */
+const lateForgiven = (row, emp = null) => Boolean(row && (row.late_excused_at || noticedInTime(row, emp)));
+
+/**
+ * Kun holati. Kelgan bo'lsa — «sababli» so'rov tasdiqlangan bo'lsa ham oddiy kun (kech kelsa — kech).
+ * Dam olish kuni kelgan — 'extra' (ishlagan kun, kechikish hisoblanmaydi, ish kunlariga qo'shilmaydi).
+ */
 const dayStatus = (row, date, today = time.today(), emp = null) => {
-  if (!time.isWorkDay(date) && !(row && row.checked_in)) return 'off';
+  if (row && row.checked_in) {
+    if (!time.isWorkDay(date)) return 'extra';
+    return Number(row.late_minutes) > 0 && !lateForgiven(row, emp) ? 'late' : 'ontime';
+  }
+  if (!time.isWorkDay(date)) return 'off';
   if (row && row.excuse_status === 'approved') return 'excused';
-  if (row && row.checked_in) return Number(row.late_minutes) > 0 && !noticedInTime(row, emp) ? 'late' : 'ontime';
   if (row && row.excuse_status === 'pending') return 'pending';
   if (date > today) return 'future';
   if (date === today) {
@@ -231,30 +244,44 @@ const stats = async (emp, from, to) => {
   const rows = await range(emp.id, from, to);
   const map = new Map(rows.map((r) => [r.work_date, r]));
   const today = time.today();
-  const res = { workDays: 0, ontime: 0, late: 0, absent: 0, excused: 0, pending: 0, lateMinutes: 0, days: [] };
+  const res = { workDays: 0, ontime: 0, late: 0, absent: 0, excused: 0, pending: 0, extra: 0, lateMinutes: 0, days: [] };
   const flexible = Number(emp.flexible) === 1;
   // Hodim qo'shilgan kundan oldingi kunlar hisobga olinmaydi (oy o'rtasida qo'shilgan hodim "kelmagan" bo'lib qolmasin)
   const hired = emp.created_at ? String(emp.created_at).slice(0, 10) : null;
   for (let d = from; d <= to; d = time.addDays(d, 1)) {
     const row = map.get(d) || null;
-    if (hired && d < hired && !(row && (row.checked_in || row.excuse_status))) continue;
+    // qo'shilgan kunning o'zi ham — faqat o'sha kuni kelgan/sabab yozgan bo'lsa (kunduzi qo'shilgan hodim «kelmagan» bo'lmasin)
+    if (hired && d <= hired && !(row && (row.checked_in || row.excuse_status))) continue;
     let st = dayStatus(row, d, today, emp);
     if (flexible && st === 'late') st = 'ontime';
     if (flexible && st === 'absent') st = 'excused';
     res.days.push({ date: d, status: st, row });
     if (st === 'off' || st === 'future') continue;
+    if (st === 'extra') { res.extra += 1; continue; }
     if (st === 'excused') { res.excused += 1; continue; }
+    // hal qilinmagan «Kelmayman» — sababli hisoblanadi (rad etilsa — kelmagan bo'ladi)
+    if (st === 'pending') { res.pending += 1; res.excused += 1; continue; }
     res.workDays += 1;
     if (st === 'ontime') res.ontime += 1;
     else if (st === 'late') { res.late += 1; res.lateMinutes += Number(row.late_minutes) || 0; }
-    else if (st === 'pending') { res.pending += 1; res.absent += 1; }
     else res.absent += 1;
   }
   res.pct = res.workDays ? Math.round(((res.ontime + res.late * 0.5) / res.workDays) * 100) : 100;
   return res;
 };
 
+/** Kech kelgan kunni rahbariyat «sababli» qiladi — kechikish hisoblanmaydi. Bir marta: allaqachon bo'lsa false */
+const excuseLate = async (attId, byTgId) => {
+  const rows = await db.query(
+    `UPDATE attendance SET late_excused_at = $1, late_excused_by = $2
+     WHERE id = $3 AND checked_in IS NOT NULL AND late_minutes > 0 AND late_excused_at IS NULL RETURNING id`,
+    [time.stamp(), Number(byTgId), Number(attId)],
+  );
+  return rows.length > 0;
+};
+
 module.exports = {
+  excuseLate, lateForgiven,
   get, byId, startMinutesOf, lateMinutesOf, checkIn, setLateReason, lateNotice, checkOut, setIntent, workingNow, isCheckedIn, isCheckedOut,
   requestExcuse, decideExcuse, pendingExcuses, presentToday, absentToday, lateToday, range, workedMinutes,
   dayStatus, stats, noticedInTime,

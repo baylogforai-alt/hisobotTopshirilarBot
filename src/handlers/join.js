@@ -159,6 +159,7 @@ const register = (bot) => {
     if (!(await guard(ctx))) return;
     const req = await requests.byId(ctx.match[1]);
     if (!req) return ctx.answerCbQuery("So'rov topilmadi");
+    if (req.status !== 'pending') return ctx.answerCbQuery(`Allaqachon hal qilingan (${req.status === 'approved' ? "qo'shilgan" : 'rad etilgan'})`, { show_alert: true });
     await requests.decide(req.id, 'rejected', ctx.from.id);
     await ctx.answerCbQuery('Rad etildi');
     await render(ctx, `🚫 <b>${esc(req.full_name)}</b> (<code>${req.tg_id}</code>) rad etildi.`);

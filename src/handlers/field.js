@@ -16,7 +16,7 @@ const botOf = (ctx) => ({ telegram: ctx.telegram });
 
 /**
  * HUDUD AGENTLARI.
- *   Uy joylashuvi — «Keldim» uchun uydan FIELD_MIN_DISTANCE_M (1 km) uzoqda bo'lish kerak. Hodim bir marta o'zi belgilaydi,
+ *   Uy joylashuvi — «Keldim» uchun uydan FIELD_MIN_DISTANCE_M (1,5 km) uzoqda bo'lish kerak. Hodim bir marta o'zi belgilaydi,
  *                   keyin faqat direktor tozalay oladi (kartochkada «🏠 Uy joyini tozalash»).
  *   Tashrif        — «📍 Hududga keldim» → lokatsiya → video / dumaloq video / audio / ovozli xabar → izoh (ixtiyoriy).
  *                   Tekshiruvchilarga va arxiv guruhiga nusxa ketadi.
@@ -32,26 +32,28 @@ const isForwarded = (m) => Boolean(m.forward_date || m.forward_origin || m.forwa
 
 const askHome = (ctx) => {
   session.set(ctx.from.id, { step: 'awaiting_home_location' });
-  return ctx.reply(
-    `🏠 <b>Avval uyingiz joylashuvini belgilang</b>\n\nSiz hudud (agent) rejimidasiz: ishga ketgan hisoblanish uchun uyingizdan kamida <b>${geo.prettyDistance(config.fieldMinDistanceM)}</b> uzoqlashishingiz kerak.\n\n` +
-      `Hozir <b>uyda</b> bo'lsangiz «${ui.BTN.sendLocation}» tugmasini bosing. ⚠️ Keyin faqat direktor o'zgartira oladi.`,
-    { parse_mode: 'HTML', ...ui.locationKeyboard() },
-  );
+  return ctx.reply(require('../services/flows').HOME_PROMPT(), { parse_mode: 'HTML', ...ui.locationKeyboard() });
 };
+
+/** Xaritadan tanlangan joy (venue) — haqiqiy joylashuv emas */
+const isVenue = (m) => Boolean(m && m.venue);
 
 const onHomeLocation = async (ctx) => {
   const emp = ctx.state.employee;
   session.clear(ctx.from.id);
   if (!emp) return notRegistered(ctx);
-  if (isForwarded(ctx.message)) return ctx.reply(`❌ Bu joylashuv boshqa joydan yuborilgan. «${ui.BTN.sendLocation}» tugmasini bosing.`, ui.kbFor(ctx));
-  if (employees.homeOf(emp)) return ctx.reply('ℹ️ Uy joylashuvingiz allaqachon belgilangan. O\'zgartirish uchun direktorga murojaat qiling.', ui.kbFor(ctx));
+  if (isForwarded(ctx.message) || isVenue(ctx.message)) {
+    session.set(ctx.from.id, { step: 'awaiting_home_location' });
+    return ctx.reply(`❌ Bu joylashuv xaritadan tanlangan yoki boshqa joydan yuborilgan. Uyda turib «${ui.BTN.sendLocation}» tugmasini bosing.`, ui.locationKeyboard());
+  }
+  if (employees.homeOf(emp)) return ctx.reply('ℹ️ Uy joylashuvingiz allaqachon saqlangan. O\'zgartirish uchun boshliqqa murojaat qiling.', ui.kbFor(ctx));
   const { latitude: lat, longitude: lon } = ctx.message.location;
   await employees.setHome(emp.id, lat, lon);
   await ctx.reply(
-    `✅ <b>Uy joylashuvi saqlandi.</b>\n\nEndi ishga chiqqaningizda (uydan ${geo.prettyDistance(config.fieldMinDistanceM)} dan uzoqda) «${ui.BTN.checkIn}» bosing.`,
+    `✅ <b>Uy joylashuvingiz saqlandi.</b>\n\nEndi shu joylashuv bo'yicha ishlaysiz: ishga chiqqaningizda (uydan ${geo.prettyDistance(config.fieldMinDistanceM)} dan uzoqda) «${ui.BTN.checkIn}» bosing. Eslatmalar endi kelmaydi.`,
     { parse_mode: 'HTML', ...ui.kbFor(ctx) },
   );
-  await notify.toReviewers(botOf(ctx), emp, `🏠 <b>${esc(emp.full_name)}</b> uy joylashuvini belgiladi · ${mapLink(lat, lon)}`);
+  await notify.toAttendanceWatchers(botOf(ctx), emp, `🏠 <b>${esc(emp.full_name)}</b> uy joylashuvini belgiladi · ${mapLink(lat, lon)}`);
   await notify.toArchive(botOf(ctx), `🏠 ${esc(emp.full_name)} — uy joylashuvi · ${mapLink(lat, lon)}`);
 };
 
@@ -122,7 +124,7 @@ const finishVisit = async (ctx, v, note) => {
     `📍 <b>${esc(emp.full_name)}</b> hududga keldi · ${time.clock(row.created_at)} (bugun ${n}-chi)\n` +
     `${mapLink(v.lat, v.lon)}${v.homeDist != null ? ` · uydan ${geo.prettyDistance(v.homeDist)}` : ''} · ${visits.proofLabel(v.proof.type)}` +
     (note ? `\n💬 «${esc(note.slice(0, 500))}»` : '');
-  await notify.toReviewers(botOf(ctx), emp, text, {}, v.proof);
+  await notify.toAttendanceWatchers(botOf(ctx), emp, text, {}, v.proof);
   await notify.toArchive(botOf(ctx), text, v.proof);
 };
 
@@ -131,4 +133,4 @@ const register = (bot) => {
   bot.command('tashrif', startVisit);
 };
 
-module.exports = { register, askHome, onHomeLocation, startVisit, onVisitLocation, onVisitProof, handleVisitNote, mediaProof, mapLink, isForwarded };
+module.exports = { register, askHome, isVenue, onHomeLocation, startVisit, onVisitLocation, onVisitProof, handleVisitNote, mediaProof, mapLink, isForwarded };

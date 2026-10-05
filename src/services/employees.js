@@ -103,6 +103,15 @@ const startMinutesOf = (emp) => {
   return m ? Number(m[1]) * 60 + Number(m[2]) : require('./worktime').minutes();
 };
 
+/** Alohida ish tugashi ('HH:mm', null — umumiy WORK_END_HOUR) — boshliq kartochkadan qo'yadi */
+const setWorkEnd = (id, hhmm) => db.query('UPDATE employees SET work_end = $1 WHERE id = $2', [hhmm || null, Number(id)]);
+const workEndOf = (emp) => (emp && /^\d{2}:\d{2}$/.test(String(emp.work_end || '')) ? emp.work_end : `${String(config.workEndHour).padStart(2, '0')}:00`);
+/** Hodimning ish tugashi — kun boshidan daqiqalarda */
+const endMinutesOf = (emp) => {
+  const [h, m] = workEndOf(emp).split(':').map(Number);
+  return h * 60 + m;
+};
+
 /** Erkin jadval — kechikish va geofence'dan ozod */
 const setFlexible = (id, flexible) => db.query('UPDATE employees SET flexible = $1 WHERE id = $2', [flexible ? 1 : 0, Number(id)]);
 
@@ -128,6 +137,9 @@ const setHr = async (id, on) => {
   await db.query('UPDATE employees SET is_hr = $1 WHERE id = $2', [on ? 1 : 0, Number(id)]);
   if (on) await db.query("UPDATE employees SET role = 'head' WHERE id = $1 AND role = 'employee'", [Number(id)]);
 };
+/** HR «Bajardim» (tekshiruv) xabarlarini o'zi xohlasa oladi — standart o'chiq */
+const wantsDoneNotify = (emp) => Boolean(emp && Number(emp.notify_done) === 1);
+const setNotifyDone = (id, on) => db.query('UPDATE employees SET notify_done = $1 WHERE id = $2', [on ? 1 : 0, Number(id)]);
 const listHr = () => db.query(`${SELECT} WHERE e.active = 1 AND e.is_hr = 1 ORDER BY lower(e.full_name)`);
 /** Ko'rinadigan unvon: lavozim, bo'lmasa HR / rol */
 const titleOf = (e) => e.position || (Number(e.is_hr) === 1 ? 'HR' : ROLES[e.role] || '');
@@ -197,6 +209,44 @@ const reviewersOf = async (emp) => {
   return [...ids];
 };
 
+/** Hodimning bo'lim rahbarlari (o'zidan tashqari) — tg_id lar */
+const deptHeadIdsOf = async (emp) => {
+  if (!emp.department_id) return [];
+  const heads = await db.query(
+    `${SELECT} WHERE e.active = 1 AND e.role = 'head' AND e.department_id = $1 AND e.id <> $2`,
+    [Number(emp.department_id), Number(emp.id)],
+  );
+  return heads.map((e) => Number(e.tg_id));
+};
+
+/**
+ * Keldi / ketdi / tashrif xabarlari — bo'lim rahbarlari + HR (boshliqqa EMAS — 2-okt qarori; Panelda yoqsa — boshliqqa ham).
+ * Hech kim bo'lmasa (bo'limsiz va HR yo'q) — boshliq, xabar yo'qolmasin.
+ */
+const attendanceWatchersOf = async (emp) => {
+  const ids = new Set(await deptHeadIdsOf(emp));
+  for (const h of await listHr()) ids.add(Number(h.tg_id));
+  ids.delete(Number(emp.tg_id));
+  if (!ids.size || (await require('./org').bossSeesAttendance())) for (const id of await bossTgIds()) ids.add(Number(id));
+  ids.delete(Number(emp.tg_id));
+  return [...ids];
+};
+
+/**
+ * «Bajardim» — tekshiruv so'rovi kimga: bo'lim rahbarlari + boshliq + topshiriqni bergan odam;
+ * HR — faqat o'zi yoqqan bo'lsa (notify_done). task — topshiriq (beruvchini bilish uchun), ixtiyoriy.
+ */
+const doneReviewersOf = async (emp, task = null) => {
+  const ids = new Set(await deptHeadIdsOf(emp));
+  for (const id of await bossTgIds()) ids.add(Number(id));
+  // HR — o'zi yoqsa; boshliq/direktor bergan topshiriq va boshliq missiyasi HR ga bormaydi
+  const hidden = Boolean(task && require('./tasks').hiddenFromHr(task)) && !(await require('./org').hrSeesBossTasks());
+  for (const h of await listHr()) if (wantsDoneNotify(h) && !hidden) ids.add(Number(h.tg_id));
+  if (task && task.created_by && task.source !== 'self') ids.add(Number(task.created_by));
+  ids.delete(Number(emp.tg_id));
+  return [...ids];
+};
+
 /**
  * RAHBARIYAT = boshliq (bazada role='admin' faol hodim — direktor) + HR. Tasdiqlash so'rovlari faqat shularga boradi.
  * ADMIN_IDS dagi, lekin hodim bo'lmagan direktorlar — «texnik direktor»: hamma narsani ko'radi, ma'lumot xabarlarini
@@ -214,8 +264,8 @@ const mention = (e) => (e.username ? `@${e.username}` : e.full_name);
 
 module.exports = {
   ROLES, byTgId, byId, listActive, listStaff, isBoss, isStaff, listAll, listByDepartment, listWithoutDepartment, listAdmins, listHeads,
-  add, ensureMany, deactivate, activate, setRole, setPosition, rename, setDepartment, setBonusFund, setWorkStart, parseWorkStart, startMinutesOf, setFlexible, isFlexible,
-  isHr, setHr, listHr, isViewer, setViewer, contactHtml, titleOf, personIcon, teamOf, listUnmanaged,
+  add, ensureMany, deactivate, activate, setRole, setPosition, rename, setDepartment, setBonusFund, setWorkStart, parseWorkStart, startMinutesOf, setWorkEnd, workEndOf, endMinutesOf, setFlexible, isFlexible,
+  isHr, setHr, listHr, wantsDoneNotify, setNotifyDone, attendanceWatchersOf, doneReviewersOf, isViewer, setViewer, contactHtml, titleOf, personIcon, teamOf, listUnmanaged,
   setBranch, setWorkMode, isField, setHome, clearHome, homeOf, setVideoRequired, needsCheckinVideo, setSalary, modeLabel,
-  touchUsername, isAdminId, isAdmin, isHead, canManage, reviewersOf, bossTgIds, isTop, roleLabel, mention,
+  touchUsername, isAdminId, isAdmin, isHead, canManage, reviewersOf, deptHeadIdsOf, bossTgIds, isTop, roleLabel, mention,
 };

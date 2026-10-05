@@ -46,11 +46,11 @@ const periodLabel = (key) => {
 const periodText = (r) => `${time.prettyRange(r.from, r.to)} · <b>${r.days} kun</b>`;
 const sendDoc = (ctx, file, caption) => notify.docToUser({ telegram: ctx.telegram }, ctx.from.id, file.buffer, file.filename, caption);
 
-const employeeFile = (emp, r) => (r.key === 'today' ? excel.buildDay(r.from, { employeeId: emp.id }) : excel.buildEmployeePeriod(emp, r.from, r.to));
+const employeeFile = (emp, r, viewer = null) => (r.key === 'today' ? excel.buildDay(r.from, { employeeId: emp.id, viewer }) : excel.buildEmployeePeriod(emp, r.from, r.to, { viewer }));
 const employeeCaption = (emp, r) =>
   `📥 <b>${esc(emp.full_name)}</b> — ${esc(r.title)}\n🗓 ${periodText(r)}\n` +
   (r.key === 'today' ? '<i>Bugungi missiyalari, davomati va kunlik hisoboti</i>' : '<i>Varaqlar: Xulosa · Bajarilgan ishlar · Kunlar · Missiyalar · Kunlik hisobotlar · Harakatlar</i>');
-const teamFile = (r) => (r.key === 'today' ? excel.buildDay(r.from) : excel.buildTeamPeriod(r.from, r.to));
+const teamFile = (r, viewer = null) => (r.key === 'today' ? excel.buildDay(r.from, { viewer }) : excel.buildTeamPeriod(r.from, r.to, { viewer }));
 const teamCaption = (r) =>
   `📥 <b>${esc(config.companyName)}</b> — butun jamoa, ${esc(r.title)}\n🗓 ${periodText(r)}\n` +
   (r.key === 'today' ? '<i>Har bir hodimning bugungi ishlari, davomati va kunlik hisobotlari</i>' : '<i>Varaqlar: Jamlanma · Kunlar · Missiyalar · Kechikkanlar · Bajarilganlar · Kunlik hisobotlar</i>');
@@ -107,18 +107,18 @@ const send = async (ctx, key, scope) => {
   if (!r) return showHome(ctx);
   if (ctx.updateType === 'callback_query') await ctx.answerCbQuery('📥 Fayl tayyorlanmoqda…');
   activity.mark(ctx, 'excel', { title: `Excel: ${r.title}`, detail: `${r.from} → ${r.to} · ${scope}` });
-  if (scope === 'team') return sendDoc(ctx, await teamFile(r), teamCaption(r));
+  if (scope === 'team') return sendDoc(ctx, await teamFile(r, ctx.state.actor), teamCaption(r));
   if (scope === 'each') {
     const list = await employees.listStaff();
     if (!list.length) return ctx.reply("Hodimlar ro'yxati bo'sh.");
     await ctx.reply(`📥 <b>${list.length} ta fayl</b> tayyorlanmoqda — ${esc(r.title)} (${r.days} kun).`, { parse_mode: 'HTML' });
     let sent = 0;
-    for (const emp of list) if (await sendDoc(ctx, await employeeFile(emp, r), employeeCaption(emp, r))) sent += 1;
+    for (const emp of list) if (await sendDoc(ctx, await employeeFile(emp, r, ctx.state.actor), employeeCaption(emp, r))) sent += 1;
     return ctx.reply(`✅ ${sent} / ${list.length} ta fayl yuborildi.`);
   }
   const emp = await employees.byId(Number(scope));
   if (!emp) return ctx.reply('❌ Hodim topilmadi.');
-  return sendDoc(ctx, await employeeFile(emp, r), employeeCaption(emp, r));
+  return sendDoc(ctx, await employeeFile(emp, r, ctx.state.actor), employeeCaption(emp, r));
 };
 
 // 4) HODIM: o'z fayli (/excel)

@@ -71,9 +71,11 @@ const dayCard = async (emp, date) => {
   out.push('⏰ <b>ISH VAQTI</b>');
   if (att && att.checked_in) {
     const dist = att.checkin_dist !== null && att.checkin_dist !== undefined && att.checkin_dist !== '' ? ` · 📍 ofisdan ${geo.prettyDistance(Number(att.checkin_dist))}` : '';
-    out.push(`   🟢 Keldi:  <b>${time.clock(att.checked_in)}</b>${isLate(att, emp) ? ` ⚠️ <i>${time.prettyDuration(Number(att.late_minutes))} kech</i>` : ''}${dist}`);
+    out.push(`   🟢 Keldi:  <b>${time.clock(att.checked_in)}</b>${st === 'extra' ? ' 🗓 <i>dam olish kuni</i>' : isLate(att, emp) ? ` ⚠️ <i>${time.prettyDuration(Number(att.late_minutes))} kech</i>` : ''}${dist}`);
     if (att.late_reason) out.push(`   💬 Sabab: <i>${esc(att.late_reason)}</i>`);
-    out.push(att.checked_out ? `   🏁 Ketdi:  <b>${time.clock(att.checked_out)}</b>` : '   🏁 Ketdi:  <i>hali belgilamagan</i>');
+    const outDist = att.checkout_dist !== null && att.checkout_dist !== undefined && att.checkout_dist !== '' ? ` · 📍 ${geo.prettyDistance(Number(att.checkout_dist))}` : '';
+    out.push(att.checked_out ? `   🏁 Ketdi:  <b>${time.clock(att.checked_out)}</b>${outDist}` : '   🏁 Ketdi:  <i>hali belgilamagan</i>');
+    if (att.checkout_note) out.push(`   💬 Ketishdagi izoh: <i>${esc(att.checkout_note)}</i>`);
     const mins = attendance.workedMinutes(att);
     if (mins !== null) out.push(`   ⏱ Ishlagan: <b>${time.prettyDuration(mins)}</b>`);
   } else if (st === 'excused') {

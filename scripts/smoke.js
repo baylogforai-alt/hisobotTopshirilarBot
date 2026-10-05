@@ -7,7 +7,8 @@
  * Ishlatish:  npm test
  */
 process.env.BOT_TOKEN = 'test:token';
-process.env.DATABASE_URL = '';
+// SMOKE_DATABASE_URL — xuddi shu testlarni Postgres'da (bo'sh baza) ishlatish uchun
+process.env.DATABASE_URL = process.env.SMOKE_DATABASE_URL || '';
 process.env.SUPABASE_DB_PASSWORD = '';
 process.env.DB_PATH = './data/smoke-test.db';
 process.env.ADMIN_IDS = '1000';
@@ -130,7 +131,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 (async () => {
   await db.init();
   const bot = createBot();
-  const send = (u) => bot.handleUpdate(u);
+  // Postgres rejimida activity.track (fonda yoziladi) ulgurishi uchun har update dan keyin qisqa pauza
+  const send = async (u) => { await bot.handleUpdate(u); if (process.env.SMOKE_DATABASE_URL) await sleep(40); };
   const bugun = time.today();
   const month = time.month();
   const GROUP = -100500;
@@ -138,14 +140,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // =========================================================================
   console.log("\n— 0. v1 bazadan migratsiya (missions → tasks) —");
+  // soxta v1 baza — faqat SQLite faylida (SMOKE_DATABASE_URL bilan Postgres'da ishlaganda o'tkazib yuboriladi)
+  if (process.env.SMOKE_DATABASE_URL) await employees.add({ tgId: 40001, fullName: 'Eski Hodim', position: 'Operator' });
   const eski = await employees.byTgId(40001);
-  ok('eski hodim saqlanib qoldi', eski && eski.full_name === 'Eski Hodim');
-  const migrated = await db.query('SELECT * FROM tasks ORDER BY id');
-  ok('3 ta missiya tasks ga ko\'chdi', migrated.length === 3, String(migrated.length));
-  ok('active → active, done → accepted, cancelled → cancelled', migrated[0].status === 'active' && migrated[1].status === 'accepted' && migrated[2].status === 'cancelled');
-  ok('direktor bergan ish source=admin, o\'ziniki self', migrated[1].source === 'admin' && migrated[0].source === 'self');
-  ok('eski jadval missions_v1 ga o\'zgardi', (await db.hasTable('missions_v1')) && !(await db.hasTable('missions')));
-  ok('eski ochiq ish hodimning ro\'yxatida (kechikkan)', (await tasks.openFor(eski.id)).some((t) => t.title === 'Eski ochiq ish' && t.due_date < bugun));
+  if (!process.env.SMOKE_DATABASE_URL) {
+    ok('eski hodim saqlanib qoldi', eski && eski.full_name === 'Eski Hodim');
+    const migrated = await db.query('SELECT * FROM tasks ORDER BY id');
+    ok('3 ta missiya tasks ga ko\'chdi', migrated.length === 3, String(migrated.length));
+    ok('active → active, done → accepted, cancelled → cancelled', migrated[0].status === 'active' && migrated[1].status === 'accepted' && migrated[2].status === 'cancelled');
+    ok('direktor bergan ish source=admin, o\'ziniki self', migrated[1].source === 'admin' && migrated[0].source === 'self');
+    ok('eski jadval missions_v1 ga o\'zgardi', (await db.hasTable('missions_v1')) && !(await db.hasTable('missions')));
+    ok('eski ochiq ish hodimning ro\'yxatida (kechikkan)', (await tasks.openFor(eski.id)).some((t) => t.title === 'Eski ochiq ish' && t.due_date < bugun));
+  }
 
   // =========================================================================
   console.log("\n— 1. Ro'yxatda yo'q odam —");
@@ -224,6 +230,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await send(cbq(20001, `as:emp:${akbar.id}`));
   await send(msg(20001, "!Oylik hisobotni tayyorlash\nBank ko'chirmasini solishtirish"));
   await send(cbq(20001, 'as:due:0'));
+  await send(cbq(20001, 'as:tm:-'));
   let open = await tasks.openFor(akbar.id);
   ok('2 ta topshiriq yaratildi, muhim birinchi', open.length === 2 && open[0].priority === 'high' && open[0].source === 'head');
   ok('hodimga xabar bordi + assigned harakati', lastText(99999).includes('Yangi topshiriq') && (await activity.forDay(akbar.id, bugun)).some((a) => a.action === 'assigned'));
@@ -232,6 +239,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await send(msg(99999, '1. Kassani tekshirish\n2. Hisob-fakturalar'));
   ok('muddat tugmalari (1 oy ham bor)', findCb(99999, /^st:due:30$/));
   await send(cbq(99999, 'st:due:1'));
+  await send(cbq(99999, 'st:tm:-'));
   open = await tasks.openFor(akbar.id);
   ok("2 ta o'z missiyasi qo'shildi (ertaga)", open.length === 4 && open.filter((t) => t.source === 'self').length === 2);
   ok('task_add harakati yozildi', (await activity.forDay(akbar.id, bugun)).filter((a) => a.action === 'task_add').length === 2);
@@ -264,6 +272,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await send(cbq(99999, 'done:noproof'));
   await send(cbq(20001, `rv:back:${t2.id}`));
   await send(msg(20001, 'Raqamlar mos kelmayapti'));
+  ok("kamchilikdan keyin tuzatish muddati so'raldi", Boolean(findCb(20001, new RegExp(`^rv:fd:${t2.id}:none$`))));
+  await send(cbq(20001, `rv:fd:${t2.id}:none`));
   t = await tasks.byId(t2.id);
   ok('qaytarildi → active, returned_count=1', t.status === 'active' && Number(t.returned_count) === 1 && lastText(99999).includes('Qaytarildi'));
 
@@ -304,6 +314,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // Sardor keldi, hisobot topshirmay ketmoqchi → so'raladi
   await attendance.checkIn(sardor, null);
   await send(msg(30001, '🏁 Ishdan ketdim'));
+  ok("ketdim → joylashuv so'raldi", session.get(30001).step === 'awaiting_checkout_location');
+  await send(loc(30001, 41.3112, 69.2798));
+  ok("ketdim → izoh so'raldi", session.get(30001).step === 'checkout_note');
+  await send(msg(30001, 'Mijozlar bilan ishladim'));
   ok('ketdim → hisobot so\'raldi (skip bilan)', session.get(30001).step === 'daily_report_text' && lastText(30001).includes('kunlik hisobot'));
   await send(msg(30001, "⏭ O'tkazib yuborish"));
   ok('skip — keyinroq', !session.get(30001).step && lastText(30001).includes('keyinroq'));
@@ -341,7 +355,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await send(cbq(1000, `kpi:e:${akbar.id}:${month}`));
   ok('KPI kartochkasi', lastText(1000).includes('Boshliq bahosi: 8/10') && lastText(1000).includes('1 000 000'));
   await send(cbq(1000, `kpi:ok:${akbar.id}:${month}`));
-  ok('tasdiqlandi + hodimga bonus xabari', (await kpi.get(akbar.id, month)).status === 'confirmed' && lastText(99999).includes("so'm"));
+  const lastAlert = [...sent].reverse().find((x) => x.method === 'answerCallbackQuery');
+  ok('joriy oy KPI si oy tugamay tasdiqlanmaydi', (await kpi.get(akbar.id, month)).status === 'draft' && lastAlert && String(lastAlert.payload.text || '').includes('tugamagan'));
 
   // =========================================================================
   console.log("\n— 9. Arxiv (kun daftari, harakatlar) —");
@@ -457,6 +472,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await send(msg(99999, '📊 Hisobotim'));
   ok('hodim hisoboti (kunlik hisobotlar soni bilan)', lastText(99999).includes('Kunlik hisobotlar') && lastText(99999).includes('KPI'));
   await send(msg(99999, '🏁 Ishdan ketdim'));
+  await send(loc(99999, 41.3112, 69.2798));
+  await send(msg(99999, 'Hisobotlar tayyor'));
   ok('ketdim (hisobot bor — so\'ralmaydi)', (await attendance.isCheckedOut(akbar.id)) && lastText(99999).includes('yakunlandi') && !session.get(99999).step);
   await send(msg(20001, '/yordam'));
   ok('boshliq yordami', lastText(20001).includes('Boshliq / direktor'));

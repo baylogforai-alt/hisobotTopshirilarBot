@@ -39,6 +39,11 @@ const dirsMenu = async (ctx) => {
   const rows = [];
   for (let i = 0; i < list.length; i += 2) rows.push(list.slice(i, i + 2).map((r) => cb(directions.label(r), `as:dir:${r.id}`)));
   rows.push([cb('👤 Shaxsiy (istalgan hodim)', 'as:dir:self')]);
+  const me = ctx.state.employee;
+  for (const b of await employees.listAdmins()) {
+    if (!me || Number(b.id) !== Number(me.id)) rows.push([cb(`👑 ${b.full_name}ga (boshliq)`.slice(0, 50), `as:emp:${b.id}`)]);
+  }
+  rows.push([cb('☑️ Bir nechta / hammaga', 'as:multi')]);
   rows.push([cb('👥 Rahbarlar orqali', 'as:mgrs'), cb(ui.BTN.cancel, 'as:cancel')]);
   return render(ctx, `📤 <b>Qaysi yo'nalish bo'yicha?</b>\n<i>Masalan: moliya bo'yicha savol, ta'minot bo'yicha topshiriq. Shaxsiy masala bo'lsa — «Shaxsiy».</i>`, inline(rows));
 };
@@ -92,7 +97,7 @@ const empDirs = async (ctx, empId) => {
 // ---------------------------------------------------------------------------
 
 const canView = (ctx) => seeAll(ctx) || employees.isViewer(ctx.state.employee);
-const DAY_ICON = { ontime: '🟢', late: '🟡', absent: '🔴', excused: '📄', pending: '🙋', future: '⚪', off: '⚪' };
+const DAY_ICON = { ontime: '🟢', late: '🟡', absent: '🔴', excused: '📄', pending: '🙋', future: '⚪', off: '⚪', extra: '🟢' };
 
 const viewToday = async (ctx) => {
   const lines = [];

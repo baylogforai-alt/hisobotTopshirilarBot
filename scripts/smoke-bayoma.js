@@ -11,7 +11,8 @@
  * Ishlatish:  npm test
  */
 process.env.BOT_TOKEN = 'test:token';
-process.env.DATABASE_URL = '';
+// SMOKE_DATABASE_URL — xuddi shu testlarni Postgres'da (bo'sh baza) ishlatish uchun
+process.env.DATABASE_URL = process.env.SMOKE_DATABASE_URL || '';
 process.env.SUPABASE_DB_PASSWORD = '';
 process.env.DB_PATH = './data/smoke-bayoma.db';
 // BAYOMA xatti-harakati (BayLog standartlari boshqacha — smoke.js)
@@ -20,8 +21,11 @@ process.env.MONTH_START_REQUIRED = 'true';
 process.env.KPI_MODE = 'gate';
 process.env.PROOF_REQUIRED = '1';
 process.env.REMINDER_INTERVAL_HOURS = '3';
-process.env.OFFICE_RADIUS_M = '300';
+process.env.OFFICE_RADIUS_M = '150';
+process.env.FIELD_MIN_DISTANCE_M = '1500';
+process.env.LATE_NOTICE_MIN_BEFORE = '20';
 process.env.ANNOUNCE_DONE = '0';
+process.env.BOSS_SEES_ATTENDANCE = '0';
 process.env.DAILY_REPORT_REQUIRED = '0';
 process.env.COMPANY_NAME = 'BAYOMA';
 process.env.BOSS_NAME = 'Odilxon';
@@ -30,6 +34,7 @@ process.env.GROUP_CHAT_ID = '';
 process.env.ADMIN_IDS = '1000';
 process.env.WORK_START = '09:00';
 process.env.WORK_END_HOUR = '18';
+process.env.DAILY_REPORT_HOUR = '19';
 process.env.LATE_GRACE_MINUTES = '10';
 process.env.WORK_DAYS = '1-6';
 
@@ -70,6 +75,7 @@ const branches = require('../src/services/branches');
 const months = require('../src/services/months');
 const visits = require('../src/services/visits');
 const config = require('../src/config');
+const ui = require('../src/ui');
 const { createBot } = require('../src/app');
 
 let failed = 0;
@@ -257,6 +263,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   await send(msg(20001, '!Oylik hisobotni tayyorlash\nBank ko\'chirmasini solishtirish'));
   ok('muddat tugmalari', findCb(20001, /^as:due:0$/));
   await send(cbq(20001, 'as:due:0'));
+  await send(cbq(20001, 'as:tm:-'));
   let open = await tasks.openFor(akbar.id);
   ok('2 ta topshiriq yaratildi, muhim birinchi', open.length === 2 && open[0].priority === 'high' && open[0].source === 'head');
   ok('hodimga xabar bordi', lastText(99999).includes('Yangi topshiriq'));
@@ -269,6 +276,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   await send(cbq(1000, `as:emp:${bobur.id}`));
   await send(msg(1000, 'Chorak hisobotini topshirish'));
   await send(cbq(1000, 'as:due:3'));
+  await send(cbq(1000, 'as:tm:-'));
   ok('direktor boshliqqa topshiriq berdi', (await tasks.openFor(bobur.id)).length === 1 && (await tasks.openFor(bobur.id))[0].due_date === time.addDays(bugun, 3));
 
   // =========================================================================
@@ -276,6 +284,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   await send(msg(99999, "➕ O'zimga vazifa"));
   await send(msg(99999, '1. Kassani tekshirish\n2. Hisob-fakturalar'));
   await send(cbq(99999, 'st:due:1'));
+  await send(cbq(99999, 'st:tm:-'));
   open = await tasks.openFor(akbar.id);
   ok('2 ta o\'z vazifasi qo\'shildi (ertaga)', open.length === 4 && open.filter((t) => t.source === 'self').length === 2);
   await send(msg(99999, '📋 Topshiriqlarim'));
@@ -327,9 +336,14 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   await send(voice(99999));
   ok('ovozli xabar bilan done', (await tasks.byId(t2.id)).status === 'done' && (await tasks.byId(t2.id)).proof_type === 'voice');
   await send(cbq(20001, `rv:back:${t2.id}`));
-  ok('qaytarish izohi so\'raldi', lastText(20001).includes('nima uchun'));
+  ok('qaytarish — kamchiliklar so\'raldi', lastText(20001).includes('kamchiliklar'));
+  await send(msg(20001, "⏭ O'tkazib yuborish"));
+  ok('kamchiliksiz qaytarib bo\'lmaydi', (await tasks.byId(t2.id)).status === 'done' && session.get(20001).step === 'return_note');
   await send(msg(20001, 'Raqamlar mos kelmayapti'));
+  ok("qaytarishda tuzatish muddati so'raladi", session.get(20001).step === 'return_due' && findCb(20001, new RegExp(`^rv:fd:${t2.id}:1$`)) && (await tasks.byId(t2.id)).status === 'done');
+  await send(cbq(20001, `rv:fd:${t2.id}:0`));
   t = await tasks.byId(t2.id);
+  ok("tuzatish muddati — bugun", t.due_date === bugun);
   ok('qaytarildi → active, returned_count=1, izoh', t.status === 'active' && Number(t.returned_count) === 1 && t.review_note === 'Raqamlar mos kelmayapti');
   ok('hodimga qaytarish xabari', lastText(99999).includes('Qaytarildi') && lastText(99999).includes('Raqamlar'));
 
@@ -341,14 +355,13 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('so\'rov pending', att && att.excuse_status === 'pending' && att.excuse_reason === "Kasal bo'ldim");
   const abOk = findCb(1000, /^ab:ok:\d+$/);
   ok('boshliqqa (rahbariyat) sababli/sababsiz tugmalari', Boolean(abOk));
-  ok('bo\'lim rahbariga — faqat xabar, tugmasiz', to(20001).slice(-1)[0].payload.text.includes('kelmasligini') && !JSON.stringify(to(20001).slice(-1)[0].payload.reply_markup || {}).includes('ab:ok'));
+  ok('bo\'lim rahbariga — tasdiqlash tugmalari', to(20001).slice(-1)[0].payload.text.includes('kelmasligini') && JSON.stringify(to(20001).slice(-1)[0].payload.reply_markup || {}).includes('ab:ok'));
+  ok('HR ga — faqat xabar, tugmasiz', to(50001).length === 0 || !JSON.stringify(to(50001).slice(-1)[0].payload.reply_markup || {}).includes('ab:ok'));
   await send(cbq(99999, abOk));
   ok('oddiy hodim tasdiqlay olmaydi', (await attendance.get(sardor.id)).excuse_status === 'pending');
   await send(cbq(20001, abOk));
-  ok('bo\'lim rahbari ham tasdiqlay olmaydi', (await attendance.get(sardor.id)).excuse_status === 'pending');
-  await send(cbq(1000, abOk));
   att = await attendance.get(sardor.id);
-  ok('boshliq tasdiqladi → approved', att.excuse_status === 'approved' && Number(att.excuse_by) === 1000);
+  ok('bo\'lim rahbari tasdiqladi → approved', att.excuse_status === 'approved' && Number(att.excuse_by) === 20001);
   ok('hodimga tasdiq xabari', lastText(30001).includes('sababli'));
   ok('dayStatus = excused', attendance.dayStatus(att, bugun) === 'excused');
 
@@ -375,8 +388,15 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('computeTotal: custom vazni 0 → e\'tiborsiz', kpi.computeTotal({ tasks_pct: 100, att_pct: 100, head_score: 10, custom_pct: null, w_tasks: 50, w_attendance: 20, w_head: 30, w_custom: 0 }) === 100);
   ok('bonusOf', kpi.bonusOf(1000000, 78) === 780000 && kpi.bonusOf(null, 78) === null);
   ok('KPI sharti: hammasi joyida (sababli kun zarar qilmaydi)', kpi.checkGate({ missed: 0 }, { late: 0, absent: 0, excused: 2 }).eligible === true);
-  ok('KPI sharti: 1 marta kech → berilmaydi', !kpi.checkGate({ missed: 0 }, { late: 1, absent: 0, excused: 0 }).eligible && kpi.checkGate({ missed: 0 }, { late: 1, absent: 0, excused: 0 }).reasons[0].includes('kech'));
-  ok('KPI sharti: 1 topshiriq kech → berilmaydi', !kpi.checkGate({ missed: 1 }, { late: 0, absent: 0, excused: 0 }).eligible);
+  // 3-okt qarori: oyiga 25 kun vaqtida kelish, topshiriqlar ≥90% muddatida
+  const g27 = (at, ts = { total: 0 }) => kpi.checkGate(ts, { late: 0, absent: 0, excused: 0, extra: 0, ...at }, { monthWorkDays: 27, minDays: 25, minTaskPct: 90 });
+  ok('KPI sharti: 27 ish kuni, 24 vaqtida + 3 kech → berilmaydi', !g27({ workDays: 27, ontime: 24, late: 3 }).eligible && g27({ workDays: 27, ontime: 24, late: 3 }).reasons[0].includes('kech'));
+  ok('KPI sharti: 25 vaqtida + 2 kech → beriladi', g27({ workDays: 27, ontime: 25, late: 2 }).eligible);
+  ok('KPI sharti: 2 sababli kun → 23 kun yetarli', g27({ workDays: 25, ontime: 23, absent: 2, excused: 2 }).eligible && g27({ workDays: 25, ontime: 23, excused: 2 }).required === 23);
+  ok('KPI sharti: dam olish kuni kelgani ham qo\'shiladi', g27({ workDays: 27, ontime: 24, late: 3, extra: 1 }).eligible);
+  ok('KPI sharti: topshiriqlar 89% → berilmaydi, 90% → beriladi', !g27({ workDays: 27, ontime: 27 }, { total: 10, gatePct: 89 }).eligible && g27({ workDays: 27, ontime: 27 }, { total: 10, gatePct: 90 }).eligible);
+  ok('KPI sharti: fevral (24 ish kuni) — 24 kun kerak', kpi.checkGate({ total: 0 }, { workDays: 24, ontime: 24, late: 0, excused: 0 }, { monthWorkDays: 24 }).required === 24);
+  ok('KPI sharti: oy o\'rtasi — talab o\'tgan kunlarga mutanosib', g27({ workDays: 10, ontime: 9, late: 1 }).required === 9 && g27({ workDays: 10, ontime: 9, late: 1 }).eligible);
   ok('KPI sharti: oy boshi tasdiqlanmagan → berilmaydi', !kpi.checkGate({ missed: 0 }, { late: 0, absent: 0, excused: 0 }, { monthConfirmed: false }).eligible);
   ok('bonusFor gate: shart bor → to\'liq, yo\'q → 0', kpi.bonusFor({ bonus_fund: 1000000, kpi_eligible: 1, total: 40 }) === 1000000 && kpi.bonusFor({ bonus_fund: 1000000, kpi_eligible: 0, total: 99 }) === 0 && kpi.bonusFor({ bonus_fund: null, kpi_eligible: 1 }) === null);
 
@@ -422,23 +442,38 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   await send(msg(1000, '90'));
   k = await kpi.get(akbar.id, month);
   ok('mezon 90% saqlandi, total qayta hisoblandi, KPI summasi shartga qarab', Number(k.custom_pct) === 90 && k.total === kpi.computeTotal(k) && k.bonus_amount === (Number(k.kpi_eligible) === 1 ? 1000000 : 0));
-  await send(cbq(1000, `kpi:note:${akbar.id}:${month}`));
-  await send(msg(1000, 'Yaxshi oy'));
+  mark = sent.length;
   await send(cbq(1000, `kpi:ok:${akbar.id}:${month}`));
-  k = await kpi.get(akbar.id, month);
-  ok('tasdiqlandi', k.status === 'confirmed' && Number(k.decided_by) === 1000);
+  ok('joriy oyni tasdiqlab bo\'lmaydi (oy tugamagan)', (await kpi.get(akbar.id, month)).status === 'draft' && sent.slice(mark).some((s) => s.method === 'answerCallbackQuery' && String(s.payload.text || '').includes('tugamagan')));
+  const pm = time.prevMonth(month);
+  await send(cbq(1000, `kpi:e:${akbar.id}:${pm}`));
+  await send(cbq(1000, `kpi:note:${akbar.id}:${pm}`));
+  await send(msg(1000, 'Yaxshi oy'));
+  await send(cbq(1000, `kpi:ok:${akbar.id}:${pm}`));
+  k = await kpi.get(akbar.id, pm);
+  ok('tasdiqlandi (o\'tgan oy)', k.status === 'confirmed' && Number(k.decided_by) === 1000);
   ok('hodimga KPI natijasi + bonus keldi', lastText(99999).includes('KPI natijangiz') && lastText(99999).includes("so'm") && lastText(99999).includes('Yaxshi oy'));
-  const kAfter = await kpi.compute(akbar, month);
+  const kAfter = await kpi.compute(akbar, pm);
   ok('tasdiqlangan qator qayta hisoblanmaydi', kAfter.total === k.total && kAfter.status === 'confirmed');
+  await send(cbq(1000, `kpi:e:${akbar.id}:${pm}`));
+  const cardKb = JSON.stringify((to(1000).filter((s) => s.payload.reply_markup && s.payload.reply_markup.inline_keyboard).pop() || { payload: {} }).payload.reply_markup || {});
+  ok('tasdiqlangan kartochkada tahrir tugmalari yo\'q', !cardKb.includes(`kpi:fund:${akbar.id}`) && cardKb.includes(`kpi:reopen:${akbar.id}:${pm}`));
+  await send(cbq(1000, `kpi:sc:${akbar.id}:${pm}:2`));
+  await kpi.setBonusFund(akbar.id, pm, 9000000);
+  ok('tasdiqlangan oy muzlatilgan (baho va summa o\'zgarmaydi)', Number((await kpi.get(akbar.id, pm)).bonus_fund) === Number(k.bonus_fund) && (await kpi.get(akbar.id, pm)).head_score === k.head_score);
+  mark = sent.length;
+  await send(cbq(1000, `kpi:ok:${akbar.id}:${pm}`));
+  ok('eski «Tasdiqlash» qayta bosilsa — ikkinchi xabar yo\'q', countSince(mark, 99999) === 0);
 
-  await send(cbq(1000, `kpi:e:${sardor.id}:${month}`));
-  await send(cbq(1000, `kpi:ex:${sardor.id}:${month}`));
+  await send(cbq(1000, `kpi:e:${sardor.id}:${pm}`));
+  await send(cbq(1000, `kpi:ex:${sardor.id}:${pm}`));
   await send(msg(1000, 'Intizom buzilishi'));
-  k = await kpi.get(sardor.id, month);
+  k = await kpi.get(sardor.id, pm);
   ok('bonusdan chiqarildi (izoh bilan)', k.status === 'excluded' && k.note === 'Intizom buzilishi');
   ok('hodimga chiqarilgani haqida xabar', lastText(30001).includes('chiqarildingiz'));
-  await send(cbq(1000, `kpi:reopen:${sardor.id}:${month}`));
-  ok('qayta ochildi', (await kpi.get(sardor.id, month)).status === 'draft');
+  await send(cbq(1000, `kpi:reopen:${sardor.id}:${pm}`));
+  ok('qayta ochildi', (await kpi.get(sardor.id, pm)).status === 'draft');
+  await kpi.decide(akbar.id, pm, 'draft', 1000);
   mark = sent.length;
   await send(cbq(1000, `kpi:xl:${month}`));
   ok('KPI Excel yuborildi', sent.slice(mark).some((s) => s.method === 'sendDocument' && Number(s.payload.chat_id) === 1000));
@@ -471,7 +506,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   await send(cbq(1000, 'adm:today'));
   ok('bugungi holat', lastText(1000).includes('BUGUNGI HOLAT') && lastText(1000).includes('sababli'));
   await send(cbq(1000, 'adm:status'));
-  ok('tizim holati', lastText(1000).includes('TIZIM HOLATI') && lastText(1000).includes('SQLite'));
+  ok('tizim holati', lastText(1000).includes('TIZIM HOLATI') && /SQLite|PostgreSQL/.test(lastText(1000)));
   await send(cbq(1000, 'emp:list'));
   ok('hodimlar ro\'yxati', findCb(1000, new RegExp(`^emp:${akbar.id}$`)));
   await send(cbq(1000, `emp:${akbar.id}`));
@@ -496,11 +531,13 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
 
   // =========================================================================
   console.log('\n— 13. Rol o\'zgarishi, ishdan ketish, sessiya —');
-  await send(cbq(1000, `emp:act:${sardor.id}`));
+  await send(cbq(1000, `emp:act:${sardor.id}:0`));
   ok('ishdan ketdi → active=0', Number((await employees.byId(sardor.id)).active) === 0);
+  await send(cbq(1000, `emp:act:${sardor.id}:0`));
+  ok('«Ishdan ketdi» ikkinchi marta bosilsa — qayta faollashmaydi', Number((await employees.byId(sardor.id)).active) === 0);
   await send(msg(30001, '/start'));
   ok('ishdan ketgan /start — ro\'yxatda yo\'q', lastText(30001).includes("ro'yxatda yo'q"));
-  await send(cbq(1000, `emp:act:${sardor.id}`));
+  await send(cbq(1000, `emp:act:${sardor.id}:1`));
   ok('qayta faollashdi', Number((await employees.byId(sardor.id)).active) === 1);
 
   session.set(99999, { step: 'self_task_text' });
@@ -519,10 +556,27 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('o\'tgan sana rad etildi', lastText(99999).includes("o'tgan"));
   const fut = time.addDays(bugun, 10);
   await send(msg(99999, `${fut.slice(8, 10)}.${fut.slice(5, 7)}.${fut.slice(0, 4)}`));
-  ok('yozilgan sana bilan vazifa', (await tasks.openFor(akbar.id)).some((x) => x.title === 'Sana bilan vazifa' && x.due_date === fut));
+  ok("sanadan keyin boshlanish soati so'raldi", session.get(99999).step === 'self_task_time' && findCb(99999, /^st:tm:0900$/));
+  await send(cbq(99999, 'st:tm:type'));
+  await send(msg(99999, '25:99'));
+  ok("noto'g'ri soat rad etildi", lastText(99999).includes('tushunilmadi'));
+  await send(msg(99999, '14:30'));
+  ok('yozilgan sana va soat bilan vazifa', (await tasks.openFor(akbar.id)).some((x) => x.title === 'Sana bilan vazifa' && x.due_date === fut && x.start_time === '14:30'));
 
   await send(msg(99999, '🏁 Ketdim'));
-  ok('ketdim', (await attendance.isCheckedOut(akbar.id)) && lastText(99999).includes('yakunlandi'));
+  ok('ketdim — avval joylashuv so\'raladi', session.get(99999).step === 'awaiting_checkout_location' && !(await attendance.isCheckedOut(akbar.id)));
+  await send(msg(99999, 'uydaman'));
+  ok('joylashuvsiz matn — rad', !(await attendance.isCheckedOut(akbar.id)) && session.get(99999).step === 'awaiting_checkout_location');
+  await send(loc(99999, 41.35, 69.35));
+  ok('ofisdan uzoqdagi «Ketdim» rad etildi', !(await attendance.isCheckedOut(akbar.id)) && !session.get(99999).step && lastText(99999).includes('ofisdan uzoqdasiz'));
+  await send(msg(99999, '🏁 Ketdim'));
+  await send(loc(99999, 41.3112, 69.2798));
+  ok('ofisdagi joylashuv qabul, izoh so\'raladi', session.get(99999).step === 'checkout_note' && lastText(99999).includes('izoh'));
+  mark = sent.length;
+  await send(msg(99999, 'Hisobotni topshirib ketdim'));
+  const coRow = await attendance.get(akbar.id);
+  ok('ketdim — lokatsiya va izoh saqlandi', (await attendance.isCheckedOut(akbar.id)) && lastText(99999).includes('yakunlandi') && coRow.checkout_note === 'Hisobotni topshirib ketdim' && Number(coRow.checkout_dist) < 150);
+  ok('ketdi xabarida izoh va xarita, ogohlantirishsiz', sent.slice(mark).some((s) => /ketdi/.test(s.payload.text || '') && /Hisobotni topshirib/.test(s.payload.text || '') && /maps\.google/.test(s.payload.text || '') && !/ofisdan tashqarida/.test(s.payload.text || '')));
 
   // =========================================================================
   console.log('\n— 13b. Umumiy ish vaqti —');
@@ -572,7 +626,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   await send(cbq(1000, `tm:m:${bobur.id}`));
   ok('rahbar ichida jamoasi (Akbar, Sardor) va tugmalar', lastText(1000).includes('Akbar') && lastText(1000).includes('Sardor') && findCb(1000, new RegExp(`^as:team:${bobur.id}$`)) && findCb(1000, new RegExp(`^as:emp:${bobur.id}$`)));
   await send(cbq(1000, `tm:e:${akbar.id}`));
-  ok('direktor hodimni bossa — kartochka', lastText(1000).includes('Akbar Karimov') && findCb(1000, new RegExp(`^emp:hr:${akbar.id}$`)));
+  ok('direktor hodimni bossa — kartochka', lastText(1000).includes('Akbar Karimov') && findCb(1000, new RegExp(`^emp:hr:${akbar.id}:1$`)));
 
   await send(msg(1000, '📤 Topshiriq berish'));
   ok('topshiriq: avval rahbarlar (o\'ziga / hodimlariga)', findCb(1000, new RegExp(`^as:emp:${abbos.id}$`)) && findCb(1000, new RegExp(`^as:team:${bobur.id}$`)) && findCb(1000, /^as:dept:0$/));
@@ -582,11 +636,13 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   await send(cbq(1000, `as:emp:${akbar.id}`));
   await send(msg(1000, 'Kadrlar hisobotini tekshirish'));
   await send(cbq(1000, 'as:due:1'));
+  await send(cbq(1000, 'as:tm:-'));
   ok('direktor → Bobur jamoasi → Akbar ga topshiriq', (await tasks.openFor(akbar.id)).some((x) => x.title === 'Kadrlar hisobotini tekshirish' && x.source === 'admin'));
   await send(msg(1000, '📤 Topshiriq berish'));
   await send(cbq(1000, `as:emp:${abbos.id}`));
   await send(msg(1000, "Yangi hodimlar ro'yxati"));
   await send(cbq(1000, 'as:due:0'));
+  await send(cbq(1000, 'as:tm:-'));
   ok('direktor → HR ning o\'ziga topshiriq', (await tasks.openFor(abbos.id)).length === 1 && lastText(50001).includes('Yangi topshiriq'));
 
   await send(msg(20001, '👥 Hodimlarim'));
@@ -599,9 +655,9 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('oddiy hodim Hodimlarim ga kira olmaydi', sent.slice(-1)[0].method === 'answerCallbackQuery');
   ok('rahbarsizlar ro\'yxati (hammaning rahbari bor)', (await employees.listUnmanaged()).length === 0);
 
-  await send(cbq(1000, `emp:hr:${abbos.id}`));
+  await send(cbq(1000, `emp:hr:${abbos.id}:0`));
   ok('kartochkadan HR olib tashlash', !employees.isHr(await employees.byTgId(50001)));
-  await send(cbq(1000, `emp:hr:${abbos.id}`));
+  await send(cbq(1000, `emp:hr:${abbos.id}:1`));
   abbos = await employees.byTgId(50001);
   ok('va qaytadan HR qilish', employees.isHr(abbos));
 
@@ -626,12 +682,12 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   let jasur = await employees.byTgId(40001);
   await send(cbq(1000, `emp:branch:${jasur.id}`));
   await send(cbq(1000, `emp:setbr:${jasur.id}:${sam.id}`));
-  await send(cbq(1000, `emp:mode:${jasur.id}`));
+  await send(cbq(1000, `emp:mode:${jasur.id}:field`));
   jasur = await employees.byTgId(40001);
   ok('agent: Samarqand filiali + hudud rejimi', Number(jasur.branch_id) === sam.id && jasur.branch_name === 'Samarqand' && employees.isField(jasur));
   ok('agentga yangi menyu (Hududga keldim tugmasi)', to(40001).some((s) => JSON.stringify(s.payload.reply_markup || {}).includes('Hududga keldim')));
   ok('hudud: video standart ixtiyoriy', !employees.needsCheckinVideo(jasur) && employees.needsCheckinVideo(akbar));
-  await send(cbq(1000, `emp:video:${jasur.id}`));
+  await send(cbq(1000, `emp:video:${jasur.id}:1`));
   await send(cbq(1000, `emp:salary:${jasur.id}`));
   await send(msg(1000, '3 000 000'));
   await send(cbq(1000, `emp:fund:${jasur.id}`));
@@ -644,7 +700,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('agent ham avval oyni tasdiqlaydi', lastText(40001).includes('yangi ish oyi'));
   await send(cbq(40001, `ms:ok:${month}`));
   await send(msg(40001, '✅ Keldim'));
-  ok('uy joylashuvi so\'raldi', lastText(40001).includes('uyingiz joylashuvini'));
+  ok('uy joylashuvi so\'raldi', lastText(40001).includes('Uy joylashuvingizni yuboring'));
   await send(loc(40001, 39.7, 66.9));
   jasur = await employees.byTgId(40001);
   ok('uy joylashuvi saqlandi', employees.homeOf(jasur) && Math.abs(employees.homeOf(jasur).lat - 39.7) < 1e-6);
@@ -661,7 +717,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('agent ishga chiqdi (hudud, video, izoh)', attJ && attJ.checked_in && attJ.checkin_mode === 'field' && attJ.checkin_proof_type === 'video' && attJ.checkin_note === "Yo'ldaman" && Number(attJ.checkin_dist) > 1000);
 
   // video ixtiyoriy bo'lsa — «Videosiz qayd etish»
-  await send(cbq(1000, `emp:video:${jasur.id}`));
+  await send(cbq(1000, `emp:video:${jasur.id}:0`));
   session.set(40001, {});
   await db.query('DELETE FROM attendance WHERE id = $1', [attJ.id]);
   await send(msg(40001, '✅ Keldim'));
@@ -719,7 +775,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('xabarda tasdiqlash tugmasi', findCb(99999, new RegExp(`^ms:ok:${next}$`)));
   await send(cbq(99999, `ms:ok:${next}`));
   ok('kelgusi oy tugmasi hozir eskirgan', !(await months.isConfirmed(akbar.id, next)));
-  ok('config: KPI rejimi gate, agent masofasi 1 km', config.kpiMode === 'gate' && config.fieldMinDistanceM === 1000);
+  ok('config: KPI rejimi gate, agent masofasi 1.5 km, ofis radiusi 150 m', config.kpiMode === 'gate' && config.fieldMinDistanceM === 1500 && config.officeRadiusM === 150);
 
 
   // =========================================================================
@@ -727,14 +783,14 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   const org = require('../src/services/org');
   const abbosE = await employees.byTgId(50001);
   await send(msg(20001, '⏰ Kech qolaman'));
-  ok('kech qolaman: HR (Abbos) va boshliq (Odilxon) ga borishi aytildi', lastText(20001).includes('Abbos') && lastText(20001).includes('Odilxon') && session.get(20001).step === 'late_notice');
+  ok('kech qolaman: HR (Abbos) ga borishi aytildi, boshliqqa emas', lastText(20001).includes('Abbos') && !lastText(20001).includes('Odilxon') && session.get(20001).step === 'late_notice');
   mark = sent.length;
   await send(voice(20001));
   let attB = await attendance.get(bobur.id);
   ok('ovozli xabar bilan kech qolish qayd etildi', attB && attB.late_notice_at && attB.late_proof_type === 'voice' && attB.late_reason === '(ovozli xabar)' && !attB.checked_in);
   ok('HR (Abbos) ga ovoz bordi', sent.slice(mark).some((s) => s.method === 'sendVoice' && Number(s.payload.chat_id) === 50001));
   ok('boshliqqa (direktor) ovoz bordi', sent.slice(mark).some((s) => s.method === 'sendVoice' && Number(s.payload.chat_id) === 1000));
-  ok('hodimga tasdiq: HR va boshliqqa yuborildi', lastText(20001).includes('HR (Abbos) va boshliq (Odilxon)'));
+  ok('hodimga tasdiq: HR ga yuborildi', lastText(20001).includes('HR (Abbos)') && !lastText(20001).includes('Odilxon'));
   const digestB = await reports.buildMorningDigest();
   ok('ertalabki holatda «kech qolishini bildirgan»', digestB.text.includes('kech qolishini bildirgan'));
 
@@ -746,7 +802,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   await send(videoNote(20001));
   attB = await attendance.get(bobur.id);
   ok('keyin Keldim — kechikish sababi saqlanib qoldi', attB.checked_in && attB.late_reason === '(ovozli xabar)' && session.get(20001).step !== 'late_reason');
-  ok('direktorga «oldindan ogohlantirgan» belgisi', sent.slice(mark).some((s) => Number(s.payload.chat_id) === 1000 && (s.payload.text || '').includes('oldindan ogohlantirgan')));
+  ok('HR ga «oldindan ogohlantirgan» belgisi (keldi xabari boshliqqa emas)', sent.slice(mark).some((s) => Number(s.payload.chat_id) === 50001 && (s.payload.text || '').includes('oldindan ogohlantirgan')) && !sent.slice(mark).some((s) => Number(s.payload.chat_id) === 1000 && (s.payload.text || '').includes('keldi')));
   await send(msg(20001, '⏰ Kech qolaman'));
   ok('kelgandan keyin kech qolaman — allaqachon', lastText(20001).includes('allaqachon'));
 
@@ -754,9 +810,9 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   mark = sent.length;
   await send(video(50001, 'Kasal bo\'ldim, shifokordaman'));
   const attAb = await attendance.get(abbosE.id);
-  ok('HR (rahbariyat) kelmayman — so\'rovsiz darhol sababli, video + izoh saqlandi', attAb.excuse_status === 'approved' && attAb.excuse_proof_type === 'video' && attAb.excuse_reason === "Kasal bo'ldim, shifokordaman");
-  ok('HR ga javob: sababli deb belgilandi', lastText(50001).includes('sababli'));
-  ok('boshliqqa video — xabar, tasdiqlash tugmasisiz', sent.slice(mark).some((s) => s.method === 'sendVideo' && Number(s.payload.chat_id) === 1000 && !JSON.stringify(s.payload.reply_markup || {}).includes('ab:ok')));
+  ok('HR kelmayman — endi so\'rov (boshliq tasdiqlaydi), video + izoh saqlandi', attAb.excuse_status === 'pending' && attAb.excuse_proof_type === 'video' && attAb.excuse_reason === "Kasal bo'ldim, shifokordaman");
+  ok('HR ga javob: so\'rov yuborildi', lastText(50001).includes('yuborildi'));
+  ok('boshliqqa video — tasdiqlash tugmalari bilan', sent.slice(mark).some((s) => s.method === 'sendVideo' && Number(s.payload.chat_id) === 1000 && JSON.stringify(s.payload.reply_markup || {}).includes('ab:ok')));
   ok('HR o\'ziga o\'zi yubormaydi', !sent.slice(mark).some((s) => Number(s.payload.chat_id) === 50001 && s.method === 'sendVideo'));
   await send(cbq(1000, `ab:no:${attAb.id}`, { message_id: 7, chat: { id: 1000, type: 'private' }, video: { file_id: 'v' }, caption: 'c', date: 0 }));
   ok('direktor kerak bo\'lsa baribir o\'zgartira oladi (video captioni tahrirlandi)', (await attendance.get(abbosE.id)).excuse_status === 'rejected' && sent.slice(-3).some((s) => s.method === 'editMessageCaption'));
@@ -764,7 +820,9 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   let kecha2 = time.addDays(bugun, -2);
   const rq = await attendance.requestExcuse(akbar.id, 'Oilaviy sabab', kecha2);
   await send(cbq(50001, `ab:ok:${rq.id}`));
-  ok('HR boshqa bo\'lim hodimining sababli kunini tasdiqlay oladi', (await attendance.get(akbar.id, kecha2)).excuse_status === 'approved' && Number((await attendance.get(akbar.id, kecha2)).excuse_by) === 50001);
+  ok('HR sababli kunni tasdiqlay olmaydi (faqat ko\'radi)', (await attendance.get(akbar.id, kecha2)).excuse_status === 'pending');
+  await send(cbq(1000, `ab:ok:${rq.id}`));
+  ok('boshliq tasdiqlaydi', (await attendance.get(akbar.id, kecha2)).excuse_status === 'approved' && Number((await attendance.get(akbar.id, kecha2)).excuse_by) === 1000);
   ok('HR va direktor — xabar oluvchilar (+ bo\'lim rahbari)', (await org.absenceRecipientsOf(akbar)).sort().join(',') === [1000, 20001, 50001].sort().join(','));
 
   await send(cbq(1000, 'adm:names'));
@@ -774,7 +832,10 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('boshliq ismi o\'zgardi', (await org.bossName()) === 'Odilxon aka' && lastText(1000).includes('Odilxon aka'));
   await send(cbq(1000, `emp:name:${abbosE.id}`));
   await send(msg(1000, 'Abbos Aliyev'));
-  ok('HR ismi o\'zgardi va xabarlarda yangi ism', (await org.recipientsLabel(akbar)) === 'HR (Abbos Aliyev) va boshliq (Odilxon aka)');
+  ok('HR ismi o\'zgardi va xabarlarda yangi ism', (await org.recipientsLabel(akbar)) === 'HR (Abbos Aliyev)');
+  await org.setBossSeesAttendance(true);
+  ok('boshliq keldi-ketdini yoqsa - yorliqda boshliq ham', (await org.recipientsLabel(akbar)) === 'HR (Abbos Aliyev) va boshliq (Odilxon aka)');
+  await org.setBossSeesAttendance(false);
 
   // =========================================================================
   console.log('\n— 18. Eslatma jadvali (hodim so\'raydi → direktor/HR tasdiqlaydi) —');
@@ -823,14 +884,15 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('direktor umumiy eslatmani har 2 soat qildi', (await reminders.globalStep()) === 2 && lastText(1000).includes('har <b>2</b> soatda'));
 
   // =========================================================================
-  console.log('\n— 19. 1 soat oldin ogohlantirsa kechikish hisoblanmaydi —');
+  console.log('\n— 19. 20 daqiqa oldin ogohlantirsa kechikish hisoblanmaydi —');
   const wt9 = require('../src/services/worktime').minutes(); // 9:00 (testda)
   const d9 = bugun;
   const rowEarly = { work_date: d9, checked_in: `${d9}T09:40:00+05:00`, late_minutes: 40, late_notice_at: `${d9}T07:55:00+05:00` };
   const rowLateN = { ...rowEarly, late_notice_at: `${d9}T08:30:00+05:00` };
   const rowYday = { ...rowEarly, late_notice_at: `${time.addDays(d9, -1)}T20:00:00+05:00` };
   ok('07:55 da aytgan (9:00 dan 65 daq oldin) — vaqtida', wt9 === 540 && attendance.dayStatus(rowEarly, d9, d9, sardor) === 'ontime' && attendance.noticedInTime(rowEarly, sardor));
-  ok('08:30 da aytgan (30 daq oldin) — kech', attendance.dayStatus(rowLateN, d9, d9, sardor) === 'late');
+  ok('08:30 da aytgan (30 daq oldin) — vaqtida (20 daq+)', attendance.dayStatus(rowLateN, d9, d9, sardor) === 'ontime');
+  ok('08:45 da aytgan (15 daq oldin) — kech', attendance.dayStatus({ ...rowEarly, late_notice_at: `${d9}T08:45:00+05:00` }, d9, d9, sardor) === 'late');
   ok('kecha kechqurun aytgani hisobga olinmaydi', attendance.dayStatus(rowYday, d9, d9, sardor) === 'late');
   ok('10:00 li hodim uchun 08:55 da aytish — o\'z vaqtida', attendance.noticedInTime({ ...rowEarly, late_notice_at: `${d9}T08:55:00+05:00` }, { work_start: '10:00' }));
 
@@ -861,6 +923,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   await send(cbq(hrTg, `as:emp:${sardor.id}`));
   await send(msg(hrTg, 'Oktabr uchun xarajatlar smetasini yuboring'));
   await send(cbq(hrTg, 'as:due:1'));
+  await send(cbq(hrTg, 'as:tm:-'));
   ok('HR boshqa bo\'lim hodimiga topshiriq berdi', (await tasks.openFor(sardor.id)).some((x) => x.title.includes('smetasini')));
   await send(cbq(hrTg, 'as:dir:self'));
   ok('Shaxsiy → hamma hodimlar', findCb(hrTg, new RegExp(`^as:who:${akbar.id}$`)) && findCb(hrTg, new RegExp(`^as:who:${jasur.id}$`)));
@@ -912,6 +975,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   await send(cbq(60001, `as:emp:${akbar.id}`));
   await send(msg(60001, 'Ikkinchi direktordan topshiriq'));
   await send(cbq(60001, 'as:due:0'));
+  await send(cbq(60001, 'as:tm:-'));
   ok('topshiriqda beruvchi — Islombek Baylog', lastText(99999).includes('Islombek Baylog'));
 
   // =========================================================================
@@ -930,6 +994,8 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   if (session.get(99999).step === 'late_reason') await send(msg(99999, "⏭ O'tkazib yuborish"));
   mark = sent.length;
   await send(msg(99999, '🏁 Ketdim'));
+  await send(loc(99999, 41.3112, 69.2798));
+  await send(msg(99999, 'Ish tugadi'));
   ok('HR ga «ketdi» xabari bordi', sent.slice(mark).some((s) => Number(s.payload.chat_id) === 50001 && (s.payload.text || '').includes('ketdi')));
   await send(msg(50001, '📈 Hisobotlar'));
   ok('HR hisobotlarida videolar va tashriflar tugmasi', findCb(50001, /^vw:vids$/) && findCb(50001, /^adm:visits$/));
@@ -1010,11 +1076,13 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   mark = sent.length;
   w = await call(99999, 'POST', '/api/tasks/self', { text: "Web vazifa bir\n!Web vazifa ikki", due: bugun });
   ok('o\'zimga 2 ta vazifa (ikkinchisi muhim)', w.status === 200 && w.data.created.length === 2 && w.data.created[1].priority === 'high');
-  ok('rahbarga «o\'ziga vazifa yozdi» xabari', sent.slice(mark).some((s) => Number(s.payload.chat_id) === 20001 && (s.payload.text || '').includes("o'ziga 2 ta vazifa")));
+  ok("o'ziga vazifa — rahbar va boshliqqa xabar bormaydi", !sent.slice(mark).some((s) => [20001, 1000].includes(Number(s.payload.chat_id)) && /vazifa yozdi/.test(s.payload.text || '')));
   const wSelfTaskId = w.data.created[0].id;
   w = await call(99999, 'POST', '/api/tasks/self', { text: 'Eski', due: '2020-01-01' });
   ok('o\'tgan muddat rad etiladi', w.status === 400);
-  w = await call(99999, 'PATCH', `/api/tasks/${wSelfTaskId}`, { title: 'Web vazifa (tahrir)', due: time.addDays(bugun, 2) });
+  w = await call(99999, 'PATCH', `/api/tasks/${wSelfTaskId}`, { due: time.addDays(bugun, 2) });
+  ok('muddat kuni o\'z vazifasi muddatini uzaytira olmaydi — 403', w.status === 403);
+  w = await call(99999, 'PATCH', `/api/tasks/${wSelfTaskId}`, { title: 'Web vazifa (tahrir)' });
   ok('o\'z vazifasini tahrirlaydi', w.status === 200 && w.data.task.title === 'Web vazifa (tahrir)');
   w = await call(99999, 'GET', '/api/tasks/my');
   ok('topshiriqlarim ro\'yxati', w.status === 200 && w.data.open.some((t) => t.id === wSelfTaskId));
@@ -1078,6 +1146,17 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('kelgandan keyin «kech qolaman» — rad', w.status === 400);
   w = await call(99999, 'POST', '/api/att/checkout');
   ok('ikkinchi marta «ketdim» — rad', w.status === 400);
+  {
+    // ilovadan «Ketdim» — bot lokatsiya va izoh so'raydi
+    const r0 = await attendance.get(akbar.id);
+    await db.query('UPDATE attendance SET checked_out = NULL WHERE id = $1', [r0.id]);
+    mark = sent.length;
+    w = await call(99999, 'POST', '/api/att/checkout');
+    ok('ilova: «Ketdim» → botda joylashuv so\'raladi', w.status === 200 && w.data.viaBot && session.get(99999).step === 'awaiting_checkout_location' && sent.slice(mark).some((x) => Number(x.payload.chat_id) === 99999 && /joyingizni yuboring/.test(x.payload.text || '')) && !(await attendance.isCheckedOut(akbar.id)));
+    await send(loc(99999, 41.3112, 69.2798));
+    await send(msg(99999, 'Kun yakunlandi'));
+    ok('ilova: lokatsiya + izohdan keyin ketdi', await attendance.isCheckedOut(akbar.id));
+  }
   await db.query('DELETE FROM attendance WHERE employee_id = $1 AND work_date = $2', [sardor.id, bugun]);
   mark = sent.length;
   w = await call(30001, 'POST', '/api/att/late', { reason: 'Shifokorga boraman' });
@@ -1087,14 +1166,16 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   w = await call(99999, 'GET', '/api/excuses');
   ok('oddiy hodim sababli kun so\'rovlarini ko\'rmaydi', w.status === 403);
   w = await call(20001, 'GET', '/api/excuses');
-  ok('bo\'lim rahbari so\'rovni hal qilmaydi (ro\'yxatda yo\'q)', w.status === 403 || !w.data.rows.some((x) => x.employeeId === sardor.id));
+  ok('bo\'lim rahbari so\'rovni ko\'radi va hal qila oladi', w.status === 200 && w.data.rows.some((x) => x.employeeId === sardor.id && x.canDecide));
   w = await call(50001, 'GET', '/api/excuses');
   const wExc = w.data.rows.find((x) => x.employeeId === sardor.id);
-  ok('HR so\'rovni ko\'radi', Boolean(wExc) && wExc.reason.includes('Kasal'));
-  mark = sent.length;
+  ok('HR so\'rovni ko\'radi (hal qilmaydi)', Boolean(wExc) && wExc.reason.includes('Kasal') && wExc.canDecide === false);
   w = await call(50001, 'POST', `/api/excuses/${wExc.attId}`, { status: 'approved' });
-  ok('sababli deb tasdiqladi → hodimga', w.status === 200 && (await attendance.get(sardor.id)).excuse_status === 'approved' && sent.slice(mark).some((s) => Number(s.payload.chat_id) === 30001 && (s.payload.text || '').includes('sababli')));
-  w = await call(50001, 'POST', `/api/excuses/${wExc.attId}`, { status: 'rejected' });
+  ok('HR sababli qila olmaydi — 403', w.status === 403 && (await attendance.get(sardor.id)).excuse_status === 'pending');
+  mark = sent.length;
+  w = await call(20001, 'POST', `/api/excuses/${wExc.attId}`, { status: 'approved' });
+  ok('sababli deb tasdiqladi (bo\'lim rahbari) → hodimga', w.status === 200 && (await attendance.get(sardor.id)).excuse_status === 'approved' && sent.slice(mark).some((s) => Number(s.payload.chat_id) === 30001 && (s.payload.text || '').includes('sababli')));
+  w = await call(20001, 'POST', `/api/excuses/${wExc.attId}`, { status: 'rejected' });
   ok('qayta qaror — 409', w.status === 409);
 
   // davomat nazoratchisi (Azizbek)
@@ -1178,14 +1259,17 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   await kpi.decide(akbar.id, month, 'draft', 1000);
   w = await call(1000, 'PATCH', `/api/kpi/${month}/${akbar.id}`, { customPct: 80, headScore: 9 });
   ok('direktor mezon va bahoni kiritdi', w.status === 200 && w.data.kpi.customPct === 80 && w.data.kpi.headScore === 9);
-  mark = sent.length;
   w = await call(1000, 'POST', `/api/kpi/${month}/${akbar.id}/decide`, { status: 'confirmed' });
+  ok('ilova: joriy oyni tasdiqlab bo\'lmaydi — 409', w.status === 409);
+  const pmW = time.prevMonth(month);
+  mark = sent.length;
+  w = await call(1000, 'POST', `/api/kpi/${pmW}/${akbar.id}/decide`, { status: 'confirmed' });
   ok('tasdiqlandi → hodimga natija', w.status === 200 && w.data.kpi.status === 'confirmed' && sent.slice(mark).some((s) => Number(s.payload.chat_id) === 99999 && (s.payload.text || '').includes('tasdiqlandi')));
-  w = await call(1000, 'PATCH', `/api/kpi/${month}/${akbar.id}`, { customPct: 10 });
+  w = await call(1000, 'PATCH', `/api/kpi/${pmW}/${akbar.id}`, { customPct: 10 });
   ok('tasdiqlangan KPI o\'zgarmaydi — 409', w.status === 409);
-  w = await call(20001, 'POST', `/api/scores/${month}/${akbar.id}`, { score: 7 });
+  w = await call(20001, 'POST', `/api/scores/${pmW}/${akbar.id}`, { score: 7 });
   ok('tasdiqlangan oyga rahbar bahosi — 409', w.status === 409);
-  await call(1000, 'POST', `/api/kpi/${month}/${akbar.id}/decide`, { status: 'draft' });
+  await call(1000, 'POST', `/api/kpi/${pmW}/${akbar.id}/decide`, { status: 'draft' });
   w = await call(20001, 'POST', `/api/scores/${month}/${akbar.id}`, { score: 7, note: 'Yaxshi' });
   ok('rahbar o\'z hodimini baholadi', w.status === 200 && Number((await kpi.get(akbar.id, month)).head_score) === 7);
   w = await call(20001, 'POST', `/api/scores/${month}/${abbosE.id}`, { score: 3 });
@@ -1279,7 +1363,9 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   await send(msg(80001, 'Bolam kasal'));
   const abN = (await attendance.get(nasiba.id));
   const withBtn = sent.slice(mark).filter((x) => JSON.stringify(x.payload.reply_markup || {}).includes(`ab:ok:${abN.id}`)).map((x) => Number(x.payload.chat_id)).sort();
-  ok('kelmayman tugmalari faqat Odilxon va HR ga', JSON.stringify(withBtn) === JSON.stringify([50001, 70001]));
+  const nasibaHeads = (await employees.deptHeadIdsOf(nasiba)).map(Number).sort();
+  ok("kelmayman tugmalari — bo'lim rahbari (yoki boshliq), HR ga emas", !withBtn.includes(50001) && withBtn.length > 0 && (nasibaHeads.length ? JSON.stringify(withBtn) === JSON.stringify(nasibaHeads) : withBtn.includes(70001)));
+  ok("Odilxonga kelmayman — faqat bo'lim rahbari bo'lmasa (tugmali)", nasibaHeads.length ? !sent.slice(mark).some((x) => Number(x.payload.chat_id) === 70001) : withBtn.includes(70001));
   ok('texnik direktor ma\'lumot oladi, tugmasiz', sent.slice(mark).some((x) => Number(x.payload.chat_id) === 1000 && (x.payload.text || '').includes('Bolam kasal') && !JSON.stringify(x.payload.reply_markup || {}).includes('ab:ok')));
   await send(msg(70001, '🙋 Kelmayman (sabab)'));
   ok('Odilxon (kompaniya rahbari) — kelmayman yuritilmaydi', lastText(70001).includes('kompaniya rahbari') && !(await attendance.get(odil.id)));
@@ -1326,10 +1412,10 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     await flows.assignTasks(tgBot, await access.resolve(20001), akbar, ['Rahbar topshirig\'i — nusxa bilan'], bugun);
     ok('rahbar bergan topshiriq: standart — direktor va HR ga nusxa', countSince(mark, 1000) === 1 && countSince(mark, hrTg) === 1);
     await send(msg(1000, '/panel'));
-    ok('panelda nusxa tugmasi (yoqilgan)', findCb(1000, /^adm:htc$/) && JSON.stringify(to(1000).slice(-1)[0].payload.reply_markup).includes('yoqilgan'));
-    await send(cbq(hrTg, 'adm:htc'));
+    ok('panelda nusxa tugmasi (yoqilgan)', findCb(1000, /^adm:htc:0$/) && JSON.stringify(to(1000).slice(-1)[0].payload.reply_markup).includes('yoqilgan'));
+    await send(cbq(hrTg, 'adm:htc:0'));
     ok('HR nusxa sozlamasini o\'zgartira olmaydi', (await org.headTaskCopy()) === true);
-    await send(cbq(1000, 'adm:htc'));
+    await send(cbq(1000, 'adm:htc:0'));
     ok('direktor o\'chirdi', (await org.headTaskCopy()) === false);
     mark = sent.length;
     await flows.assignTasks(tgBot, await access.resolve(20001), akbar, ['Rahbar topshirig\'i — nusxasiz'], bugun);
@@ -1436,7 +1522,9 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     ok('isbot yuborildi', sent.slice(mark).some((x) => x.method === 'sendPhoto' && Number(x.payload.chat_id) === 70001));
 
     await send(msg(50001, '📋 Barcha topshiriqlar'));
-    ok('HR ham hammasini ko\'radi (direktor bergani, Odilxon missiyasi ham)', lastText(50001).includes("Direktor topshirig'i") && lastText(50001).includes('Investor'));
+    ok('HR jurnalda boshliq/direktor bergani va Odilxon missiyasi ko\'rinmaydi', lastText(50001).includes('BARCHA TOPSHIRIQLAR') && !lastText(50001).includes("Direktor topshirig'i") && !lastText(50001).includes('Investor'));
+    await send(msg(70001, '📋 Barcha topshiriqlar'));
+    ok('Odilxon hammasini ko\'radi', lastText(70001).includes("Direktor topshirig'i") && lastText(70001).includes('Investor'));
     await send(msg(1000, '/jurnal'));
     ok('texnik direktor ham ko\'radi', lastText(1000).includes('BARCHA TOPSHIRIQLAR'));
     for (const who of [20001, 30001, 80001]) await send(msg(who, '/jurnal'));
@@ -1450,7 +1538,9 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     w = await call(50001, 'GET', '/api/tasks/all?period=m&giver=admin');
     ok('ilova: HR, filtr direktor', w.status === 200 && w.data.tasks.length > 0 && w.data.tasks.every((t) => t.giverKind === 'admin'));
     w = await call(50001, 'GET', `/api/tasks/all?period=w&status=accepted&emp=${odil.id}`);
-    ok('ilova: holat + hodim filtri', w.status === 200 && w.data.tasks.length >= 2 && w.data.tasks.every((t) => t.kind === 'accepted' && t.employee.id === Number(odil.id)));
+    ok('ilova: HR Odilxon missiyalarini ko\'rmaydi', w.status === 200 && w.data.tasks.every((t) => t.giverKind !== 'self' && t.giverKind !== 'admin'));
+    w = await call(70001, 'GET', `/api/tasks/all?period=w&status=accepted&emp=${odil.id}`);
+    ok('ilova: holat + hodim filtri (Odilxon)', w.status === 200 && w.data.tasks.length >= 2 && w.data.tasks.every((t) => t.kind === 'accepted' && t.employee.id === Number(odil.id)));
     w = await call(20001, 'GET', '/api/tasks/all');
     ok('ilova: rahbar — 403', w.status === 403);
     w = await call(30001, 'GET', '/api/tasks/all');
@@ -1473,11 +1563,23 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     await send(cbq(20001, `as:emp:${akbar.id}`));
     ok('topshiriq so\'rovida ovoz/video/fayl aytilgan', lastText(20001).includes('ovozli xabar') && lastText(20001).includes('fayl'));
     await send({ update_id: (uid += 1), message: { ...base(20001), voice: { file_id: 'VOICE_TASK', duration: 12 } } });
-    ok('ovozli xabar qabul qilindi — muddat so\'raladi', findCb(20001, /^as:due:0$/) && session.get(20001).step === 'assign_due');
+    ok('izohsiz ovoz — qisqa mazmun so\'raladi', session.get(20001).step === 'assign_media_title' && lastText(20001).includes('nima haqida'));
+    await send({ update_id: (uid += 1), message: { ...base(20001), voice: { file_id: 'VOICE_TASK2', duration: 3 } } });
+    ok('mazmun o\'rniga yana media — matn so\'raladi', session.get(20001).step === 'assign_media_title' && lastText(20001).includes('matn bilan'));
+    await send(msg(20001, '   '));
+    ok('bo\'sh mazmun — qayta so\'raladi', session.get(20001).step === 'assign_media_title');
+    await send(msg(20001, 'Kassa hisobotini\ntopshirish'));
+    ok('mazmun yozildi — muddat so\'raladi', findCb(20001, /^as:due:0$/) && session.get(20001).step === 'assign_due');
     mark = sent.length;
     await send(cbq(20001, 'as:due:0'));
+    await send(cbq(20001, 'as:tm:-'));
     const vT = await db.one("SELECT * FROM tasks WHERE task_file_id = 'VOICE_TASK'");
-    ok('ovozli topshiriq yaratildi', vT && vT.task_media_type === 'voice' && vT.title.includes('Ovozli topshiriq') && vT.source === 'head');
+    ok('ovozli topshiriq yaratildi — nomi qisqa mazmun', vT && vT.task_media_type === 'voice' && vT.title === 'Kassa hisobotini topshirish' && vT.source === 'head');
+    await send(msg(99999, '✔️ Bajardim'));
+    ok('«Bajardim» ro\'yxatida ovozli topshiriq mazmuni bilan', JSON.stringify(sent.slice(-1)[0].payload.reply_markup || {}).includes('Kassa hisobotini topshirish'));
+    await send(cbq(99999, `done:${vT.id}`));
+    ok('«Bajardim» tanlanganda — qayta eshitish tugmasi', lastText(99999).includes('Kassa hisobotini topshirish') && findCb(99999, new RegExp(`^tk:media:${vT.id}$`)));
+    session.clear(99999);
     const toAkbar = sent.slice(mark).filter((x) => Number(x.payload.chat_id) === 99999);
     ok('hodimga matn + ovozli xabar + «Tushundim» tugmasi', toAkbar.some((x) => (x.payload.text || '').includes('Yangi topshiriq')) && toAkbar.some((x) => x.method === 'sendVoice' && hasCb(x, new RegExp(`ak:${vT.id}`))));
     await send(msg(99999, '📋 Topshiriqlarim'));
@@ -1512,6 +1614,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     await send(msg(80001, "➕ O'zimga vazifa"));
     await send({ update_id: (uid += 1), message: { ...base(80001), video: { file_id: 'SELF_VIDEO', duration: 5 }, caption: 'Ombor qoldig\'ini sanash' } });
     await send(cbq(80001, 'st:due:0'));
+    await send(cbq(80001, 'st:tm:-'));
     const sT = await db.one("SELECT * FROM tasks WHERE task_file_id = 'SELF_VIDEO'");
     ok('o\'ziga vazifa video bilan, izohi — nomi', sT && sT.title === "Ombor qoldig'ini sanash" && sT.task_media_type === 'video' && sT.source === 'self');
     ok('o\'z vazifasiga «tushundim» kerak emas', !tasks.needsAck(sT));
@@ -1525,7 +1628,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
 
     // jurnal
     await send(cbq(70001, `tj:t:${vT.id}`));
-    ok('jurnal kartochkasi: ovozli topshiriq, tushundi vaqti', lastText(70001).includes('Ovozli topshiriq') && lastText(70001).includes('Tushundi:') && findCb(70001, new RegExp(`^tj:m:${vT.id}$`)));
+    ok('jurnal kartochkasi: ovozli topshiriq, tushundi vaqti', lastText(70001).includes('Ovozli topshiriq') && lastText(70001).includes('Kassa hisobotini') &&lastText(70001).includes('Tushundi:') && findCb(70001, new RegExp(`^tj:m:${vT.id}$`)));
     mark = sent.length;
     await send(cbq(70001, `tj:m:${vT.id}`));
     ok('jurnaldan topshiriqni eshitish', sent.slice(mark).some((x) => x.method === 'sendVoice' && Number(x.payload.chat_id) === 70001));
@@ -1620,6 +1723,871 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     await call(70001, 'POST', `/api/reminders/admin/dept/${dept.id}`, { reset: true });
     await call(70001, 'POST', `/api/reminders/admin/emp/${akbar.id}`, { reset: true });
     ok('ilova: tozalandi', !(await departments.byId(dept.id)).remind_times && !(await employees.byId(akbar.id)).remind_times);
+  }
+
+  console.log('\n— 31. Keldi-ketdi boshliqqa emas; HR «Bajardim» xabari ixtiyoriy; HR → boshliqqa topshiriq; bir nechta hodimga; e\'lon; oyliklar —');
+  {
+    const notifyS = require('../src/services/notify');
+    const announcements = require('../src/services/announcements');
+    const worktime = require('../src/services/worktime');
+    const hr = await employees.byTgId(50001);
+    const fresh = async (e) => employees.byId(e.id);
+    const textTo = (from, chatId, re) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && re.test(x.payload.text || x.payload.caption || ''));
+
+    // --- 1. keldi / ketdi — bo'lim rahbari va HR, boshliqqa (Odilxon) emas
+    const watchers = await employees.attendanceWatchersOf(await fresh(akbar));
+    ok('keldi-ketdi oluvchilar: HR bor, boshliq yo\'q', watchers.includes(50001) && !watchers.includes(70001));
+    await db.query('DELETE FROM attendance WHERE employee_id = $1 AND work_date = $2', [akbar.id, bugun]);
+    await send(msg(99999, '✅ Keldim'));
+    await send(loc(99999, 41.3112, 69.2798));
+    mark = sent.length;
+    await send(videoNote(99999));
+    ok('Keldim: HR ga xabar + video, Odilxonga hech narsa', textTo(mark, 50001, /keldi/) && sent.slice(mark).some((x) => x.method === 'sendVideoNote' && Number(x.payload.chat_id) === 50001) && countSince(mark, 70001) === 0);
+    ok('texnik direktorga (ADMIN_IDS) nusxa qoladi', countSince(mark, 1000) > 0);
+    if (session.get(99999).step === 'late_reason') await send(msg(99999, "⏭ O'tkazib yuborish"));
+    mark = sent.length;
+    await send(msg(99999, '🏁 Ketdim'));
+    await send(loc(99999, 41.3112, 69.2798));
+    await send(msg(99999, 'Ish tugadi'));
+    ok('Ketdim: HR ga bor, Odilxonga yo\'q', textTo(mark, 50001, /ketdi/) && countSince(mark, 70001) === 0);
+    const noBoss = await notifyS.seeAllIds({ noBoss: true });
+    ok('kun yakuni / ertalabki holat oluvchilari: HR bor, Odilxon yo\'q', noBoss.includes(50001) && !noBoss.includes(70001) && (await notifyS.seeAllIds()).includes(70001));
+    mark = sent.length;
+    const g = worktime.minutes() + config.lateGraceMinutes + 5;
+    await require('../src/jobs').tick({ telegram: bot.telegram }, time.now().set({ hour: Math.floor(g / 60), minute: g % 60 }));
+    ok('ertalabki holat HR ga bordi, Odilxonga yo\'q', textTo(mark, 50001, /ERTALABKI/) && !textTo(mark, 70001, /ERTALABKI/));
+
+    // --- 2. Bajardim — rahbar + Odilxon + beruvchi; HR faqat o'zi yoqsa
+    ok('HR standart — «Bajardim» xabari o\'chiq', !employees.wantsDoneNotify(hr) && !(await employees.doneReviewersOf(await fresh(akbar))).includes(50001));
+    const d1 = await tasks.create({ employeeId: akbar.id, title: 'Ombor hisoboti', dueDate: bugun, createdBy: 1000, source: 'admin' });
+    await send(cbq(99999, `done:${d1.id}`));
+    mark = sent.length;
+    await send(photo(99999, 'tayyor'));
+    const rvTo = (from, chatId, tid) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && JSON.stringify(x.payload.reply_markup || {}).includes(`rv:ok:${tid}`));
+    ok('Bajardim: Odilxonga tekshiruv tugmasi bilan', rvTo(mark, 70001, d1.id));
+    ok('Bajardim: HR ga bormadi', countSince(mark, 50001) === 0);
+    ok('Bajardim: topshiriq bergan direktorga (1000) bordi', countSince(mark, 1000) > 0);
+    await send(msg(50001, '🔎 Tekshiruv'));
+    ok('HR tekshiruvida «Bajardim xabarlari» tugmasi', findCb(50001, /^rv:hrn:1$/) && lastText(50001).includes('kelsinmi'));
+    await send(cbq(50001, 'rv:hrn:1'));
+    ok('HR yoqdi', employees.wantsDoneNotify(await fresh(hr)));
+    const d2 = await tasks.create({ employeeId: akbar.id, title: 'Kassa hisoboti', dueDate: bugun, createdBy: 20001, source: 'head' });
+    await send(cbq(99999, `done:${d2.id}`));
+    mark = sent.length;
+    await send(photo(99999, 'tayyor 2'));
+    ok('yoqilgandan keyin HR ga ham keladi (tugma bilan)', rvTo(mark, 50001, d2.id));
+    const dDir = await tasks.create({ employeeId: akbar.id, title: 'Direktor ishi', dueDate: bugun, createdBy: 1000, source: 'admin' });
+    await send(cbq(99999, `done:${dDir.id}`));
+    mark = sent.length;
+    await send(photo(99999, 'tayyor 3'));
+    ok('yoqilgan bo\'lsa ham boshliq/direktor bergani HR ga bormaydi', !rvTo(mark, 50001, dDir.id) && rvTo(mark, 70001, dDir.id));
+    await send(msg(50001, '🔎 Tekshiruv'));
+    ok('HR tekshiruv ro\'yxatida direktor bergani yo\'q', !lastText(50001).includes('Direktor ishi'));
+    await send(cbq(50001, 'rv:hrn:0'));
+    ok('HR o\'chirdi', !employees.wantsDoneNotify(await fresh(hr)));
+    const d3 = await tasks.create({ employeeId: akbar.id, title: 'HR bergan ish', dueDate: bugun, createdBy: 50001, source: 'head' });
+    await send(cbq(99999, `done:${d3.id}`));
+    mark = sent.length;
+    await send(photo(99999, 'tayyor 3'));
+    ok('o\'chiq bo\'lsa ham — HR o\'zi bergan topshiriq unga keladi', rvTo(mark, 50001, d3.id));
+    await send(cbq(70001, `rv:ok:${d1.id}`));
+    ok('Odilxon qabul qildi', (await tasks.byId(d1.id)).status === 'accepted');
+    w = await call(50001, 'POST', '/api/me/done-notify', { on: true });
+    ok('ilova: HR yoqdi', w.status === 200 && w.data.doneNotify === true && employees.wantsDoneNotify(await fresh(hr)));
+    w = await call(50001, 'GET', '/api/me');
+    ok('ilova: /api/me da doneNotify', w.data.doneNotify === true);
+    await call(50001, 'POST', '/api/me/done-notify', { on: false });
+    w = await call(80001, 'POST', '/api/me/done-notify', { on: true });
+    ok('ilova: oddiy hodim — 403', w.status === 403);
+
+    // --- 3. HR → Odilxonga topshiriq, isbot ixtiyoriy
+    await send(msg(50001, '📤 Topshiriq berish'));
+    ok('HR menyusida «👑 Odilxonga» va «Bir nechta / hammaga»', findCb(50001, new RegExp(`^as:emp:${odil.id}$`)) && findCb(50001, /^as:multi$/));
+    await send(cbq(50001, `as:emp:${odil.id}`));
+    await send(msg(50001, 'Investorlarga hisobot tayyorlash'));
+    mark = sent.length;
+    await send(cbq(50001, 'as:due:1'));
+    await send(cbq(50001, 'as:tm:-'));
+    const bt = (await tasks.openFor(odil.id)).find((t) => t.title === 'Investorlarga hisobot tayyorlash');
+    ok('Odilxonga topshiriq berildi va xabar bordi', bt && bt.source === 'head' && textTo(mark, 70001, /Yangi topshiriq/));
+    await send(cbq(70001, `done:${bt.id}`));
+    ok('Odilxonda isbot ixtiyoriy', lastText(70001).includes('ixtiyoriy') && findCb(70001, /^done:np$/));
+    mark = sent.length;
+    await send(cbq(70001, 'done:np'));
+    ok('isbotsiz — darhol bajarildi (tekshiruvsiz)', (await tasks.byId(bt.id)).status === 'accepted');
+    ok('HR ga «Odilxon bajardi» xabari', textTo(mark, 50001, /Odilxon<\/b> bajardi/));
+    const hrActor = await require('../src/services/access').resolve(50001);
+    const bt2 = (await require('../src/services/flows').assignTasks({ telegram: bot.telegram }, hrActor, odil, ["Shartnomani ko'rish"], bugun)).created[0];
+    await send(cbq(70001, `done:${bt2.id}`));
+    mark = sent.length;
+    await send({ update_id: (uid += 1), message: { ...base(70001), document: { file_id: 'BOSS_DOC', file_name: 'shartnoma.pdf' } } });
+    ok('isbot bilan — darhol bajarildi, HR ga fayl bilan', (await tasks.byId(bt2.id)).status === 'accepted' && sent.slice(mark).some((x) => x.method === 'sendDocument' && Number(x.payload.chat_id) === 50001));
+
+    // --- 4. bir nechta / hammaga topshiriq
+    await send(cbq(50001, 'as:multi'));
+    ok('belgilash ro\'yxati', lastText(50001).includes('Kimlarga topshiriq') && findCb(50001, new RegExp(`^am:t:${akbar.id}$`)));
+    await send(cbq(50001, `am:t:${akbar.id}`));
+    await send(cbq(50001, `am:t:${nasiba.id}`));
+    ok('2 ta belgilandi', lastText(50001).includes('belgilandi: <b>2</b>'));
+    await send(cbq(50001, 'am:ok'));
+    await send(msg(50001, 'Hujjatlarni topshiring'));
+    await send(cbq(50001, 'as:due:2'));
+    await send(cbq(50001, 'as:tm:-'));
+    const two = (await tasks.openFor(akbar.id)).some((t) => t.title === 'Hujjatlarni topshiring') && (await tasks.openFor(nasiba.id)).some((t) => t.title === 'Hujjatlarni topshiring');
+    ok('ikkalasiga alohida topshiriq', two && to(50001).slice(-3).some((x) => (x.payload.text || '').includes('2 ta hodimga')));
+    const allCand = (await employees.listActive()).filter((e) => Number(e.id) !== Number(hr.id));
+    await send(cbq(50001, 'as:multi'));
+    await send(cbq(50001, 'am:all'));
+    await send(cbq(50001, 'am:ok'));
+    await send(msg(50001, 'Hammaga: oy rejasi'));
+    await send(cbq(50001, 'as:due:3'));
+    await send(cbq(50001, 'as:tm:-'));
+    let cntAll = 0;
+    for (const e of allCand) if ((await tasks.openFor(e.id)).some((t) => t.title === 'Hammaga: oy rejasi')) cntAll += 1;
+    ok(`hammaga (${allCand.length}) — Odilxon ham`, cntAll === allCand.length && (await tasks.openFor(odil.id)).some((t) => t.title === 'Hammaga: oy rejasi'));
+    await send(cbq(80001, 'am:all'));
+    ok('oddiy hodim belgilay olmaydi', sent.slice(-1)[0].method === 'answerCallbackQuery');
+
+    // --- 5. E'lon (BayLog E'lon xizmati: «👁 O'qidim» an:r, «📊 Kim o'qidi» an:v, qayta yuborish an:rs, tanlash an:t/an:go)
+    const lastAnn = async (sender = null) => {
+      const a = (await announcements.list(1, sender))[0];
+      if (!a) return null;
+      const st = await announcements.stats(a.id);
+      return { ...a, total: st.total, seen: st.read, delivered: st.delivered };
+    };
+    await send(msg(50001, '/menu'));
+    const kbHr = JSON.stringify((to(50001).filter((x) => x.payload.reply_markup && x.payload.reply_markup.keyboard).slice(-1)[0] || { payload: { reply_markup: {} } }).payload.reply_markup.keyboard || []);
+    ok('HR menyusida «📢 E\'lon»', kbHr.includes("E'lon"));
+    await send(msg(80001, "📢 E'lon"));
+    ok('oddiy hodim e\'lon bera olmaydi', lastText(80001).includes('⛔️'));
+    await send(msg(50001, "📢 E'lon"));
+    ok('e\'lon menyusi', findCb(50001, /^an:all$/) && findCb(50001, /^an:dl$/) && findCb(50001, /^an:pick$/));
+    await send(cbq(50001, 'an:all'));
+    await send(msg(50001, 'Bugun soat 15:00 da majlis bor'));
+    ok('ko\'rib chiqish + Yuborish tugmasi', lastText(50001).includes('majlis') && findCb(50001, /^an:send$/));
+    mark = sent.length;
+    await send(cbq(50001, 'an:send'));
+    const ann1 = await lastAnn();
+    ok(`hammaga bordi (${allCand.length})`, ann1.total === allCand.length && allCand.every((e) => textTo(mark, Number(e.tg_id), /E'LON/)));
+    ok("har biriga «O'qidim» tugmasi", sent.slice(mark).some((x) => Number(x.payload.chat_id) === 80001 && JSON.stringify(x.payload.reply_markup || {}).includes(`an:r:${ann1.id}`)));
+    ok("yuboruvchiga natija + «Kim o'qidi»", lastText(50001).includes("E'lon yuborildi") && findCb(50001, new RegExp(`^an:v:${ann1.id}$`)));
+    await send(cbq(80001, `an:r:${ann1.id}`));
+    await send(cbq(80001, `an:r:${ann1.id}`));
+    ok("Nasiba o'qidi (bir marta)", (await announcements.stats(ann1.id)).read === 1);
+    await send(cbq(50001, `an:v:${ann1.id}`));
+    ok("kim o'qidi: 1/N", lastText(50001).includes(`O'qidi: <b>1 / ${allCand.length}</b>`) && lastText(50001).includes('✅ Nasiba'));
+    mark = sent.length;
+    await send(cbq(50001, `an:rs:${ann1.id}`));
+    ok('tanishmaganlarga qayta yuborildi (Nasibaga emas)', textTo(mark, 99999, /E'LON/) && !textTo(mark, 80001, /E'LON/));
+
+    // bo'lim(lar)ga
+    await send(msg(50001, '/elon'));
+    await send(cbq(50001, 'an:dl'));
+    await send(cbq(50001, `an:dt:${akbar.department_id}`));
+    await send(cbq(50001, 'an:dok'));
+    await send(msg(50001, "Bo'lim yig'ilishi"));
+    mark = sent.length;
+    await send(cbq(50001, 'an:send'));
+    const deptMembers = (await employees.listByDepartment(akbar.department_id)).filter((e) => Number(e.id) !== Number(hr.id));
+    const ann2 = await lastAnn();
+    ok(`bo'limga (${deptMembers.length} kishi), boshqalarga yo'q`, ann2.total === deptMembers.length && ann2.target === 'depts' && textTo(mark, 99999, /E'LON/) && (Number(nasiba.department_id) === Number(akbar.department_id) || !textTo(mark, 80001, /E'LON/)));
+
+    // tanlab, ovozli
+    await send(msg(50001, '/elon'));
+    await send(cbq(50001, 'an:pick'));
+    await send(cbq(50001, `an:t:${akbar.id}:0`));
+    await send(cbq(50001, `an:t:${nasiba.id}:0`));
+    await send(cbq(50001, 'an:go'));
+    await send(voice(50001));
+    mark = sent.length;
+    await send(cbq(50001, 'an:send'));
+    const ann3 = await lastAnn();
+    ok('2 ta tanlanganga ovozli e\'lon', ann3.total === 2 && ann3.media_type === 'voice' && sent.slice(mark).filter((x) => x.method === 'sendVoice' && [99999, 80001].includes(Number(x.payload.chat_id))).length === 2);
+
+    // rahbar — faqat o'z bo'limi
+    const bob = await fresh(bobur);
+    if (employees.isHead(bob) && bob.department_id) {
+      await send(msg(20001, '/elon'));
+      ok('rahbarda «Bo\'limlarga» yo\'q', findCb(20001, /^an:all$/) && !findCb(20001, /^an:dl$/));
+      await send(cbq(20001, 'an:all'));
+      await send(msg(20001, 'Jamoa uchun e\'lon'));
+      await send(cbq(20001, 'an:send'));
+      const ann4 = await lastAnn(20001);
+      ok('rahbar e\'loni faqat o\'z jamoasiga', ann4 && ann4.total === (await employees.teamOf(bob)).length);
+      await send(cbq(20001, `an:v:${ann1.id}`));
+      ok('rahbar HR e\'lonini ko\'ra olmaydi', sent.slice(-1)[0].method === 'answerCallbackQuery');
+    }
+
+    // ilova
+    w = await call(50001, 'POST', '/api/announce', { to: 'emps', ids: [akbar.id], text: 'Web: ertaga dam olish' });
+    ok('ilova: tanlanganga e\'lon', w.status === 200 && w.data.total === 1 && w.data.delivered === 1);
+    const wAnn = w.data.id;
+    w = await call(50001, 'GET', `/api/announce/${wAnn}`);
+    ok('ilova: kim tanishdi', w.status === 200 && w.data.recipients.length === 1 && w.data.recipients[0].seenAt === null);
+    w = await call(50001, 'GET', '/api/announce');
+    ok('ilova: tarix', w.status === 200 && w.data.items.some((a) => a.id === wAnn));
+    w = await call(80001, 'POST', '/api/announce', { to: 'all', text: 'x' });
+    ok('ilova: oddiy hodim — 403', w.status === 403);
+    w = await call(50001, 'POST', '/api/announce', { to: 'all', text: '' });
+    ok('ilova: bo\'sh matn — 400', w.status === 400);
+    w = await call(50001, 'GET', '/api/announce/targets');
+    ok('ilova: maqsadlar (hodimlar + bo\'limlar)', w.status === 200 && w.data.people.length === allCand.length && Array.isArray(w.data.departments));
+
+    // --- 6. Oyliklar
+    await send(cbq(70001, 'sal:list'));
+    ok('Panel → Oyliklar', lastText(70001).includes('OYLIKLAR') && findCb(70001, new RegExp(`^sal:s:${nasiba.id}$`)));
+    ok('Oyliklarda Odilxon yo\'q', !lastText(70001).includes('Odilxon'));
+    await send(cbq(70001, `sal:s:${nasiba.id}`));
+    await send(msg(70001, '3 500 000'));
+    ok('oylik yozildi va ro\'yxatga qaytdi', Number((await fresh(nasiba)).salary) === 3500000 && lastText(70001).includes('OYLIKLAR'));
+    await send(cbq(70001, `sal:f:${nasiba.id}`));
+    await send(msg(70001, '1000000'));
+    ok('KPI summasi yozildi', Number((await fresh(nasiba)).bonus_fund) === 1000000);
+    await send(cbq(50001, 'sal:list'));
+    await send(cbq(50001, `sal:s:${nasiba.id}`));
+    ok('HR oylikni o\'zgartira olmaydi', session.get(50001).step !== 'edit_salary');
+    session.clear(50001);
+  }
+
+  console.log('\n— 32. Qaytarilgan topshiriqqa javob; «💬 Savol-javob» chati —');
+  {
+    const chatsS = require('../src/services/chats');
+    const textTo = (from, chatId, re) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && re.test(x.payload.text || x.payload.caption || ''));
+    const kbTo = (from, chatId, re) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && re.test(JSON.stringify(x.payload.reply_markup || {})));
+    const hr = await employees.byTgId(50001);
+    session.clear(99999); session.clear(50001); session.clear(80001);
+
+    // --- 1. qaytarilgan topshiriqqa javob
+    const rt = await tasks.create({ employeeId: akbar.id, title: 'Narxlar ro\'yxati', dueDate: bugun, createdBy: 50001, source: 'head' });
+    await send(cbq(99999, `done:${rt.id}`));
+    await send(photo(99999, 'tayyor'));
+    await send(cbq(50001, `rv:back:${rt.id}`));
+    mark = sent.length;
+    await send(msg(50001, 'Narxlar eski'));
+    await send(cbq(50001, `rv:fd:${rt.id}:none`));
+    ok('qaytarildi — hodimga «💬 Javob yozish» tugmasi', (await tasks.byId(rt.id)).status === 'active' && kbTo(mark, 99999, new RegExp(`tr:${rt.id}"`)));
+    await send(cbq(99999, `tr:${rt.id}`));
+    ok('hodim javob yozish bosqichida, kimga — HR', session.get(99999).step === 'task_reply' && lastText(99999).includes(hr.full_name));
+    mark = sent.length;
+    await send(msg(99999, 'Narxlar bugungi, 1-oktabr prays-varag\'idan'));
+    ok('javob qaytargan HR ga keldi (lichka havolasi + tugma)', textTo(mark, 50001, /prays-varag/) && textTo(mark, 50001, /tg:\/\/user\?id=99999/) && kbTo(mark, 50001, new RegExp(`tr:${rt.id}"`)));
+    ok('javob bazada', (await tasks.replies(rt.id)).length === 1 && session.get(99999).step !== 'task_reply');
+    await send(cbq(50001, `tr:${rt.id}`));
+    mark = sent.length;
+    await send(msg(50001, 'Yaxshi, yangi faylni yuboring'));
+    ok('HR javobi hodimga keldi', textTo(mark, 99999, /yangi faylni/));
+    await send(cbq(99999, `tr:${rt.id}`));
+    mark = sent.length;
+    await send(voice(99999));
+    ok('ovozli javob HR ga', sent.slice(mark).some((x) => x.method === 'sendVoice' && Number(x.payload.chat_id) === 50001) && (await tasks.replies(rt.id)).length === 3);
+    mark = sent.length;
+    await send(cbq(80001, `tr:${rt.id}`));
+    ok('begona hodim yoza olmaydi', session.get(80001).step !== 'task_reply' && sent.slice(mark).some((x) => x.method === 'answerCallbackQuery' && /⛔️/.test(x.payload.text || '')));
+
+    // --- 2. menyu
+    await send(msg(99999, '/menu'));
+    const kbA = JSON.stringify((to(99999).filter((x) => x.payload.reply_markup && x.payload.reply_markup.keyboard).slice(-1)[0] || { payload: { reply_markup: {} } }).payload.reply_markup.keyboard || []);
+    ok('hodim menyusida «💬 Savol-javob» yo\'q, holat tugmalari bor', !kbA.includes('Savol-javob') && kbA.includes('⏳ Faol') && kbA.includes('🕓 Kutilmoqda') && kbA.includes('✅ Bajarilgan'));
+
+    // --- 3. bitta hodim bilan (HR → Akbar)
+    await send(msg(50001, '💬 Savol-javob'));
+    ok('chat menyusi (bitta, bir nechta, bo\'lim, hamma)', findCb(50001, /^qa:one$/) && findCb(50001, /^qa:pick$/) && findCb(50001, /^qa:dl$/) && findCb(50001, /^qa:all$/));
+    await send(cbq(50001, 'qa:one'));
+    await send(cbq(50001, `qa:o:${akbar.id}`));
+    ok('boshlaganda lichka havolasi ko\'rinadi', to(50001).slice(-3).some((x) => /tg:\/\/user\?id=99999/.test(x.payload.text || '')) && session.get(50001).step === 'chat_text');
+    mark = sent.length;
+    await send(msg(50001, 'Ertaga ofisga kela olasizmi?'));
+    const c1 = (await chatsS.listFor(50001, 1))[0];
+    ok('savol Akbarga keldi (Javob yozish tugmasi, HR lichkasi)', c1 && textTo(mark, 99999, /kela olasizmi/) && textTo(mark, 99999, /tg:\/\/user\?id=50001/) && kbTo(mark, 99999, new RegExp(`qa:r:${c1.id}:\\d+`)));
+    await send(cbq(99999, findCb(99999, new RegExp(`^qa:r:${c1.id}:\\d+$`))));
+    mark = sent.length;
+    await send(msg(99999, 'Ha, 9:00 da kelaman'));
+    ok('Akbar javobi HR ga keldi', textTo(mark, 50001, /9:00 da kelaman/) && !textTo(mark, 80001, /kelaman/));
+    await send(cbq(99999, `qa:v:${c1.id}`));
+    ok('chat ko\'rinishi — ikkala xabar', lastText(99999).includes('kela olasizmi') && lastText(99999).includes('kelaman'));
+    mark = sent.length;
+    await send(cbq(80001, `qa:v:${c1.id}`));
+    ok('begona chatni ko\'ra olmaydi', countSince(mark, 80001, 'editMessageText') === 0 && countSince(mark, 80001, 'sendMessage') === 0);
+
+    // --- 4. bir nechta, javoblar faqat boshlovchiga
+    await send(msg(50001, '/chat'));
+    await send(cbq(50001, 'qa:pick'));
+    await send(cbq(50001, `qp:t:${akbar.id}`));
+    await send(cbq(50001, `qp:t:${nasiba.id}`));
+    await send(cbq(50001, 'qp:ok'));
+    ok('rejim so\'raladi', findCb(50001, /^qa:m:me$/) && findCb(50001, /^qa:m:all$/));
+    await send(cbq(50001, 'qa:m:me'));
+    mark = sent.length;
+    await send(msg(50001, 'Hisobotlar tayyormi?'));
+    const c2 = (await chatsS.listFor(50001, 1))[0];
+    ok('ikkalasiga bordi, rejim — starter', c2.mode === 'starter' && textTo(mark, 99999, /tayyormi/) && textTo(mark, 80001, /tayyormi/));
+    await send(cbq(80001, findCb(80001, new RegExp(`^qa:r:${c2.id}:\\d+$`))));
+    mark = sent.length;
+    await send(msg(80001, 'Menda tayyor'));
+    ok('Nasiba javobi faqat HR ga (Akbarga emas)', textTo(mark, 50001, /Menda tayyor/) && !textTo(mark, 99999, /Menda tayyor/));
+    ok('HR da «📣 Hammaga yozish» tugmasi', kbTo(mark, 50001, new RegExp(`qa:r:${c2.id}:0`)));
+    await send(cbq(50001, findCb(50001, new RegExp(`^qa:r:${c2.id}:[1-9]\\d*$`))));
+    mark = sent.length;
+    await send(msg(50001, 'Rahmat, Nasiba'));
+    ok('HR javobi faqat Nasibaga', textTo(mark, 80001, /Rahmat, Nasiba/) && !textTo(mark, 99999, /Rahmat, Nasiba/));
+    await send(cbq(50001, `qa:r:${c2.id}:0`));
+    mark = sent.length;
+    await send(msg(50001, 'Hammaga: ertaga 10:00 gacha'));
+    ok('«Hammaga» — ikkalasiga', textTo(mark, 80001, /10:00 gacha/) && textTo(mark, 99999, /10:00 gacha/));
+    await send(cbq(99999, `qa:v:${c2.id}`));
+    ok('starter rejimida Akbar Nasibaning javobini ko\'rmaydi', !lastText(99999).includes('Menda tayyor') && lastText(99999).includes('10:00 gacha'));
+
+    // --- 5. guruh chat (hamma hammani ko'radi)
+    await send(msg(50001, '/chat'));
+    await send(cbq(50001, 'qa:pick'));
+    await send(cbq(50001, `qp:t:${akbar.id}`));
+    await send(cbq(50001, `qp:t:${nasiba.id}`));
+    await send(cbq(50001, 'qp:ok'));
+    await send(cbq(50001, 'qa:m:all'));
+    await send(msg(50001, 'Guruh savoli'));
+    const c3 = (await chatsS.listFor(50001, 1))[0];
+    await send(cbq(99999, findCb(99999, new RegExp(`^qa:r:${c3.id}:\\d+$`))));
+    mark = sent.length;
+    await send(msg(99999, 'Akbar fikri'));
+    ok('guruhda javob HR va Nasibaga', c3.mode === 'all' && textTo(mark, 50001, /Akbar fikri/) && textTo(mark, 80001, /Akbar fikri/));
+
+    // --- 6. bo'lim bilan, ovozli
+    await send(msg(50001, '/chat'));
+    await send(cbq(50001, 'qa:dl'));
+    await send(cbq(50001, `qa:dt:${akbar.department_id}`));
+    await send(cbq(50001, 'qa:dok'));
+    const deptN = (await employees.listByDepartment(akbar.department_id)).filter((e) => Number(e.id) !== Number(hr.id)).length;
+    if (deptN > 1) await send(cbq(50001, 'qa:m:all'));
+    mark = sent.length;
+    await send(voice(50001));
+    const c4 = (await chatsS.listFor(50001, 1))[0];
+    ok(`bo'lim bilan ovozli chat (${deptN} kishi)`, c4.target.startsWith("Bo'lim") && (await chatsS.members(c4.id)).length === deptN && sent.slice(mark).some((x) => x.method === 'sendVoice' && Number(x.payload.chat_id) === 99999));
+
+    // --- 7. hodim — kim bilan gaplasha oladi
+    await send(msg(99999, '/chat'));
+    ok('hodimda «bo\'lim/hamma» yo\'q', findCb(99999, /^qa:one$/) && !findCb(99999, /^qa:dl$/));
+    await send(cbq(99999, 'qa:one'));
+    ok('hodim: HR va boshliq bilan gaplasha oladi', findCb(99999, new RegExp(`^qa:o:${hr.id}$`)) && findCb(99999, new RegExp(`^qa:o:${odil.id}$`)));
+    await send(cbq(99999, `qa:o:${odil.id}`));
+    mark = sent.length;
+    await send(msg(99999, 'Odilxon aka, savolim bor'));
+    ok('hodim → boshliqqa savol', textTo(mark, 70001, /savolim bor/));
+    await send(cbq(99999, 'qa:h'));
+    ok('«Chatlarim» ro\'yxati', findCb(99999, new RegExp(`^qa:v:${c1.id}$`)) || lastText(99999).includes('Chatlarim'));
+
+    // --- 8. ilova (Web App API)
+    w = await call(99999, 'GET', '/api/chats/targets');
+    ok('ilova: hodim maqsadlari — HR va boshliq, «hamma» yo\'q', w.status === 200 && w.data.people.some((x) => x.id === hr.id) && w.data.people.some((x) => x.id === odil.id) && !w.data.canAll && !w.data.canDepts);
+    w = await call(99999, 'POST', '/api/chats', { to: 'all', text: 'x' });
+    ok('ilova: hodim «hamma bilan» — 403', w.status === 403);
+    w = await call(99999, 'POST', '/api/chats', { to: 'emps', ids: [nasiba.id], text: 'x' });
+    ok('ilova: hodim boshqa hodim bilan — 403', w.status === 403 || (Number(nasiba.department_id) === Number(akbar.department_id) && nasiba.role === 'head'));
+    mark = sent.length;
+    w = await call(50001, 'POST', '/api/chats', { to: 'emps', ids: [akbar.id, nasiba.id], mode: 'starter', text: 'Ilovadan savol' });
+    const wc = w.data && w.data.id;
+    ok('ilova: HR 2 kishi bilan chat (starter)', w.status === 200 && w.data.total === 2 && textTo(mark, 99999, /Ilovadan savol/) && textTo(mark, 80001, /Ilovadan savol/));
+    w = await call(80001, 'GET', `/api/chats/${wc}`);
+    ok('ilova: chat ko\'rinishi (ishtirokchilar, xabar)', w.status === 200 && w.data.members.length === 2 && w.data.messages.length === 1 && w.data.starter.tgId === 50001);
+    mark = sent.length;
+    w = await call(80001, 'POST', `/api/chats/${wc}/messages`, { text: 'Ilovadan javob' });
+    ok('ilova: Nasiba javobi faqat HR ga', w.status === 200 && w.data.total === 1 && textTo(mark, 50001, /Ilovadan javob/) && !textTo(mark, 99999, /Ilovadan javob/));
+    const nMsg = w.data.message.id;
+    w = await call(99999, 'GET', `/api/chats/${wc}`);
+    ok('ilova: Akbar Nasibaning javobini ko\'rmaydi', w.status === 200 && !w.data.messages.some((x) => x.text === 'Ilovadan javob'));
+    mark = sent.length;
+    w = await call(50001, 'POST', `/api/chats/${wc}/messages`, { text: 'Shaxsan Nasibaga', replyTo: nMsg });
+    ok('ilova: HR shaxsan javobi faqat Nasibaga', w.status === 200 && textTo(mark, 80001, /Shaxsan Nasibaga/) && !textTo(mark, 99999, /Shaxsan Nasibaga/));
+    w = await call(99999, 'POST', `/api/chats/${wc}/messages`, { text: 'x', replyTo: nMsg });
+    ok('ilova: ko\'rinmaydigan xabarga javob — 404', w.status === 404);
+    w = await call(20001, 'GET', `/api/chats/${wc}`);
+    ok('ilova: begona chat — 403', w.status === 403);
+    w = await call(50001, 'GET', '/api/chats');
+    ok('ilova: chatlarim', w.status === 200 && w.data.items.some((x) => x.id === wc && x.mine));
+    mark = sent.length;
+    w = await call(50001, 'POST', '/api/contact', { tgId: 99999 });
+    ok('ilova: lichka havolasi botga', w.status === 200 && textTo(mark, 50001, /tg:\/\/user\?id=99999/));
+    w = await call(99999, 'POST', '/api/contact', { tgId: 80001 });
+    ok('ilova: begona odam lichkasi — 403', w.status === 403 || nasiba.role === 'head');
+    w = await call(99999, 'POST', '/api/contact', { tgId: 80001, chatId: wc });
+    ok('ilova: chatdoshi lichkasi — mumkin', w.status === 200);
+    // topshiriq yozishmasi
+    w = await call(99999, 'GET', `/api/tasks/${rt.id}/replies`);
+    ok('ilova: topshiriq yozishmasi (3 ta), kimga — HR', w.status === 200 && w.data.replies.length === 3 && w.data.canWrite && w.data.to.tgId === 50001);
+    mark = sent.length;
+    w = await call(99999, 'POST', `/api/tasks/${rt.id}/replies`, { text: 'Ilovadan e\'tiroz' });
+    ok('ilova: javob HR ga bordi', w.status === 200 && w.data.delivered && textTo(mark, 50001, /Ilovadan e'tiroz/));
+    w = await call(80001, 'POST', `/api/tasks/${rt.id}/replies`, { text: 'x' });
+    ok('ilova: begona — 403', w.status === 403);
+    w = await call(99999, 'GET', '/api/tasks/my');
+    ok('ilova: topshiriqlarimda yozishmalar soni', w.status === 200 && w.data.open.some((x) => x.id === rt.id && x.replies === 4));
+    session.clear(99999); session.clear(50001); session.clear(80001);
+  }
+
+  console.log('\n— 33. Boshlanish soati, holat tugmalari, «Xo\'p, tushundim», HR dan yashirish, e\'lon bo\'limsizlarga —');
+  {
+    const flowsS = require('../src/services/flows');
+    const textTo = (from, chatId, re) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && re.test(x.payload.text || x.payload.caption || ''));
+    const kbTo = (from, chatId, re) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && re.test(JSON.stringify(x.payload.reply_markup || {})));
+    for (const id of [99999, 50001, 70001, 20001, 80001]) session.clear(id);
+
+    // --- 1. boshliq topshiriq beradi: ertaga 09:00
+    await send(msg(70001, '📤 Topshiriq berish'));
+    await send(cbq(70001, `as:emp:${akbar.id}`));
+    await send(msg(70001, 'Mijozlar bazasini tozalash'));
+    await send(cbq(70001, 'as:due:1'));
+    ok('muddatdan keyin soat so\'raladi (09:00, soatsiz)', session.get(70001).step === 'assign_time' && findCb(70001, /^as:tm:0900$/) && findCb(70001, /^as:tm:-$/));
+    mark = sent.length;
+    await send(cbq(70001, 'as:tm:0900'));
+    const st = await db.one("SELECT * FROM tasks WHERE title = 'Mijozlar bazasini tozalash'");
+    ok('topshiriq ertaga 09:00 ga qo\'yildi', st && st.start_time === '09:00' && st.due_date === time.addDays(bugun, 1) && !st.start_notified_at);
+    ok('hodimga xabarda soat ko\'rsatildi', textTo(mark, 99999, /09:00/));
+    mark = sent.length;
+    let n = await flowsS.notifyTaskStarts({ telegram: bot.telegram });
+    ok('bugun emas — hali xabar yo\'q', n === 0 || !textTo(mark, 99999, /Mijozlar bazasini/));
+    await db.query('UPDATE tasks SET due_date = $1 WHERE id = $2', [bugun, st.id]);
+    mark = sent.length;
+    n = await flowsS.notifyTaskStarts({ telegram: bot.telegram }, time.now().set({ hour: 8, minute: 59 }));
+    ok('08:59 da — hali xabar yo\'q', !textTo(mark, 99999, /Mijozlar bazasini/));
+    mark = sent.length;
+    n = await flowsS.notifyTaskStarts({ telegram: bot.telegram }, time.now().set({ hour: 9, minute: 0 }));
+    ok('aynan 09:00 da hodimga «hozir bajaring» + Bajardim tugmasi', textTo(mark, 99999, /Soat 09:00 — vaqti keldi/) && textTo(mark, 99999, /Mijozlar bazasini/) && kbTo(mark, 99999, new RegExp(`done:${st.id}"`)));
+    mark = sent.length;
+    await flowsS.notifyTaskStarts({ telegram: bot.telegram }, time.now().set({ hour: 9, minute: 5 }));
+    ok('ikkinchi marta yuborilmaydi', !textTo(mark, 99999, /Mijozlar bazasini/));
+    // boshliqning o'z missiyasi — soat bilan
+    await send(msg(70001, "➕ O'zimga vazifa"));
+    await send(msg(70001, 'Investor bilan uchrashuv'));
+    await send(cbq(70001, 'st:due:1'));
+    await send(cbq(70001, 'st:tm:1000'));
+    ok('boshliq o\'ziga ertaga 10:00 missiya', (await db.one("SELECT start_time FROM tasks WHERE title = 'Investor bilan uchrashuv' ORDER BY id DESC LIMIT 1")).start_time === '10:00');
+    // ilova: soat bilan
+    w = await call(70001, 'POST', '/api/tasks/assign', { employeeIds: [akbar.id], text: 'Ilova: soatli', due: time.addDays(bugun, 2), time: '11:30' });
+    ok('ilova: topshiriq soat bilan', w.status === 200 && w.data.startTime === '11:30' && (await db.one("SELECT start_time FROM tasks WHERE title = 'Ilova: soatli'")).start_time === '11:30');
+    w = await call(70001, 'POST', '/api/tasks/assign', { employeeIds: [akbar.id], text: 'x', due: time.addDays(bugun, 2), time: '25:00' });
+    ok('ilova: noto\'g\'ri soat — 400', w.status === 400);
+    w = await call(99999, 'POST', '/api/tasks/self', { text: 'Ilova: o\'zimga soatli', due: time.addDays(bugun, 1), time: '08:00' });
+    ok('ilova: o\'zimga soatli vazifa', w.status === 200 && w.data.created[0].startTime === '08:00');
+
+    // --- 2. holat tugmalari
+    await send(msg(99999, '⏳ Faol'));
+    let tx = lastText(99999);
+    ok('hodim: «⏳ Faol» — o\'z topshiriqlari, yozilgan sana va kim bergan', tx.includes('FAOL') && tx.includes('Mijozlar bazasini') && tx.includes('yozilgan') && tx.includes('Odilxon') && findCb(99999, /^sk:r:t:0$/));
+    await send(msg(99999, '🕓 Kutilmoqda'));
+    ok('hodim: «🕓 Kutilmoqda»', lastText(99999).includes('KUTILMOQDA'));
+    await send(msg(99999, '✅ Bajarilgan'));
+    ok('hodim: «✅ Bajarilgan»', lastText(99999).includes('BAJARILGAN'));
+    await send(msg(70001, '⏳ Faol'));
+    tx = lastText(70001);
+    ok('boshliq: avval hodimlar ro\'yxati (ism + soni), vazifa matnlari yo\'q', tx.includes('Hamma hodimlar') && /<b>Akbar Karimov<\/b> — \d+ ta/.test(tx) && !tx.includes('Mijozlar bazasini') && findCb(70001, new RegExp(`^sk:a:e${akbar.id}:0$`)));
+    await send(cbq(70001, `sk:a:e${akbar.id}:0`));
+    tx = lastText(70001);
+    ok('hodimni bosdi — faqat uning vazifalari', tx.includes('Akbar Karimov') && tx.includes('Mijozlar bazasini') && !tx.includes('Hodim vazifasi') && findCb(70001, new RegExp(`^sk:c:a:${akbar.id}:${st.id}$`)) && findCb(70001, /^sk:a:t:0$/));
+    await send(cbq(70001, `sk:c:a:${akbar.id}:${st.id}`));
+    ok('vazifa kartochkasi, orqaga — o\'sha hodimga', lastText(70001).includes('Mijozlar bazasini') && lastText(70001).includes('Kim bergan') && findCb(70001, new RegExp(`^sk:a:e${akbar.id}:0$`)));
+    w = await call(70001, 'GET', `/api/tasks/status?kind=active&emp=${akbar.id}`);
+    ok('ilova: hodim bo\'yicha holat', w.status === 200 && w.data.empName === 'Akbar Karimov' && w.data.tasks.length > 0 && w.data.tasks.every((t) => t.employee.id === Number(akbar.id)));
+    await send(cbq(70001, 'sk:a:m:0'));
+    ok('boshliq: «faqat meniki»', lastText(70001).includes('Meniki') && lastText(70001).includes('Investor bilan uchrashuv') && !lastText(70001).includes('Mijozlar bazasini'));
+    await send(msg(50001, '⏳ Faol'));
+    ok('HR: boshliq bergan topshiriq ko\'rinmaydi', lastText(50001).includes('FAOL') && !lastText(50001).includes('Mijozlar bazasini') && !lastText(50001).includes('Investor bilan'));
+    await send(msg(20001, '⏳ Faol'));
+    ok('rahbar: o\'zi va bo\'limi', lastText(20001).includes("Men va bo'limim"));
+    w = await call(99999, 'GET', '/api/tasks/status?kind=active');
+    ok('ilova: holat (hodim)', w.status === 200 && w.data.mine && w.data.tasks.some((t) => t.title === 'Mijozlar bazasini tozalash' && t.startTime === '09:00') && typeof w.data.counts.review === 'number');
+    w = await call(50001, 'GET', '/api/tasks/status?kind=active');
+    ok('ilova: HR holat ro\'yxatida boshliq bergani yo\'q', w.status === 200 && !w.data.mine && !w.data.tasks.some((t) => t.title === 'Mijozlar bazasini tozalash'));
+    w = await call(70001, 'GET', '/api/me');
+    ok('ilova: bosh sahifa hisoblagichlari (faol/kutilmoqda/bajarilgan)', w.status === 200 && w.data.counts.status && w.data.counts.status.active >= 1);
+
+    // --- 3. HR boshliq topshirig'ini ko'rmaydi (jurnal kartochkasi, media, tahrir)
+    await send(cbq(50001, `tj:t:${st.id}`));
+    ok('HR: kartochka ochilmaydi', !lastText(50001).includes('Mijozlar bazasini'));
+    w = await call(50001, 'PATCH', `/api/tasks/${st.id}`, { title: 'o\'zgardi' });
+    ok('ilova: HR boshliq topshirig\'ini tahrirlay olmaydi', w.status === 403);
+    w = await call(50001, 'GET', `/api/employees/${akbar.id}`);
+    ok('ilova: HR hodim kartochkasida boshliq topshirig\'i yo\'q', w.status === 200 && !w.data.open.some((t) => t.id === Number(st.id)));
+    // boshliq sozlamasi: HR boshliq topshiriqlarini ko'rsinmi
+    await send(msg(70001, '⚙️ Panel'));
+    ok('Panelda «👁 HR boshliq topshiriqlarini: ko\'rmaydi»', findCb(70001, /^adm:hbt:1$/));
+    await send(cbq(50001, 'adm:hbt:1'));
+    ok('HR o\'zi yoqa olmaydi', !(await require('../src/services/org').hrSeesBossTasks()));
+    await send(cbq(70001, 'adm:hbt:1'));
+    ok('boshliq yoqdi', await require('../src/services/org').hrSeesBossTasks());
+    // boshliq keldi-ketdini ko'radimi (standart - yo'q)
+    ok('Panelda boshliq keldi-ketdi tugmasi, standart o\'chiq', findCb(70001, /^adm:bat:1$/) && !(await require('../src/services/org').bossSeesAttendance()));
+    ok('o\'chiq: keldi-ketdi va kelmayman oluvchilarida boshliq yo\'q', !(await employees.attendanceWatchersOf(akbar)).includes(70001) && !(await require('../src/services/org').absenceRecipientsOf(akbar)).includes(70001));
+    await send(cbq(50001, 'adm:bat:1'));
+    ok('HR boshliq sozlamasini yoqa olmaydi', !(await require('../src/services/org').bossSeesAttendance()));
+    await send(cbq(70001, 'adm:bat:1'));
+    ok('boshliq yoqdi - keldi-ketdi va kelmayman unga ham', (await employees.attendanceWatchersOf(akbar)).includes(70001) && (await require('../src/services/org').absenceRecipientsOf(akbar)).includes(70001));
+    w = await call(70001, 'GET', '/api/settings');
+    ok('ilova: sozlamalarda bossAttendance', w.status === 200 && w.data.bossAttendance === true);
+    w = await call(50001, 'POST', '/api/settings/boss-attendance', { on: true });
+    ok('ilova: HR boshliq sozlamasini o\'zgartira olmaydi', w.status === 403);
+    w = await call(70001, 'POST', '/api/settings/boss-attendance', { on: false });
+    ok('ilova: boshliq o\'chirdi', w.status === 200 && w.data.on === false && !(await employees.attendanceWatchersOf(akbar)).includes(70001));
+    await send(msg(50001, '⏳ Faol'));
+    await send(cbq(50001, `sk:a:e${akbar.id}:0`));
+    ok('yoqilgach HR boshliq bergan topshiriqni ko\'radi', lastText(50001).includes('Mijozlar bazasini'));
+    w = await call(50001, 'GET', `/api/employees/${akbar.id}`);
+    ok('ilova: yoqilgach HR kartochkada ham ko\'radi', w.status === 200 && w.data.open.some((t) => t.id === Number(st.id)));
+    const xl = await excel.buildMonthly(time.month(), { viewer: await require('../src/services/access').resolve(50001) });
+    w = await call(70001, 'POST', '/api/settings/hr-boss-tasks', { on: false });
+    ok('ilova: boshliq o\'chirdi', w.status === 200 && w.data.on === false);
+    w = await call(50001, 'POST', '/api/settings/hr-boss-tasks', { on: true });
+    ok('ilova: HR sozlamani o\'zgartira olmaydi', w.status === 403);
+    await send(cbq(50001, `sk:a:e${akbar.id}:0`));
+    ok('o\'chirilgach yana ko\'rinmaydi', !lastText(50001).includes('Mijozlar bazasini'));
+    const xlHidden = await excel.buildMonthly(time.month(), { viewer: await require('../src/services/access').resolve(50001) });
+    const xlRows = async (file) => {
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(file.buffer);
+      const ws = wb.worksheets.find((x) => /Topshiriq/.test(x.name));
+      let found = false;
+      ws.eachRow((r) => { if (JSON.stringify(r.values).includes('Mijozlar bazasini')) found = true; });
+      return found;
+    };
+    ok('Excel: HR ga — sozlamaga qarab (yoqilgan: bor, o\'chiq: yo\'q)', (await xlRows(xl)) && !(await xlRows(xlHidden)));
+
+    await send(cbq(70001, `emp:tasks:${akbar.id}`));
+    ok('boshliq: hodim kartochkasi → topshiriqlari (faol, kutilmoqda, bajarilgan, yozilgan sana)', lastText(70001).includes('Faol') && lastText(70001).includes('Kutilmoqda') && lastText(70001).includes('Mijozlar bazasini') && lastText(70001).includes('yozilgan'));
+
+    // --- 4. tekshiruv: kamchilik → «Xo'p, tushundim» / o'z javobi
+    const rv = await tasks.create({ employeeId: akbar.id, title: 'Hisobot jadvali', dueDate: bugun, createdBy: 20001, source: 'head' });
+    await send(cbq(99999, `done:${rv.id}`));
+    await send(photo(99999, 'tayyor'));
+    ok('tekshiruv tugmasi — «Kamchilik bor»', findCb(20001, new RegExp(`^rv:back:${rv.id}$`)));
+    await send(cbq(20001, `rv:back:${rv.id}`));
+    mark = sent.length;
+    await send(msg(20001, 'Jami ustuni yo\'q'));
+    await send(cbq(20001, `rv:fd:${rv.id}:0`));
+    ok('hodimga kamchiliklar + «Xo\'p, tushundim» va «O\'z javobim»', textTo(mark, 99999, /kamchiliklar bor/) && kbTo(mark, 99999, new RegExp(`tr:ok:${rv.id}"`)) && kbTo(mark, 99999, new RegExp(`tr:${rv.id}"`)));
+    mark = sent.length;
+    await send(cbq(99999, `tr:ok:${rv.id}`));
+    ok('«Xo\'p, tushundim» rahbarga bordi va bazada', textTo(mark, 20001, /Xo'p, tushundim/) && (await tasks.replies(rv.id)).some((r) => /Xo'p/.test(r.body || '')));
+    await send(cbq(20001, `tr:${rv.id}`));
+    mark = sent.length;
+    await send(msg(20001, 'Ertagacha tuzating'));
+    ok('rahbar javobi hodimga — yana ikkala tugma bilan', textTo(mark, 99999, /Ertagacha/) && kbTo(mark, 99999, new RegExp(`tr:ok:${rv.id}"`)));
+    await send(cbq(99999, `tr:${rv.id}`));
+    mark = sent.length;
+    await send(msg(99999, 'Jami ustuni hisob-fakturada yo\'q edi'));
+    ok('hodimning o\'z javobi rahbarga', textTo(mark, 20001, /hisob-fakturada/));
+    mark = sent.length;
+    await send(cbq(80001, `tr:ok:${rv.id}`));
+    ok('begona «Xo\'p» bosa olmaydi', !textTo(mark, 20001, /Xo'p/));
+    w = await call(20001, 'POST', `/api/tasks/${rv.id}/return`, {});
+    ok('ilova: kamchiliksiz qaytarish — 400/409', w.status === 400 || w.status === 409);
+
+    // --- 4b. o'chirish (bekor qilish): tekshiruvda qolib ketgan boshliq missiyasi, rahbar — tekshiruvdagi ish
+    const stuck = await tasks.create({ employeeId: odil.id, title: 'Tinchmi', dueDate: bugun, createdBy: 70001, source: 'self' });
+    await db.query("UPDATE tasks SET status = 'done', done_at = $1 WHERE id = $2", [time.stamp(), stuck.id]);
+    await send(cbq(70001, `tj:t:${stuck.id}`));
+    ok('jurnal kartochkasida «🗑 O\'chirish»', findCb(70001, new RegExp(`^tk:del:${stuck.id}$`)));
+    await send(cbq(70001, `tk:del:${stuck.id}`));
+    ok('o\'chirish tasdig\'i so\'raladi', findCb(70001, new RegExp(`^tk:delok:${stuck.id}$`)));
+    await send(cbq(70001, `tk:delok:${stuck.id}`));
+    const stuckT = await tasks.byId(stuck.id);
+    ok('boshliq o\'z missiyasini o\'chirdi — bazada «bekor», tekshiruvdan chiqdi', stuckT.status === 'cancelled' && Number(stuckT.cancelled_by) === 70001 && !(await tasks.pendingReview()).some((t) => t.id === stuck.id));
+    await send(msg(70001, '🕓 Kutilmoqda'));
+    ok('«Kutilmoqda» dan ham chiqdi', !lastText(70001).includes('Tinchmi'));
+    const own = await tasks.create({ employeeId: akbar.id, title: 'Hodim o\'zi yozgan', dueDate: bugun, createdBy: 99999, source: 'self' });
+    mark = sent.length;
+    await send(cbq(99999, `tk:delok:${own.id}`));
+    ok('hodim o\'z vazifasini o\'chira olmaydi', (await tasks.byId(own.id)).status === 'active');
+    const rvd = await tasks.create({ employeeId: akbar.id, title: 'Rahbar o\'chiradigan', dueDate: bugun, createdBy: 20001, source: 'head' });
+    await send(cbq(99999, `done:${rvd.id}`));
+    await send(photo(99999, 'tayyor'));
+    await send(cbq(20001, `rv:view:${rvd.id}`));
+    ok('rahbar tekshiruvida «🗑 O\'chirish»', findCb(20001, new RegExp(`^tk:del:${rvd.id}$`)));
+    await send(cbq(20001, `tk:delok:${rvd.id}`));
+    ok('rahbar tekshiruvdagi ishni o\'chirdi', (await tasks.byId(rvd.id)).status === 'cancelled');
+    const apiDel = await tasks.create({ employeeId: odil.id, title: 'Ilova: o\'chirish', dueDate: bugun, createdBy: 70001, source: 'self' });
+    w = await call(70001, 'DELETE', `/api/tasks/${apiDel.id}`);
+    ok('ilova: boshliq o\'z missiyasini o\'chiradi', w.status === 200 && (await tasks.byId(apiDel.id)).status === 'cancelled');
+    w = await call(99999, 'DELETE', `/api/tasks/${own.id}`);
+    ok('ilova: hodim o\'zinikini o\'chira olmaydi', w.status === 403);
+
+    // --- 5. e'lon: bo'limsizlar
+    await send(msg(70001, "📢 E'lon"));
+    await send(cbq(70001, 'an:dl'));
+    const loose = (await employees.listActive()).filter((e) => !e.department_id && Number(e.tg_id) !== 70001);
+    if (loose.length) {
+      ok('bo\'limlar ro\'yxatida «Bo\'limsizlar» va rahbarlar', findCb(70001, /^an:dt:0$/) && lastText(70001).includes('rahbar'));
+      await send(cbq(70001, 'an:dt:0'));
+      await send(cbq(70001, 'an:dok'));
+      ok('bo\'limsizlarga e\'lon matni so\'raladi', session.get(70001).step === 'announce_text' && session.get(70001).ann.ids.length === loose.length);
+    } else ok('bo\'limsiz hodim yo\'q — variant ko\'rinmaydi', !findCb(70001, /^an:dt:0$/));
+    for (const id of [99999, 50001, 70001, 20001, 80001]) session.clear(id);
+  }
+
+  // =========================================================================
+  console.log('\n— 34. Audit (3-okt): guruhda buyruqlar, bosqich muddati, menyu bosqichni tugatadi —');
+  {
+    let mark = sent.length;
+    await send(groupMsg(1000, -100777, '/oyliklar'));
+    await send(groupMsg(99999, -100777, '/oylik'));
+    await send(groupMsg(99999, -100777, '/kpi@bayoma_test_bot'));
+    ok('guruhda /oylik, /oyliklar, /kpi — guruhga hech narsa chiqmaydi', countSince(mark, -100777) === 0);
+    mark = sent.length;
+    await send(groupMsg(1000, -100777, '/id@bayoma_test_bot'));
+    ok('guruhda /id ishlaydi', countSince(mark, -100777) === 1);
+
+    session.set(99999, { step: 'late_reason' });
+    ok('yangi bosqichga vaqt yoziladi', Number.isFinite(session.get(99999).stepAt));
+    session.get(99999).stepAt -= session.STEP_TTL_MS + 1000;
+    ok('30 daqiqadan eski bosqich tugaydi', !session.get(99999).step);
+
+    session.set(99999, { step: 'late_reason' });
+    await send(msg(99999, '📋 Topshiriqlarim'));
+    ok('menyu tugmasi yarim qolgan bosqichni tugatadi', !session.get(99999).step);
+    session.set(99999, { step: 'late_reason' });
+    await send(msg(99999, ui.BTN.cancel));
+    ok('«Bekor qilish» odatdagidek ishlaydi', !session.get(99999).step);
+
+    ok('Telegram vaqti → mahalliy stamp', time.stampOf(Math.floor(Date.parse('2026-10-03T03:55:00Z') / 1000)).startsWith('2026-10-03T08:55'));
+  }
+
+  // =========================================================================
+  console.log('\n— 35. Audit (3-okt): KPI sharti — yakshanba, sababli kechikish, kutilayotgan sabab, qaytarishda kechikish —');
+  {
+    const textTo = (from, chatId, re) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && re.test(x.payload.text || x.payload.caption || ''));
+    const pm = time.prevMonth(month);
+    const { from: pf, to: pt } = time.monthRange(pm);
+    const days = [];
+    for (let d = pf; d <= pt; d = time.addDays(d, 1)) days.push(d);
+    const sunday = days.find((d) => !time.isWorkDay(d));
+    const wd = days.filter((d) => time.isWorkDay(d));
+    ok('yakshanba kelgan — «extra», kech hisoblanmaydi', attendance.dayStatus({ checked_in: `${sunday}T10:30:00+05:00`, late_minutes: 90, work_date: sunday }, sunday, bugun, akbar) === 'extra');
+    ok('«Kelmayman» tasdiqlangan, lekin kech keldi — kechikish', attendance.dayStatus({ checked_in: `${wd[0]}T10:30:00+05:00`, late_minutes: 90, excuse_status: 'approved', work_date: wd[0] }, wd[0], bugun, akbar) === 'late');
+    const ghost = { id: 987654, flexible: 0, created_at: `${bugun}T08:00:00+05:00`, work_start: null };
+    ok('ishga qo\'shilgan kun «kelmagan» emas', (await attendance.stats(ghost, bugun, bugun)).absent === 0);
+
+    // kutilayotgan «Kelmayman» — sababli; oy tasdiqlanmaydi
+    await db.query("INSERT INTO attendance (employee_id, work_date, excuse_status, excuse_reason, excuse_at) VALUES ($1, $2, 'pending', 'kasal', $3)", [akbar.id, wd[1], time.stamp()]);
+    const stP = await attendance.stats(akbar, pf, pt);
+    ok('hal qilinmagan «Kelmayman» — sababli (kelmagan emas)', stP.pending === 1 && stP.excused >= 1 && stP.absent === 0);
+    ok('hal qilinmagan so\'rov bor — oyni tasdiqlab bo\'lmaydi', String(await kpi.decideBlock(akbar.id, pm)).includes('Kelmayman'));
+
+    // kech kelgan kunni rahbariyat sababli qiladi
+    await db.query('INSERT INTO attendance (employee_id, work_date, checked_in, late_minutes) VALUES ($1, $2, $3, 40)', [akbar.id, wd[2], `${wd[2]}T09:50:00+05:00`]);
+    const lateRow = await attendance.get(akbar.id, wd[2]);
+    ok('kech kelgan kun — late', attendance.dayStatus(lateRow, wd[2], bugun, akbar) === 'late');
+    let mark = sent.length;
+    await send(cbq(99999, `lx:${lateRow.id}`));
+    ok('hodim o\'zi sababli qila olmaydi', !(await attendance.get(akbar.id, wd[2])).late_excused_at);
+    await send(cbq(1000, `lx:${lateRow.id}`));
+    const lateRow2 = await attendance.get(akbar.id, wd[2]);
+    ok('direktor «Sababli» — kechikish hisoblanmaydi, hodimga xabar', lateRow2.late_excused_at && attendance.dayStatus(lateRow2, wd[2], bugun, akbar) === 'ontime' && textTo(mark, 99999, /sababli/));
+    mark = sent.length;
+    await send(cbq(1000, `lx:${lateRow.id}`));
+    ok('ikkinchi bosish — xabar takrorlanmaydi', countSince(mark, 99999) === 0);
+    await db.query('DELETE FROM attendance WHERE employee_id = $1 AND work_date IN ($2, $3)', [akbar.id, wd[1], wd[2]]);
+
+    // qaytarish: tuzatish muddati berilmasa — eski (o'tgan) muddat qoladi → tuzatilsa ham kechikkan
+    const lt = await tasks.create({ employeeId: akbar.id, title: 'Kech topshirilgan hisobot', dueDate: time.addDays(bugun, -2), createdBy: 20001, source: 'head' });
+    await db.query("UPDATE tasks SET status = 'done', done_at = $1, proof_type = 'photo', proof_file_id = 'x' WHERE id = $2", [time.stamp(), lt.id]);
+    await send(cbq(20001, `rv:back:${lt.id}`));
+    await send(msg(20001, 'Jadval to\'liq emas'));
+    ok("tuzatish muddati so'raladi (muddatsiz varianti bilan)", session.get(20001).step === 'return_due' && findCb(20001, new RegExp(`^rv:fd:${lt.id}:none$`)));
+    await send(cbq(20001, `rv:fd:${lt.id}:none`));
+    let ltT = await tasks.byId(lt.id);
+    ok('muddatsiz qaytarildi — eski muddat qoldi', ltT.status === 'active' && ltT.due_date === time.addDays(bugun, -2));
+    ok("«🔁 Ko'rib chiqish» ro'yxatida, «Faol» da emas", (await tasks.listByKind('fix')).some((x) => x.id === lt.id) && !(await tasks.listByKind('active')).some((x) => x.id === lt.id));
+    await db.query("UPDATE tasks SET status = 'done', done_at = $1 WHERE id = $2", [time.stamp(), lt.id]);
+    await tasks.accept(lt.id, 20001);
+    ltT = await tasks.byId(lt.id);
+    ok('tuzatildi, lekin kechikkan hisoblanadi', !tasks.isOnTime(ltT));
+    await send(cbq(20001, `rv:fd:${lt.id}:0`));
+    ok('eski tanlov tugmasi — hech narsa o\'zgarmaydi', (await tasks.byId(lt.id)).status === 'accepted');
+
+    // tuzatish muddati berilsa — shu sanagacha tuzatsa vaqtida
+    const lt2 = await tasks.create({ employeeId: akbar.id, title: 'Muddatida topshirilgan, qaytarilgan', dueDate: time.addDays(bugun, -1), createdBy: 20001, source: 'head' });
+    await db.query("UPDATE tasks SET status = 'done', done_at = $1, proof_type = 'photo', proof_file_id = 'x' WHERE id = $2", [`${time.addDays(bugun, -1)}T10:00:00+05:00`, lt2.id]);
+    await send(cbq(20001, `rv:back:${lt2.id}`));
+    await send(msg(20001, 'Imzo yo\'q'));
+    await send(cbq(20001, `rv:fd:${lt2.id}:type`));
+    await send(msg(20001, `${time.addDays(bugun, 3).slice(8, 10)}.${time.addDays(bugun, 3).slice(5, 7)}.${time.addDays(bugun, 3).slice(0, 4)}`));
+    let lt2T = await tasks.byId(lt2.id);
+    ok('yozilgan tuzatish muddati', lt2T.status === 'active' && lt2T.due_date === time.addDays(bugun, 3) && textTo(mark, 99999, /Tuzatish muddati/));
+    await db.query("UPDATE tasks SET status = 'done', done_at = $1 WHERE id = $2", [time.stamp(), lt2.id]);
+    await tasks.accept(lt2.id, 20001);
+    ok('tuzatish muddatigacha tuzatildi — vaqtida', tasks.isOnTime(await tasks.byId(lt2.id)));
+    await send(msg(99999, "🔁 Ko'rib chiqish"));
+    ok("«🔁 Ko'rib chiqish» tugmasi ishlaydi", lastText(99999).includes("KO'RIB CHIQISH"));
+
+    // Panel: KPI sharti va rahbar KPI summasi
+    await send(cbq(1000, 'adm:kg:days'));
+    await send(msg(1000, '24'));
+    ok('Panel: KPI sharti kunlari 24', (await kpi.gateSettings()).minDays === 24);
+    await kpi.setGateSettings({ minDays: 25 });
+    let w = await call(1000, 'POST', '/api/settings/kpi-gate', { minTaskPct: 95 });
+    ok('ilova: KPI foizi 95', w.status === 200 && w.data.gate.minTaskPct === 95);
+    w = await call(1000, 'POST', '/api/settings/kpi-gate', { minTaskPct: 101 });
+    ok('ilova: noto\'g\'ri foiz — 400', w.status === 400);
+    w = await call(50001, 'POST', '/api/settings/kpi-gate', { minTaskPct: 50 });
+    ok('ilova: HR KPI shartini o\'zgartira olmaydi', w.status === 403);
+    await kpi.setGateSettings({ minTaskPct: 90 });
+    await send(cbq(1000, 'adm:hm:1'));
+    await send(cbq(1000, 'adm:hm:1'));
+    ok('Panel: rahbar KPI summasini ko\'radi (ikki bosish — qaytib ketmaydi)', await require('../src/services/org').headSeesMoney());
+    await send(cbq(1000, 'adm:hm:0'));
+    for (const id of [1000, 20001, 99999]) session.clear(id);
+  }
+
+  // =========================================================================
+  console.log('\n— 36. Sprint A: ikki marta bosish, ko\'rinish qoidalari —');
+  {
+    const org = require('../src/services/org');
+    await org.setHrSeesBossTasks(false);
+    const sardorE = await employees.byTgId(30001);
+
+    // parallel ikki bosish — bitta qabul, bitta xabar
+    const dt = await tasks.create({ employeeId: akbar.id, title: 'Ikki bosish', dueDate: bugun, createdBy: 20001, source: 'head' });
+    await db.query("UPDATE tasks SET status = 'done', done_at = $1 WHERE id = $2", [time.stamp(), dt.id]);
+    let mark = sent.length;
+    await Promise.all([send(cbq(20001, `rv:ok:${dt.id}`)), send(cbq(20001, `rv:ok:${dt.id}`))]);
+    ok('«Qabul qilish» bir vaqtda ikki marta — hodimga bitta xabar', sent.slice(mark).filter((x) => Number(x.payload.chat_id) === 99999 && /Qabul qilindi/.test(x.payload.text || '')).length === 1);
+    mark = sent.length;
+    await send(cbq(20001, `rv:ok:${dt.id}`));
+    ok('keyinroq yana bosilsa — xabar yo\'q', countSince(mark, 99999) === 0);
+
+    // bekor qilish: qabul qilingan ishga «bekor qilindi» xabari bormaydi
+    mark = sent.length;
+    await send(cbq(1000, `emp:tdel:${dt.id}`));
+    ok('qabul qilingan ish bekor qilinmaydi, hodimga xabar yo\'q', (await tasks.byId(dt.id)).status === 'accepted' && countSince(mark, 99999) === 0);
+
+    // begona topshiriq
+    const sec = await tasks.create({ employeeId: sardorE.id, title: 'Begona sir', dueDate: bugun, createdBy: 1000, source: 'admin' });
+    await send(cbq(99999, `tk:${sec.id}`));
+    ok('hodim begona topshiriqni (id ni almashtirib) ocha olmaydi', !lastText(99999).includes('Begona sir'));
+
+    // HR: «Kechikkan ishlar» va yozishmada boshliq topshirig'i yo'q
+    const bossLate = await tasks.create({ employeeId: akbar.id, title: 'Boshliq kechikkan ishi', dueDate: time.addDays(bugun, -3), createdBy: 70001, source: 'admin' });
+    await send(cbq(50001, 'rp:overdue'));
+    ok('HR «Kechikkan ishlar»da boshliq topshirig\'i ko\'rinmaydi', !lastText(50001).includes('Boshliq kechikkan ishi'));
+    await send(cbq(1000, 'rp:overdue'));
+    ok('direktor ko\'radi', lastText(1000).includes('Boshliq kechikkan ishi'));
+    await send(cbq(50001, `tr:${bossLate.id}`));
+    ok('HR boshliq topshirig\'i bo\'yicha yozisha olmaydi', session.get(50001).step !== 'task_reply');
+    session.clear(50001);
+
+    // bo'limsiz rahbar — butun kompaniya emas
+    USERS[60011] = { id: 60011, first_name: 'Yolgiz', username: 'yolgiz' };
+    await employees.add({ tgId: 60011, fullName: 'Yolgiz Rahbar', position: 'Rahbar', role: 'head' });
+    await send(cbq(60011, 'rv:list'));
+    ok('bo\'limsiz rahbar tekshiruvda boshqalarning ishini ko\'rmaydi', lastText(60011).includes("yo'q") && !lastText(60011).includes('TEKSHIRUV ('));
+    await send(cbq(60011, 'rp:overdue'));
+    ok('bo\'limsiz rahbar «Kechikkan ishlar»da hammani ko\'rmaydi', !lastText(60011).includes('Boshliq kechikkan ishi'));
+
+    // «Hammasini tushundim» — faqat xabardagi topshiriqlar
+    const a1 = await tasks.create({ employeeId: akbar.id, title: 'Tushunish 1', dueDate: bugun, createdBy: 20001, source: 'head' });
+    const a2 = await tasks.create({ employeeId: akbar.id, title: 'Keyin berilgan', dueDate: bugun, createdBy: 20001, source: 'head' });
+    await send(cbq(99999, `ak:l:${a1.id}`));
+    ok('ak:l — ro\'yxatdagisi tushunildi, keyin berilgani yo\'q', Boolean((await tasks.byId(a1.id)).ack_at) && !(await tasks.byId(a2.id)).ack_at);
+    for (const t of [sec, bossLate, a1, a2]) await tasks.cancel(t.id, 1000);
+  }
+
+  // =========================================================================
+  console.log('\n— 37. 5-okt: Keldimsiz Bajardim yo\'q, ish tugashi, /yordam video, dam olish kuniga chaqiruv —');
+  {
+    const flows = require('../src/services/flows');
+    const extradays = require('../src/services/extradays');
+    const textTo = (from, chatId, re) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && re.test(x.payload.text || x.payload.caption || ''));
+    USERS[60021] = { id: 60021, first_name: 'Yangi', username: 'yangi' };
+    let ye = await employees.add({ tgId: 60021, fullName: 'Yangi Hodim', position: 'Sotuvchi', role: 'employee' });
+    ye = await employees.byTgId(60021);
+
+    // 1. Keldimsiz «Bajardim» yo'q
+    const nt = await tasks.create({ employeeId: ye.id, title: 'Keldimsiz vazifa', dueDate: bugun, createdBy: 1000, source: 'admin' });
+    let mark = sent.length;
+    await send(cbq(60021, `done:${nt.id}`));
+    ok("Keldim qilmagan — «Bajardim» yopiq", session.get(60021).step !== 'done_proof' && textTo(mark, 60021, /Avval/));
+    let w = await call(60021, 'POST', `/api/tasks/${nt.id}/done`);
+    ok('ilova: Keldimsiz «Bajardim» — 400', w.status === 400);
+    await send(msg(60021, '✔️ Bajardim'));
+    ok("«Bajardim» ro'yxati o'rniga «Avval Keldim»", lastText(60021).includes('Avval'));
+    await attendance.checkIn(ye, { at: time.stamp(), mode: 'office' });
+    await send(cbq(60021, `done:${nt.id}`));
+    ok('Keldimdan keyin — isbot so\'raladi', session.get(60021).step === 'done_proof');
+    session.clear(60021);
+
+    // 2. Ish tugashi: umumiy 18:00, hodimga alohida; erta ketish
+    let wdx = bugun;
+    while (!time.isWorkDay(wdx)) wdx = time.addDays(wdx, -1);
+    ok('erta ketish: 17:30 — 30 daq (umumiy 18:00)', flows.earlyLeaveMinutes(ye, `${wdx}T17:30:00+05:00`) === 30);
+    ok('18:20 — erta emas', flows.earlyLeaveMinutes(ye, `${wdx}T18:20:00+05:00`) === 0);
+    await send(cbq(1000, `emp:end:${ye.id}`));
+    await send(msg(1000, '19:00'));
+    ye = await employees.byTgId(60021);
+    ok('boshliq hodimga ish tugashi 19:00 qo\'ydi', ye.work_end === '19:00' && flows.earlyLeaveMinutes(ye, `${wdx}T18:30:00+05:00`) === 30);
+    w = await call(1000, 'PATCH', `/api/employees/${ye.id}`, { workEnd: '18:30' });
+    ok('ilova: ish tugashi 18:30', w.status === 200 && (await employees.byTgId(60021)).work_end === '18:30');
+    await employees.setFlexible(ye.id, true);
+    ok('erkin jadval — erta ketish hisoblanmaydi', flows.earlyLeaveMinutes(await employees.byTgId(60021), `${wdx}T15:00:00+05:00`) === 0);
+    await employees.setFlexible(ye.id, false);
+    ok('kun yakuni hisoboti 19:00 da', config.dailyReportHour === 19);
+
+    // 3. /yordam video
+    await send(msg(50001, '/yordam_video'));
+    ok('HR video yuklay olmaydi', session.get(50001).step !== 'help_video');
+    await send(msg(1000, '/yordam_video'));
+    await send(video(1000));
+    ok('boshliq /yordam videosini yukladi', Boolean(await require('../src/handlers/common').helpVideo()));
+    mark = sent.length;
+    await send(msg(60021, '/yordam'));
+    ok('/yordam — avval video, keyin matn', sent.slice(mark).some((x) => x.method === 'sendVideo' && Number(x.payload.chat_id) === 60021) && textTo(mark, 60021, /keldim/i));
+
+    // 4. Dam olish kuniga chaqiruv
+    let off = time.addDays(bugun, 1);
+    while (time.isWorkDay(off)) off = time.addDays(off, 1);
+    await send(cbq(50001, 'xc:new'));
+    ok('HR chaqira olmaydi', session.get(50001).step !== 'xc_amount' && !(session.get(50001).xc));
+    await send(cbq(1000, 'xc:new'));
+    ok('chaqiruv: dam olish kunlari taklif qilinadi', Boolean(findCb(1000, new RegExp(`^xc:dt:${off}$`))));
+    await send(cbq(1000, `xc:dt:${off}`));
+    await send(cbq(1000, `xp:t:${ye.id}`));
+    await send(cbq(1000, 'xp:ok'));
+    ok("summa so'raladi", session.get(1000).step === 'xc_amount');
+    await send(msg(1000, '150 000'));
+    mark = sent.length;
+    await send(cbq(1000, 'xc:ok'));
+    const call1 = await extradays.forDay(ye.id, off);
+    ok('chaqiruv saqlandi va hodimga xabar bordi', call1 && Number(call1.amount) === 150000 && textTo(mark, 60021, /ishga chaqirdi/));
+    await send(cbq(1000, 'xc:ok'));
+    ok('ikkinchi bosish — takror yo\'q', (await db.query('SELECT id FROM extra_days WHERE employee_id = $1', [ye.id])).length === 1);
+    ok('kelmaguncha oylikka qo\'shilmaydi', (await extradays.sumForMonth(ye.id, off.slice(0, 7))) === 0);
+    await extradays.markWorked(call1.id);
+    ok('keldi — summa oylikka qo\'shiladi', (await extradays.sumForMonth(ye.id, off.slice(0, 7))) === 150000);
+    if (off.slice(0, 7) === month) {
+      w = await call(60021, 'GET', `/api/pay/${month}`);
+      ok('ilova: oylikda dam olish kuni summasi', w.status === 200 && w.data.pay.extra === 150000);
+    }
+    const call2 = await extradays.create({ employeeId: ye.id, date: time.addDays(off, 7), amount: 1000, createdBy: 1000 });
+    await send(cbq(1000, `xc:del:${call2.id}`));
+    ok('chaqiruvni bekor qilish', Boolean((await extradays.byId(call2.id)).cancelled_at));
+    await employees.deactivate(ye.id);
+
+    // 5. Uy joylashuvi yo'q agentlarga eslatma (06:00 dan har 30 daq), saqlangach to'xtaydi
+    USERS[60031] = { id: 60031, first_name: 'Agent', username: 'agentx' };
+    await employees.add({ tgId: 60031, fullName: 'Agent Yangi', position: 'Agent', role: 'employee' });
+    let ag = await employees.byTgId(60031);
+    await employees.setWorkMode(ag.id, 'field');
+    mark = sent.length;
+    let nRem = await flows.remindHomeLocation({ telegram: bot.telegram });
+    ok("uy joyi yo'q agentga eslatma bordi", nRem >= 1 && textTo(mark, 60031, /Uy joylashuvingizni yuboring/) && session.get(60031).step === 'awaiting_home_location');
+    ok("uy joyi bor agentlarga / ofis hodimlariga bormaydi", !textTo(mark, 99999, /Uy joylashuvingizni/));
+    session.clear(60031);
+    await send({ update_id: Date.now() % 1e9, message: { message_id: 1, from: USERS[60031], chat: { id: 60031, type: 'private' }, date: Math.floor(Date.now() / 1000), location: { latitude: 41.2, longitude: 69.2 }, venue: { location: { latitude: 41.2, longitude: 69.2 }, title: 'Kafe', address: 'x' } } });
+    ok('xaritadan tanlangan joy (venue) — rad', !employees.homeOf(await employees.byTgId(60031)));
+    session.clear(60031);
+    await send(loc(60031, 41.21, 69.21));
+    ag = await employees.byTgId(60031);
+    ok('bosqichsiz yuborilgan joylashuv ham uy joyi bo\'ldi — «saqlandi»', Boolean(employees.homeOf(ag)) && lastText(60031).includes('saqlandi'));
+    mark = sent.length;
+    nRem = await flows.remindHomeLocation({ telegram: bot.telegram });
+    ok('saqlangandan keyin eslatma bormaydi', !textTo(mark, 60031, /Uy joylashuvingizni/));
+    await employees.deactivate(ag.id);
   }
 
   await new Promise((r) => webSrv.close(r));

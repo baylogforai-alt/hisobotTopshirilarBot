@@ -5,7 +5,7 @@ const config = require('../config');
 
 /**
  * UMUMIY ISH BOSHLANISHI (hamma hodim uchun, alohida vaqt qo'yilmaganlarga).
- * Standart — WORK_START (.env, standart 08:50). Direktor botda o'zgartirsa settings.work_start ga yoziladi va ustun bo'ladi.
+ * Standart — WORK_START (.env, standart 08:40). Direktor botda o'zgartirsa settings.work_start ga yoziladi va ustun bo'ladi.
  * Hodimning alohida vaqti — employees.work_start (kartochkada «🕘 Ish boshlanishi»).
  * startMinutesOf sinxron ishlatiladi, shuning uchun qiymat xotirada keshlanadi: ishga tushganda load(), o'zgarganda set().
  */

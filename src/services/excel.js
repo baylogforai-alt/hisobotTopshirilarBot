@@ -14,7 +14,8 @@ const visits = require('./visits');
 
 /**
  * EXCEL HISOBOTLAR.
- *   buildMonthly(month)             — direktor: KPI · Topshiriqlar · Davomat · Kunlik hisobotlar · Tashriflar · Bo'limlar
+ *   viewer — kim oladi (access actor): HR ga boshliq/direktor topshiriqlari boshliq sozlamasiga qarab (tasks.visibleFor)
+ *   buildMonthly(month, {viewer})   — direktor: KPI · Topshiriqlar · Davomat · Kunlik hisobotlar · Tashriflar · Bo'limlar
  *   buildEmployeeMonth(emp, month)  — bitta hodim (oy): Xulosa · Topshiriqlar · Davomat · Kunlik hisobotlar (· Tashriflar)
  *   buildDay(date, {employeeId})    — bitta kun: davomat + topshiriqlar + kunlik hisobotlar
  *   buildEmployeePeriod(emp, from, to) — istalgan davr, bitta hodim: Xulosa · Bajarilgan ishlar · Kunlar · Missiyalar · Kunlik hisobotlar · Harakatlar
@@ -104,7 +105,7 @@ const taskStatusLabel = (t, today = time.today()) => {
 const TASK_COLOR = { Muddatida: GREEN, 'Kech qabul': AMBER, Tekshiruvda: NAVY, "O'chirilgan": GREY, "Muddati o'tgan": RED, Ochiq: NAVY };
 const SOURCE = { self: "O'zi", head: 'Boshliq', admin: 'Direktor' };
 
-const DAY_LABEL = { ontime: 'Vaqtida', late: 'Kech', absent: 'Kelmagan', excused: 'Sababli', pending: "So'rov kutilmoqda", future: '', off: 'Dam olish' };
+const DAY_LABEL = { ontime: 'Vaqtida', late: 'Kech', absent: 'Kelmagan', excused: 'Sababli', pending: "So'rov kutilmoqda", future: '', off: 'Dam olish', extra: 'Dam olish kuni ishladi' };
 const DAY_COLOR = { Vaqtida: GREEN, Kech: AMBER, Kelmagan: RED, Sababli: NAVY, "So'rov kutilmoqda": AMBER };
 
 /** Bir kunda bajarilgan ishlar — har biri yangi qatorda */
@@ -274,7 +275,7 @@ const addVisitsSheet = (wb, rows, title, sub, { withName = true } = {}) => {
 };
 
 /** Direktor uchun oylik fayl */
-const buildMonthly = async (month) => {
+const buildMonthly = async (month, { viewer = null } = {}) => {
   const { from, to } = time.monthRange(month);
   const wb = new ExcelJS.Workbook();
   wb.creator = `${config.companyName} bot`;
@@ -287,7 +288,9 @@ const buildMonthly = async (month) => {
   for (const e of list) styleKpiRow(wsK.addRow(kpiRowOf(await kpi.compute(e, month), deptMap.get(Number(e.department_id)))));
   zebra(wsK);
 
-  addTasksSheet(wb, await tasks.rangeAll(from, to), `Topshiriqlar — ${time.monthName(month)}`, sub);
+  // 2. Topshiriqlar
+  const monthTasks = await tasks.rangeAll(from, to);
+  addTasksSheet(wb, viewer ? tasks.visibleFor(viewer, monthTasks) : monthTasks, `Topshiriqlar — ${time.monthName(month)}`, sub);
 
   const entries = [];
   for (const e of list) for (const day of (await attendance.stats(e, from, to)).days) entries.push({ e, day });
@@ -314,7 +317,7 @@ const buildMonthly = async (month) => {
 };
 
 /** Bitta hodim — oy */
-const buildEmployeeMonth = async (emp, month) => {
+const buildEmployeeMonth = async (emp, month, { viewer = null } = {}) => {
   const { from, to } = time.monthRange(month);
   const wb = new ExcelJS.Workbook();
   const sub = `${emp.full_name}${emp.position ? ` · ${emp.position}` : ''}${emp.department_name ? ` · ${emp.department_name}` : ''} · ${time.monthName(month)}`;
@@ -322,7 +325,9 @@ const buildEmployeeMonth = async (emp, month) => {
   const wsK = wb.addWorksheet('Xulosa');
   decorate(wsK, KPI_COLS, `Xulosa — ${time.monthName(month)}`, sub);
   styleKpiRow(wsK.addRow(kpiRowOf(await kpi.compute(emp, month), dept)));
-  addTasksSheet(wb, await tasks.range(emp.id, from, to), `Topshiriqlar — ${time.monthName(month)}`, sub, { withName: false });
+
+  const empTasks = await tasks.range(emp.id, from, to);
+  addTasksSheet(wb, viewer ? tasks.visibleFor(viewer, empTasks) : empTasks, `Topshiriqlar — ${time.monthName(month)}`, sub, { withName: false });
   const st = await attendance.stats(emp, from, to);
   addAttendanceSheet(wb, st.days.map((day) => ({ e: emp, day })), `Davomat — ${time.monthName(month)}`, sub, { withName: false });
   addReportsSheet(wb, await dailyReports.range(emp.id, from, to), `Kunlik hisobotlar — ${time.monthName(month)}`, sub, { withName: false });
@@ -331,7 +336,7 @@ const buildEmployeeMonth = async (emp, month) => {
 };
 
 /** Bitta kun — jamoa (yoki bitta hodim): davomat + bugungi ishlar + kunlik hisobotlar */
-const buildDay = async (date = time.today(), { employeeId = null } = {}) => {
+const buildDay = async (date = time.today(), { employeeId = null, viewer = null } = {}) => {
   const wb = new ExcelJS.Workbook();
   const list = employeeId ? [await employees.byId(employeeId)].filter(Boolean) : await employees.listStaff();
   const sub = `${config.companyName} · ${time.prettyDate(date)}${employeeId && list[0] ? ` · ${list[0].full_name}` : ''}`;
@@ -342,7 +347,7 @@ const buildDay = async (date = time.today(), { employeeId = null } = {}) => {
     { key: 'title', header: 'Topshiriq', width: 50 }, { key: 'status', header: 'Holat', width: 15 },
     { key: 'due', header: 'Muddat', width: 12 }, { key: 'done', header: 'Bajarilgan', width: 11 }, { key: 'source', header: 'Kim berdi', width: 10 },
   ], `${config.companyName} — kunlik hisobot`, sub);
-  const rows = await tasks.dayRows(date, employeeId);
+  const rows = (await tasks.dayRows(date, employeeId)).filter((r) => !r.task_id || !viewer || tasks.visibleTo(viewer, r));
   let lastName = null;
   for (const r of rows) {
     const same = r.full_name === lastName;
@@ -373,7 +378,10 @@ const buildDay = async (date = time.today(), { employeeId = null } = {}) => {
 // ---------------------------------------------------------------------------
 
 /** BITTA HODIM — tanlangan davr uchun to'liq arxiv */
-const buildEmployeePeriod = async (emp, fromRaw, toRaw) => {
+/** viewer (access actor) berilsa — HR ga boshliq/direktor topshiriqlari sozlamaga qarab ko'rinmaydi */
+const visible = (viewer, list) => (viewer ? tasks.visibleFor(viewer, list) : list);
+
+const buildEmployeePeriod = async (emp, fromRaw, toRaw, { viewer = null } = {}) => {
   const period = require('./period');
   const { from, to } = period.normalize(fromRaw, toRaw);
   const s = await period.employeeStats(emp, from, to);
@@ -406,7 +414,7 @@ const buildEmployeePeriod = async (emp, fromRaw, toRaw) => {
     { key: 'title', header: 'Bajarilgan ish', width: 60 }, { key: 'due', header: 'Muddati edi', width: 14 }, { key: 'ontime', header: 'Muddatida', width: 12 },
     { key: 'status', header: 'Holat', width: 13 }, { key: 'source', header: 'Kim berdi', width: 10 },
   ], `${config.companyName} — bajarilgan ishlar`, `${who} · ${periodText} · jami ${s.doneCount} ta`);
-  [...s.doneRows].sort((a, b) => String(a.done_at).localeCompare(String(b.done_at))).forEach((t, i) => {
+  visible(viewer, s.doneRows).sort((a, b) => String(a.done_at).localeCompare(String(b.done_at))).forEach((t, i) => {
     const d = String(t.done_at).slice(0, 10);
     const onTime = d <= t.due_date;
     const row = wrap(wsDone.addRow({ n: i + 1, date: d, wd: time.weekdayShort(d), time: time.clock(t.done_at), title: t.title, due: t.due_date, ontime: onTime ? 'Ha' : 'Kech', status: t.status === 'accepted' ? 'Qabul qilingan' : 'Tekshiruvda', source: SOURCE[t.source] || '' }));
@@ -426,7 +434,7 @@ const buildEmployeePeriod = async (emp, fromRaw, toRaw) => {
   s.dayRows.forEach((d) => {
     const row = wrap(wsDays.addRow({
       date: d.date, wd: time.weekdayShort(d.date), in: d.in || '—', out: d.out || '—', h: hours(d.minutes),
-      dur: d.minutes === null ? '—' : time.prettyDuration(d.minutes), late: d.lateMinutes || '', done: d.done.length, what: doneList(d.done),
+      dur: d.minutes === null ? '—' : time.prettyDuration(d.minutes), late: d.lateMinutes || '', done: d.done.length, what: doneList(visible(viewer, d.done)),
       added: d.created.length, report: d.report ? d.report.text : '', acts: d.acts, note: d.note,
     }));
     row.getCell('h').numFmt = '0.00';
@@ -441,7 +449,7 @@ const buildEmployeePeriod = async (emp, fromRaw, toRaw) => {
   total.getCell('h').numFmt = '0.00';
 
   // 4) Missiyalar (davrga tegishli barcha)
-  addTasksSheet(wb, await tasks.forRange(emp.id, from, to), `${config.companyName} — missiyalar`, `${who} · ${periodText}`, { withName: false, name: 'Missiyalar' });
+  addTasksSheet(wb, visible(viewer, await tasks.forRange(emp.id, from, to)), `${config.companyName} — missiyalar`, `${who} · ${periodText}`, { withName: false, name: 'Missiyalar' });
 
   // 5) Kunlik hisobotlar
   addReportsSheet(wb, s.reportRows, `${config.companyName} — kunlik hisobotlar`, `${who} · ${periodText}`, { withName: false });
@@ -453,7 +461,7 @@ const buildEmployeePeriod = async (emp, fromRaw, toRaw) => {
 };
 
 /** BUTUN JAMOA — tanlangan davr uchun bitta fayl */
-const buildTeamPeriod = async (fromRaw, toRaw) => {
+const buildTeamPeriod = async (fromRaw, toRaw, { viewer = null } = {}) => {
   const period = require('./period');
   const t = await period.teamStats(fromRaw, toRaw);
   const { from, to } = t;
@@ -517,7 +525,7 @@ const buildTeamPeriod = async (fromRaw, toRaw) => {
   // 3) Missiyalar
   const all = [];
   for (const r of t.rows) all.push(...(await tasks.forRange(r.emp.id, from, to)));
-  addTasksSheet(wb, all, `${config.companyName} — barcha missiyalar`, periodText, { name: 'Missiyalar' });
+  addTasksSheet(wb, visible(viewer, all), `${config.companyName} — barcha missiyalar`, periodText, { name: 'Missiyalar' });
 
   // 4) Kechikkanlar
   const today = time.today();
@@ -526,7 +534,7 @@ const buildTeamPeriod = async (fromRaw, toRaw) => {
     { key: 'name', header: 'Hodim', width: 24 }, { key: 'title', header: 'Missiya', width: 52 }, { key: 'due', header: 'Muddat edi', width: 14 },
     { key: 'days', header: 'Necha kun kechikdi', width: 18 }, { key: 'source', header: 'Kim berdi', width: 10 },
   ], `${config.companyName} — kechikkan missiyalar`, `Holat: ${time.prettyDate(today)}`);
-  const overdue = await tasks.overdue();
+  const overdue = visible(viewer, await tasks.overdue());
   overdue.forEach((m) => { const row = wrap(wsLate.addRow({ name: m.full_name, title: m.title, due: m.due_date, days: time.diffDays(m.due_date, today), source: SOURCE[m.source] || '' })); colorCell(row.getCell('days'), RED); });
   if (!overdue.length) wsLate.addRow({ name: "— kechikkan ish yo'q 🎉 —" });
   zebra(wsLate);
@@ -538,7 +546,7 @@ const buildTeamPeriod = async (fromRaw, toRaw) => {
     { key: 'title', header: 'Bajarilgan ish', width: 56 }, { key: 'ontime', header: 'Muddatida', width: 11 }, { key: 'status', header: 'Holat', width: 14 },
   ], `${config.companyName} — davrda bajarilgan ishlar`, periodText);
   const allDone = [];
-  t.rows.forEach((r) => r.doneRows.forEach((m) => allDone.push({ emp: r.emp, m })));
+  t.rows.forEach((r) => visible(viewer, r.doneRows).forEach((m) => allDone.push({ emp: r.emp, m })));
   allDone.sort((a, b) => String(a.m.done_at).localeCompare(String(b.m.done_at)));
   allDone.forEach(({ emp, m }) => {
     const d = String(m.done_at).slice(0, 10);

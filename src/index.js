@@ -36,7 +36,14 @@ const COMMANDS = [
   { command: 'davomat', description: 'Davomat nazorati (ruxsat bilan)' },
   { command: 'baholash', description: 'Hodimlarni baholash (boshliq)' },
   { command: 'panel', description: 'Panel (direktor)' },
+  { command: 'chaqirish', description: "Dam olish kuniga ishga chaqirish (qo'shimcha haq)" },
   { command: 'jurnal', description: 'Barcha topshiriqlar (direktor, HR)' },
+  { command: 'elon', description: "E'lon (hammaga, bolimga, tanlanganlarga)" },
+  { command: 'faol', description: 'Faol topshiriqlar (jarayonda)' },
+  { command: 'korib_chiqish', description: "Qaytarilgan — tuzatilayotgan topshiriqlar" },
+  { command: 'kutilmoqda', description: 'Tekshiruvni kutayotganlar' },
+  { command: 'bajarilgan', description: 'Bajarilgan topshiriqlar (shu oy)' },
+  { command: 'oyliklar', description: 'Hodimlar oyligi (direktor)' },
   { command: 'kpi', description: 'KPI (direktor)' },
   { command: 'hisobotlar', description: 'Hisobotlar (direktor)' },
   { command: 'arxiv', description: 'Hodimlar arxivi (direktor)' },
@@ -79,9 +86,11 @@ const COMMANDS = [
     console.warn('[session] tiklanmadi:', err.message);
   }
 
-  await bot.telegram.setMyCommands(COMMANDS).catch(() => {});
+  // buyruqlar menyusi faqat shaxsiy chatda; standart doira (guruhlar) bo'shatiladi — maosh/KPI guruhga chiqmasin
+  await bot.telegram.setMyCommands(COMMANDS, { scope: { type: 'all_private_chats' } }).catch(() => {});
+  await bot.telegram.deleteMyCommands().catch(() => {});
 
-  // deploy paytida hodimlar bosgan tugmalar yo'qolmasin (sessiya bazada — qayta ishlash xavfsiz)
+  // deploy paytida yuborilgan tugma/Keldim/isbot yo'qolmasin (sessiya bazada; eskirgan kiritishni handlerlar o'zi rad etadi)
   await bot.launch({ dropPendingUpdates: false, allowedUpdates: ['message', 'callback_query'] }, () => {
     const me = bot.botInfo;
     console.log(`\n🤖 @${me.username} ishga tushdi — ${config.companyName}`);

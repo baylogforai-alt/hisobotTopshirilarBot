@@ -25,6 +25,9 @@
  *  directions     — yo'nalishlar (Moliya, Logistika …) va employee_directions — kim mas'ul (HR topshiriq beradi)
  *  announcements  — direktor/HR/rahbar e'lonlari (hammaga yoki tanlanganlarga; matn yoki media)
  *  announcement_recipients — e'lon kimga bordi va kim «👁 O'qidim» bosdi
+ *  extra_days     — dam olish kuniga chaqiruv (summa; o'sha kuni Keldim → worked_at)
+ *  task_replies   — qaytarilgan topshiriq bo'yicha hodim ↔ tekshiruvchi yozishmasi (matn yoki media)
+ *  chats          — «💬 Savol-javob»: chat (boshlovchi, kimlar bilan, rejim) + chat_members + chat_messages
  */
 
 const tables = (pk, big) => `
@@ -61,6 +64,7 @@ CREATE TABLE IF NOT EXISTS employees (
   department_id  INTEGER REFERENCES departments(id) ON DELETE SET NULL,
   bonus_fund     INTEGER,
   work_start     TEXT,
+  work_end       TEXT,
   active         INTEGER NOT NULL DEFAULT 1,
   flexible       INTEGER NOT NULL DEFAULT 0,
   branch_id      INTEGER REFERENCES branches(id) ON DELETE SET NULL,
@@ -73,6 +77,7 @@ CREATE TABLE IF NOT EXISTS employees (
   remind_times   TEXT,
   remind_pending TEXT,
   can_view_att   INTEGER NOT NULL DEFAULT 0,
+  notify_done    INTEGER NOT NULL DEFAULT 0,
   created_at     TEXT    NOT NULL
 );
 
@@ -101,7 +106,10 @@ CREATE TABLE IF NOT EXISTS tasks (
   task_file_id  TEXT,
   task_file_name TEXT,
   ack_at        TEXT,
-  ack_note      TEXT
+  ack_note      TEXT,
+  start_time    TEXT,
+  start_notified_at TEXT,
+  late_forced   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_emp_status ON tasks(employee_id, status);
@@ -133,6 +141,12 @@ CREATE TABLE IF NOT EXISTS attendance (
   late_proof_file_id    TEXT,
   excuse_proof_type     TEXT,
   excuse_proof_file_id  TEXT,
+  checkout_lat   TEXT,
+  checkout_lon   TEXT,
+  checkout_dist  TEXT,
+  checkout_note  TEXT,
+  late_excused_at TEXT,
+  late_excused_by ${big},
   UNIQUE (employee_id, work_date)
 );
 
@@ -200,6 +214,10 @@ CREATE TABLE IF NOT EXISTS kpi_monthly (
   kpi_fail      TEXT,
   tasks_missed  INTEGER NOT NULL DEFAULT 0,
   salary        INTEGER,
+  fund_manual   INTEGER NOT NULL DEFAULT 0,
+  extra_days    INTEGER NOT NULL DEFAULT 0,
+  required_days INTEGER,
+  tasks_gate_pct INTEGER,
   UNIQUE (employee_id, month)
 );
 
@@ -296,6 +314,66 @@ CREATE TABLE IF NOT EXISTS reminder_log (
   detail TEXT
 );
 
+CREATE TABLE IF NOT EXISTS extra_days (
+  id           ${pk},
+  employee_id  INTEGER NOT NULL REFERENCES employees(id),
+  work_date    TEXT    NOT NULL,
+  amount       INTEGER NOT NULL DEFAULT 0,
+  note         TEXT,
+  created_by   ${big},
+  created_at   TEXT    NOT NULL,
+  worked_at    TEXT,
+  cancelled_at TEXT,
+  cancelled_by ${big}
+);
+CREATE INDEX IF NOT EXISTS idx_extra_days_emp_date ON extra_days(employee_id, work_date);
+
+CREATE TABLE IF NOT EXISTS task_replies (
+  id          ${pk},
+  task_id     INTEGER NOT NULL REFERENCES tasks(id),
+  from_tg     ${big}  NOT NULL,
+  from_name   TEXT,
+  to_tg       ${big},
+  body        TEXT,
+  media_type  TEXT,
+  file_id     TEXT,
+  file_name   TEXT,
+  created_at  TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS chats (
+  id           ${pk},
+  starter_tg   ${big}  NOT NULL,
+  starter_name TEXT,
+  title        TEXT,
+  target       TEXT,
+  mode         TEXT    NOT NULL DEFAULT 'all',
+  created_at   TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS chat_members (
+  id          ${pk},
+  chat_id     INTEGER NOT NULL REFERENCES chats(id),
+  tg_id       ${big}  NOT NULL,
+  employee_id INTEGER REFERENCES employees(id),
+  name        TEXT,
+  delivered   INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (chat_id, tg_id)
+);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id          ${pk},
+  chat_id     INTEGER NOT NULL REFERENCES chats(id),
+  from_tg     ${big}  NOT NULL,
+  from_name   TEXT,
+  to_tg       ${big},
+  body        TEXT,
+  media_type  TEXT,
+  file_id     TEXT,
+  file_name   TEXT,
+  created_at  TEXT    NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
   key        TEXT PRIMARY KEY,
   data       TEXT NOT NULL,
@@ -319,6 +397,7 @@ const MIGRATIONS = [
   col('employees', 'department_id', 'INTEGER'),
   col('employees', 'bonus_fund', 'INTEGER'),
   col('employees', 'work_start', 'TEXT'),
+  col('employees', 'work_end', 'TEXT'),
   col('employees', 'flexible', 'INTEGER NOT NULL DEFAULT 0'),
   col('kpi_monthly', 'tasks_returned', 'INTEGER NOT NULL DEFAULT 0'),
   col('kpi_monthly', 'fund_manual', 'INTEGER NOT NULL DEFAULT 0'),
@@ -365,6 +444,23 @@ const MIGRATIONS = [
   col('tasks', 'ack_at', 'TEXT'),
   col('tasks', 'ack_note', 'TEXT'),
   col('departments', 'remind_times', 'TEXT'),
+  // 2-okt-2026 (2): HR «Bajardim» xabarlari (o'zi yoqadi), e'lonlar
+  col('employees', 'notify_done', 'INTEGER NOT NULL DEFAULT 0'),
+  // 3-okt-2026: topshiriq boshlanish soati, «Ketdim» lokatsiya + izoh
+  col('tasks', 'start_time', 'TEXT'),
+  col('tasks', 'start_notified_at', 'TEXT'),
+  col('attendance', 'checkout_lat', 'TEXT'),
+  col('attendance', 'checkout_lon', 'TEXT'),
+  col('attendance', 'checkout_dist', 'TEXT'),
+  col('attendance', 'checkout_note', 'TEXT'),
+  // 3-okt-2026 (audit): KPI sharti — 25 kun / 90% topshiriq, kechikishni sababli qilish, qaytarishda kechikish
+  col('tasks', 'late_forced', 'INTEGER NOT NULL DEFAULT 0'),
+  col('attendance', 'late_excused_at', 'TEXT'),
+  col('attendance', 'late_excused_by', 'INTEGER', 'BIGINT'),
+  col('kpi_monthly', 'fund_manual', 'INTEGER NOT NULL DEFAULT 0'),
+  col('kpi_monthly', 'extra_days', 'INTEGER NOT NULL DEFAULT 0'),
+  col('kpi_monthly', 'required_days', 'INTEGER'),
+  col('kpi_monthly', 'tasks_gate_pct', 'INTEGER'),
 ];
 
 /**

@@ -20,6 +20,8 @@ const activity = require('../services/activity');
 const dailyReports = require('../services/dailyReports');
 const flows = require('../services/flows');
 const access = require('../services/access');
+const extradays = require('../services/extradays');
+const kpi = require('../services/kpi');
 const { notRegistered } = require('./common');
 
 const { esc } = ui;
@@ -103,7 +105,8 @@ const handleLateReason = async (ctx, { skip = false } = {}) => {
   activity.mark(ctx, 'late_reason', { title: reason });
   await ctx.reply(`✅ Sabab qayd etildi va ${esc(await org.recipientsLabel(emp))}ga yuborildi. Yaxshi ish kuni! 💪`, { parse_mode: 'HTML', ...ui.kbFor(ctx) });
   const text = `💬 <b>${esc(emp.full_name)}</b> kechikish sababi (${time.prettyDuration(Number(row.late_minutes))}):\n«${esc(reason)}»`;
-  await notify.toHrAndBoss(botOf(ctx), emp, text, {}, proof);
+  // bo'lim rahbari va boshliqqa — «sababli» tugmasi (KPI dagi 25 kunga kiradi); HR — tugmasiz
+  await notify.toHrAndBoss(botOf(ctx), emp, text, {}, proof, { decideExtra: lateExcuseKb(row.id) });
   if (proof) await notify.toArchive(botOf(ctx), text, proof);
 };
 
@@ -154,7 +157,7 @@ const onLocation = async (ctx) => {
     }
     await office.set(latitude, longitude, radius);
     return ctx.reply(
-      `✅ <b>Ofis joylashuvi saqlandi.</b> Radius: <b>${geo.prettyDistance(radius)}</b>.\nEndi hodimlar faqat shu joydan «${ui.BTN.checkIn}» qila oladi.\n\nRadiusni o'zgartirish: <code>/ofis_radius 300</code>`,
+      `✅ <b>Ofis joylashuvi saqlandi.</b> Radius: <b>${geo.prettyDistance(radius)}</b>.\nEndi hodimlar faqat shu joydan «${ui.BTN.checkIn}» qila oladi.\n\nRadiusni o'zgartirish: <code>/ofis_radius 250</code>`,
       { parse_mode: 'HTML', ...ui.kbFor(ctx) },
     );
   }
@@ -164,11 +167,14 @@ const onLocation = async (ctx) => {
   if (!ctx.message.location) return;
   if (s.step === 'awaiting_home_location') return field.onHomeLocation(ctx);
   if (s.step === 'visit_location') return field.onVisitLocation(ctx);
+  if (s.step === 'awaiting_checkout_location') return onCheckoutLocation(ctx);
+  // eslatmadan keyin bosqich tugagan bo'lsa ham — uy joyi yo'q agentning joylashuvi uy joyi bo'ladi
+  if (!s.step && employees.isField(emp) && !employees.homeOf(emp)) return field.onHomeLocation(ctx);
   if (s.step !== 'awaiting_checkin_location') return ctx.reply(`Avval «${ui.BTN.checkIn}» tugmasini bosing.`, ui.kbFor(ctx));
 
-  if (field.isForwarded(ctx.message)) {
-    activity.mark(ctx, 'checkin_far', { detail: 'forward qilingan joylashuv' });
-    return ctx.reply(`❌ Bu joylashuv boshqa joydan yuborilgan. «${ui.BTN.sendLocation}» tugmasini bosing.`, ui.locationKeyboard());
+  if (field.isForwarded(ctx.message) || field.isVenue(ctx.message)) {
+    activity.mark(ctx, 'checkin_far', { detail: 'forward qilingan / xaritadan tanlangan joylashuv' });
+    return ctx.reply(`❌ Bu joylashuv xaritadan tanlangan yoki boshqa joydan yuborilgan. «${ui.BTN.sendLocation}» tugmasini bosing.`, ui.locationKeyboard());
   }
   const loc = ctx.message.location;
   // Qurilmaning joriy GPS'i odatda horizontal_accuracy bilan keladi; xaritadan tanlangan nuqtada u bo'lmaydi.
@@ -210,7 +216,9 @@ const onLocation = async (ctx) => {
     }
   }
 
-  const pending = { lat: loc.latitude, lon: loc.longitude, dist, mode, at: time.stamp(), unverified };
+  // kelish vaqti = lokatsiya yuborilgan payt (deploy paytida navbatda turgan xabar ham to'g'ri vaqt oladi)
+  const sentAt = ctx.message.date && Date.now() - ctx.message.date * 1000 > 60_000 ? time.stampOf(ctx.message.date) : time.stamp();
+  const pending = { lat: loc.latitude, lon: loc.longitude, dist, mode, at: sentAt, unverified };
   const required = employees.needsCheckinVideo(emp);
   if (!required && mode === 'office') return finishCheckIn(ctx, pending, null);
 
@@ -239,13 +247,15 @@ const finishCheckIn = async (ctx, pending, proof) => {
   if (Date.now() - Date.parse(pending.at) > VIDEO_WAIT_MIN * 60000) {
     return ctx.reply(`⌛ Joylashuv eskirdi (${VIDEO_WAIT_MIN} daqiqadan oshdi). Qaytadan «${ui.BTN.checkIn}» bosing.`, ui.kbFor(ctx));
   }
-  const res = await attendance.checkIn(emp, { ...pending, proof, note: proof && proof.note });
+  // ish kuni — lokatsiya yuborilgan kun (23:55 lokatsiya + 00:05 video ertangi kunga yozilmasin)
+  const res = await attendance.checkIn(emp, { ...pending, proof, note: proof && proof.note }, String(pending.at).slice(0, 10));
   if (res.already) return ctx.reply('ℹ️ Siz allaqachon kelgansiz.', ui.kbFor(ctx));
 
   const { dist, mode } = pending;
   const distText = dist != null ? ` · 📍 ${mode === 'field' ? 'uydan' : 'ofisdan'} ${geo.prettyDistance(dist)}` : '';
-  const excusedLate = res.late > 0 && attendance.noticedInTime(res.row, emp);
-  const isLate = res.late > 0 && !employees.isFlexible(emp) && !excusedLate;
+  const offDay = !time.isWorkDay(res.row.work_date);
+  const excusedLate = !offDay && res.late > 0 && attendance.noticedInTime(res.row, emp);
+  const isLate = !offDay && res.late > 0 && !employees.isFlexible(emp) && !excusedLate;
   const open = await tasks.openFor(emp.id);
   activity.mark(ctx, 'checkin', { title: `Ishga keldi: ${time.clock(res.row.checked_in)}`, detail: `${dist != null ? `ofisdan ${geo.prettyDistance(dist)}` : ''}${isLate ? ` · ${time.prettyDuration(res.late)} kech` : ''}`.trim() || null });
   await ctx.reply(
@@ -256,7 +266,7 @@ const finishCheckIn = async (ctx, pending, proof) => {
     { parse_mode: 'HTML', ...ui.kbFor(ctx) },
   );
 
-  const line = `🟢 <b>${esc(emp.full_name)}</b>${emp.position ? ` (${esc(emp.position)})` : ''} ${mode === 'field' ? 'ishga chiqdi 🚶' : 'ishga keldi'} · ${time.clock(res.row.checked_in)}${reports.lateTag(res.row)}`;
+  const line = `🟢 <b>${esc(emp.full_name)}</b>${emp.position ? ` (${esc(emp.position)})` : ''} ${mode === 'field' ? 'ishga chiqdi 🚶' : 'ishga keldi'} · ${time.clock(res.row.checked_in)}${offDay ? ' · 🗓 dam olish kuni' : reports.lateTag(res.row)}`;
   if (pending.unverified) activity.mark(ctx, 'checkin_far', { detail: "aniqligi yo'q joylashuv bilan keldi" });
   const warn = pending.unverified ? "\n⚠️ <i>Joylashuv aniqligi yo'q — xaritadan tanlangan bo'lishi mumkin, tekshirib ko'ring.</i>" : '';
   const text =
@@ -265,9 +275,20 @@ const finishCheckIn = async (ctx, pending, proof) => {
     `${distText} · ${field.mapLink(pending.lat, pending.lon)}` + warn +
     (proof && proof.note ? `\n💬 «${esc(proof.note)}»` : '') +
     (open.length ? `\n📋 ochiq: ${open.length}${open.some((t) => t.due_date < time.today()) ? ' (🔴 kechikkan bor)' : ''}` : '');
-  await notify.toReviewers(botOf(ctx), emp, text, {}, proof);
+  await notify.toAttendanceWatchers(botOf(ctx), emp, text, {}, proof);
   await notify.toArchive(botOf(ctx), text, proof);
   if (config.announceDone) await notify.toGroup(botOf(ctx), `${line}${distText}${open.length ? `\n🎯 Bugungi missiyalari: ${open.length} ta` : ''}`);
+  if (offDay) {
+    // 5-okt qarori: qo'shimcha haq faqat boshliq oldindan chaqirgan bo'lsa (Panel → «📅 Dam olish kuniga chaqirish»)
+    const call = await extradays.forDay(emp.id, res.row.work_date);
+    if (call && (await extradays.markWorked(call.id))) {
+      await ctx.reply(`📅 Siz bugun chaqiruv bo'yicha keldingiz — <b>+${kpi.fmtMoney(call.amount)}</b> oylikka qo'shiladi.`, { parse_mode: 'HTML' });
+      await notify.sendWithInfoCopies(botOf(ctx), emp, await employees.bossTgIds(),
+        `📅 <b>${esc(emp.full_name)}</b> dam olish kuni chaqiruv bo'yicha keldi — ${time.prettyDate(res.row.work_date)}, ${time.clock(res.row.checked_in)} · +${kpi.fmtMoney(call.amount)}`);
+    } else if (!call) {
+      await ctx.reply("ℹ️ Bugun dam olish kuni. Qo'shimcha haq faqat boshliq oldindan chaqirgan bo'lsa beriladi.");
+    }
+  }
 
   if (isLate && config.askLateReason && !res.row.late_reason) return askLateReason(ctx, res.late);
 };
@@ -298,6 +319,8 @@ const onNoVideo = async (ctx) => {
 // KETDIM
 // ---------------------------------------------------------------------------
 
+//   1. Lokatsiya (forward qilingani rad) — ofisdan / uydan qancha uzoqda; ish joyidan tashqarida bo'lsa ⚠️ belgisi
+//   2. Izoh (majburiy) — nima qildi / nega ketyapti. Bo'lim rahbari va HR ga lokatsiya + izoh bilan boradi.
 const doCheckOut = async (ctx) => {
   const emp = ctx.state.employee;
   if (!emp) return notRegistered(ctx);
@@ -307,10 +330,71 @@ const doCheckOut = async (ctx) => {
     const r = await attendance.get(emp.id);
     return ctx.reply(`ℹ️ Ketganingiz allaqachon belgilangan (${time.clock(r.checked_out)}).`, ui.kbFor(ctx));
   }
-  const { row, worked, done, open } = await flows.checkOut(botOf(ctx), emp);
-  activity.mark(ctx, 'checkout', { title: `Ishdan ketdi: ${time.clock(row.checked_out)}`, detail: `${done.length} ta bajarildi, ${open.length} ta qoldi` });
+  session.set(ctx.from.id, { step: 'awaiting_checkout_location' });
+  return ctx.reply(flows.CHECKOUT_PROMPT, { parse_mode: 'HTML', ...ui.locationKeyboard() });
+};
+
+const onCheckoutLocation = async (ctx) => {
+  const emp = ctx.state.employee;
+  if (field.isForwarded(ctx.message) || field.isVenue(ctx.message)) {
+    return ctx.reply(`❌ Bu joylashuv xaritadan tanlangan yoki boshqa joydan yuborilgan. «${ui.BTN.sendLocation}» tugmasini bosing.`, ui.locationKeyboard());
+  }
+  const { latitude: lat, longitude: lon } = ctx.message.location;
+  const place = { lat, lon, dist: null, where: '', warn: null };
+  const flexible = employees.isFlexible(emp);
+  // 5-okt qarori: Ketdim ham Keldim kabi — ofis hodimi ofis radiusida, agent uydan FIELD_MIN_DISTANCE_M uzoqda (flexible — ozod)
+  const reject = (text) => {
+    session.clear(ctx.from.id);
+    return ctx.reply(text, { parse_mode: 'HTML', ...ui.kbFor(ctx) });
+  };
+  if (employees.isField(emp)) {
+    const home = employees.homeOf(emp);
+    if (home) {
+      place.dist = geo.distanceMeters(home.lat, home.lon, lat, lon);
+      place.where = 'uydan';
+      if (place.dist < config.fieldMinDistanceM) {
+        if (!flexible) {
+          return reject(`❌ <b>Siz uyingizga yaqinsiz</b> (${geo.prettyDistance(place.dist)}). «${ui.BTN.checkOut}» faqat uydan kamida <b>${geo.prettyDistance(config.fieldMinDistanceM)}</b> uzoqda — ish joyingizda turib qabul qilinadi.`);
+        }
+        place.warn = 'uyidan turib';
+      }
+    }
+  } else {
+    const officeConf = await branches.officeFor(emp);
+    if (officeConf) {
+      place.dist = geo.distanceMeters(officeConf.lat, officeConf.lon, lat, lon);
+      place.where = 'ofisdan';
+      if (place.dist > officeConf.radius) {
+        if (!flexible) {
+          return reject(`❌ <b>Siz ofisdan uzoqdasiz</b> (${geo.prettyDistance(place.dist)}). Ruxsat: ${geo.prettyDistance(officeConf.radius)} · ${esc(officeConf.name)}.\n«${ui.BTN.checkOut}» faqat ofisda turib qabul qilinadi.`);
+        }
+        place.warn = 'ofisdan tashqarida';
+      }
+    }
+  }
+  session.set(ctx.from.id, { step: 'checkout_note', checkoutPlace: place });
+  const early = flows.earlyLeaveMinutes(emp);
+  return ctx.reply(
+    `✅ Joylashuv qabul qilindi${place.dist != null ? ` (${place.where} ${geo.prettyDistance(place.dist)})` : ''}.\n\n` +
+      (early ? `⚠️ Ish tugashiga (${employees.workEndOf(emp)}) hali <b>${time.prettyDuration(early)}</b> bor — «erta ketdi» belgisi bilan rahbar va HR ga boradi.\n\n` : '') +
+      `✍️ Endi <b>izoh</b> yozing: bugun nima qildingiz, qayerdan / nega hozir ketyapsiz.\n<i>Izoh bo'lim rahbari va HR ga lokatsiya bilan boradi.</i>`,
+    { parse_mode: 'HTML', ...ui.cancelKeyboard() },
+  );
+};
+
+/** checkout_note bosqichi (matn) — STEP_HANDLERS dan */
+const handleCheckoutNote = async (ctx) => {
+  const emp = ctx.state.employee;
+  const s = session.get(ctx.from.id);
+  const note = String(ctx.message.text || '').trim().slice(0, 300);
+  if (!note) return ctx.reply('✍️ Izoh yozing:', ui.cancelKeyboard());
+  session.clear(ctx.from.id);
+  if (!emp || !s.checkoutPlace) return ctx.reply(`Sessiya eskirgan — qaytadan «${ui.BTN.checkOut}» bosing.`, ui.kbFor(ctx));
+  if (await attendance.isCheckedOut(emp.id)) return ctx.reply('ℹ️ Ketganingiz allaqachon belgilangan.', ui.kbFor(ctx));
+  const { row, worked, done, open, early } = await flows.checkOut(botOf(ctx), emp, { place: s.checkoutPlace, note });
+  activity.mark(ctx, 'checkout', { title: `Ishdan ketdi: ${time.clock(row.checked_out)}`, detail: `${done.length} ta bajarildi, ${open.length} ta qoldi${early ? ` · ${time.prettyDuration(early)} erta` : ''} · «${note}»` });
   await ctx.reply(
-    `🏁 <b>Ish kuni yakunlandi</b> — ${time.clock(row.checked_out)}${worked !== null ? ` · ⏱ ${time.prettyDuration(worked)}` : ''}\n\n` +
+    `🏁 <b>Ish kuni yakunlandi</b> — ${time.clock(row.checked_out)}${worked !== null ? ` · ⏱ ${time.prettyDuration(worked)}` : ''}${early ? ` · ⚠️ ${time.prettyDuration(early)} erta` : ''}\n\n` +
       `✅ Bugun bajardingiz: <b>${done.length}</b> ta\n` +
       (open.length ? `⏳ Ochiq qoldi (${open.length}) — ertangi ro'yxatda turadi:\n${ui.taskList(open)}` : `🎉 Ochiq missiya qolmadi. Barakalla!`),
     { parse_mode: 'HTML', ...ui.kbFor(ctx) },
@@ -350,12 +434,34 @@ const handleAbsenceReason = async (ctx) => {
   const proof = ctx.message.text ? null : reasonProof(ctx.message);
   const reason = reasonOf(ctx, proof);
   activity.mark(ctx, 'absence', { title: reason });
-  if (employees.isTop(emp)) {
+  if (employees.isBoss(emp)) {
     await flows.requestAbsence(botOf(ctx), emp, reason, proof);
     return ctx.reply(`✅ Bugun <b>sababli</b> deb belgilandi: «${esc(reason)}». Rahbariyatga xabar berildi.`, { parse_mode: 'HTML', ...ui.kbFor(ctx) });
   }
   await ctx.reply(`📨 So'rov ${esc(await org.recipientsLabel(emp))}ga yuborildi: «${esc(reason)}». Ko'rib chiqiladi.`, { parse_mode: 'HTML', ...ui.kbFor(ctx) });
   await flows.requestAbsence(botOf(ctx), emp, reason, proof);
+};
+
+const lateExcuseKb = (attId) => ui.inline([[ui.cb('✅ Sababli — kechikish hisoblanmasin', `lx:${attId}`)]]);
+
+/** Kech kelgan kunni sababli qilish (rahbariyat) — KPI dagi «vaqtida kelgan kunlar» ga qo'shiladi */
+const onLateExcuse = async (ctx) => {
+  const row = await attendance.byId(ctx.match[1]);
+  if (!row) return ctx.answerCbQuery('Topilmadi');
+  const emp = await employees.byId(row.employee_id);
+  if (!access.canDecideExcuse(ctx.state.actor, emp)) {
+    return ctx.answerCbQuery("⛔️ Kechikishni faqat bo'lim rahbari yoki boshliq sababli qiladi", { show_alert: true });
+  }
+  if (!(await attendance.excuseLate(row.id, ctx.from.id))) return ctx.answerCbQuery('Allaqachon sababli qilingan', { show_alert: true });
+  await ctx.answerCbQuery('✅ Sababli');
+  const who = esc(org.actorName(ctx));
+  await notify.toUser(botOf(ctx), emp.tg_id, `✅ ${time.prettyDate(row.work_date)} dagi kechikishingiz <b>sababli</b> deb belgilandi (${who}) — KPI da hisoblanmaydi.`);
+  const note = `\n\n✅ <b>Sababli</b> — kechikish hisoblanmaydi · ${who}`;
+  const msg = ctx.callbackQuery && ctx.callbackQuery.message;
+  const old = msg ? msg.text || msg.caption || '' : '';
+  if (msg && (msg.photo || msg.video || msg.voice || msg.audio || msg.document || msg.video_note)) await ctx.editMessageReplyMarkup(undefined).catch(() => {});
+  else if (old) await ctx.editMessageText(esc(old) + note, { parse_mode: 'HTML' }).catch(() => {});
+  return undefined;
 };
 
 const onExcuseDecision = async (ctx) => {
@@ -364,7 +470,11 @@ const onExcuseDecision = async (ctx) => {
   if (!row) return ctx.answerCbQuery('Topilmadi');
   const emp = await employees.byId(row.employee_id);
   if (!access.canDecideExcuse(ctx.state.actor, emp)) {
-    return ctx.answerCbQuery('⛔️ Sababli kunni faqat direktor yoki HR tasdiqlaydi', { show_alert: true });
+    return ctx.answerCbQuery("⛔️ Sababli kunni faqat bo'lim rahbari yoki boshliq tasdiqlaydi", { show_alert: true });
+  }
+  // qaror bir marta: HR yoki boshqa nusxadagi tugma keyin bosilsa — o'zgarmaydi; faqat direktor/boshliq ongli ravishda o'zgartira oladi
+  if (row.excuse_status !== 'pending' && (row.excuse_status === (verdict === 'ok' ? 'approved' : 'rejected') || !ctx.state.isAdmin)) {
+    return ctx.answerCbQuery(`Allaqachon hal qilingan: ${row.excuse_status === 'approved' ? 'sababli' : row.excuse_status === 'rejected' ? 'sababsiz' : '—'}`, { show_alert: true });
   }
   const status = verdict === 'ok' ? 'approved' : 'rejected';
   await flows.decideExcuse(botOf(ctx), emp, row.work_date, status, ctx.from.id);
@@ -415,6 +525,7 @@ const register = (bot) => {
   bot.action('ci:novideo', onNoVideo);
   bot.action(/^ab:(ok|no):(\d+)$/, onExcuseDecision);
   bot.action(/^intent:(yes|no)$/, onIntent);
+  bot.action(/^lx:(\d+)$/, onLateExcuse);
 };
 
-module.exports = { register, onLocation, handleLateReason, handleAbsenceReason, handleLateNotice, cancelStep };
+module.exports = { register, onLocation, handleCheckoutNote, handleLateReason, handleAbsenceReason, handleLateNotice, cancelStep };

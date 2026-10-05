@@ -55,7 +55,7 @@ const ackMark = (t) => {
 const showJournal = async (ctx, f = DEFAULT) => {
   lastFilter.set(Number(ctx.from.id), f);
   const { from, to } = periodRange(f.p);
-  const list = await tasks.journal({ from, to, employeeId: f.e || null, giver: f.g === 'a' ? null : f.g, status: f.s === 'a' ? null : f.s });
+  const list = tasks.visibleFor(ctx.state.actor, await tasks.journal({ from, to, employeeId: f.e || null, giver: f.g === 'a' ? null : f.g, status: f.s === 'a' ? null : f.s }));
   const pages = Math.max(1, Math.ceil(list.length / PAGE));
   const page = Math.min(f.page, pages - 1);
   const slice = list.slice(page * PAGE, page * PAGE + PAGE);
@@ -103,10 +103,12 @@ const showEmployees = async (ctx) => {
 
 const STATUS_TEXT = { open: '⏳ ochiq (jarayonda)', review: '🕓 bajardi — tekshiruvda', accepted: '✅ bajarildi (qabul qilingan)', overdue: "🔴 muddati o'tgan", cancelled: '🚫 bekor qilingan' };
 
-const showCard = async (ctx, id) => {
-  const t = await tasks.journalItem(id);
-  if (!t) return render(ctx, "Topshiriq topilmadi.", inline([[cb('⬅️ Orqaga', key(lastFilter.get(Number(ctx.from.id)) || DEFAULT))]]));
+/** back — «⬅️ Orqaga» qayerga (standart: jurnalning oxirgi filtri) */
+const showCard = async (ctx, id, back = null) => {
   const f = lastFilter.get(Number(ctx.from.id)) || DEFAULT;
+  const backData = back || key(f);
+  const t = await tasks.journalItem(id);
+  if (!t || !tasks.visibleTo(ctx.state.actor, t)) return render(ctx, "Topshiriq topilmadi.", inline([[cb('⬅️ Orqaga', backData)]]));
   const reviewer = t.reviewed_by ? await employees.byTgId(t.reviewed_by) : null;
   const canceller = t.cancelled_by ? await employees.byTgId(t.cancelled_by) : null;
   const lines = [
@@ -115,7 +117,7 @@ const showCard = async (ctx, id) => {
     `👤 Kimga: <b>${esc(t.full_name)}</b>`,
     `${GIVER_ICON[t.giver_kind] || ''} Kim bergan: <b>${esc(giverLabel(t))}</b>`,
     `🗓 Berilgan: ${time.prettyDate(String(t.created_at).slice(0, 10))} ${time.clock(t.created_at)}`,
-    `⏱ Muddat: ${time.prettyDate(t.due_date)}`,
+    `⏱ Muddat: ${time.prettyDate(t.due_date)}${t.start_time ? ` · ⏰ boshlanish ${t.start_time}${t.start_notified_at ? ' (xabar bordi)' : ''}` : ''}`,
     `📌 Holat: <b>${STATUS_TEXT[t.status_kind]}</b>`,
   ];
   if (t.task_media_type) lines.push(`${ui.MEDIA_ICON[t.task_media_type] || '📎'} Topshiriq: ${ui.MEDIA_LABEL[t.task_media_type] || t.task_media_type}${t.task_file_name ? ` · ${esc(t.task_file_name)}` : ''}`);
@@ -125,11 +127,17 @@ const showCard = async (ctx, id) => {
   else if (t.done_at) lines.push('📎 Isbot: yo\'q');
   if (t.reviewed_at && t.status === 'accepted') lines.push(`✅ Qabul qildi: ${esc(reviewer ? reviewer.full_name : String(t.reviewed_by))} · ${time.clock(t.reviewed_at)}`);
   if (Number(t.returned_count)) lines.push(`↩️ Qaytarilgan: ${t.returned_count} marta${t.review_note ? ` · «${esc(t.review_note)}»` : ''}`);
+  const reps = await tasks.replies(t.id);
+  if (reps.length) {
+    const last = reps[reps.length - 1];
+    lines.push(`💬 Yozishma: ${reps.length} ta · oxirgisi — ${esc(last.from_name || '')}: ${last.body ? `«${esc(last.body.slice(0, 120))}»` : ui.MEDIA_ICON[last.media_type] || 'media'}`);
+  }
   if (t.status === 'cancelled') lines.push(`🚫 Bekor qildi: ${esc(canceller ? canceller.full_name : String(t.cancelled_by || '—'))}${t.cancelled_at ? ` · ${time.prettyDate(String(t.cancelled_at).slice(0, 10))}` : ''}`);
   const rows = [];
   if (t.task_file_id) rows.push([cb(`${ui.MEDIA_ICON[t.task_media_type] || '📎'} Topshiriqni ko'rish / eshitish`, `tj:m:${t.id}`)]);
   if (t.proof_file_id) rows.push([cb('📎 Isbotni ko\'rish', `tj:p:${t.id}`)]);
-  rows.push([cb('⬅️ Orqaga', key(f))]);
+  if (require('../services/access').canCancelTask(ctx.state.actor, t)) rows.push([cb("🗑 O'chirish (bekor qilish)", `tk:del:${t.id}`)]);
+  rows.push([cb('⬅️ Orqaga', backData)]);
   return render(ctx, lines.join('\n'), inline(rows));
 };
 
@@ -149,18 +157,18 @@ const register = (bot) => {
   bot.action(/^tj:m:(\d+)$/, async (ctx) => {
     if (!(await guardSee(ctx))) return;
     const t = await tasks.byId(ctx.match[1]);
-    if (!t || !t.task_file_id) return ctx.answerCbQuery("Topshiriq media'si yo'q");
+    if (!t || !t.task_file_id || !tasks.visibleTo(ctx.state.actor, t)) return ctx.answerCbQuery("Topshiriq media'si yo'q");
     await ctx.answerCbQuery();
     await notify.sendProof({ telegram: ctx.telegram }, ctx.from.id, { type: t.task_media_type, fileId: t.task_file_id }, `📋 <b>${esc(t.full_name)}</b> ga topshiriq: ${esc(t.title)}`);
   });
   bot.action(/^tj:p:(\d+)$/, async (ctx) => {
     if (!(await guardSee(ctx))) return;
     const t = await tasks.byId(ctx.match[1]);
-    if (!t || !t.proof_file_id) return ctx.answerCbQuery("Isbot yo'q");
+    if (!t || !t.proof_file_id || !tasks.visibleTo(ctx.state.actor, t)) return ctx.answerCbQuery("Isbot yo'q");
     await ctx.answerCbQuery();
     await notify.sendProof({ telegram: ctx.telegram }, ctx.from.id, { type: t.proof_type, fileId: t.proof_file_id },
       `📎 <b>${esc(t.full_name)}</b>: ${esc(t.title)}${t.proof_note ? `\n💬 «${esc(t.proof_note)}»` : ''}`);
   });
 };
 
-module.exports = { register, showJournal };
+module.exports = { register, showJournal, showCard };

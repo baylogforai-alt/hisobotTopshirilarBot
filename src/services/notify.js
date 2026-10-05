@@ -77,20 +77,29 @@ const adminIds = async () => {
   return [...ids].filter(Boolean);
 };
 
-/** Direktorlar + HR — "direktor ko'rgan hamma narsa" boradiganlar */
-const seeAllIds = async () => {
+/**
+ * Direktorlar + HR — "direktor ko'rgan hamma narsa" boradiganlar.
+ * noBoss — davomat hisobotlari (ertalabki holat, kun yakuni): boshliqqa (bazadagi role='admin' hodim) bormaydi.
+ */
+const seeAllIds = async ({ noBoss = false } = {}) => {
   const employees = require('./employees');
   const ids = new Set(await adminIds());
   try {
     (await employees.listHr()).forEach((e) => ids.add(Number(e.tg_id)));
+    if (noBoss) {
+      // boshliq(lar)ni chiqarib tashlaydi — hech kim qolmasa o'zgarishsiz (hisobot yo'qolmasin)
+      const rest = new Set(ids);
+      (await employees.listAdmins()).forEach((e) => rest.delete(Number(e.tg_id)));
+      if ([...rest].filter(Boolean).length) return [...rest].filter(Boolean);
+    }
   } catch (err) {
     console.error("[notify] HR ro'yxati olinmadi:", err.message);
   }
   return [...ids].filter(Boolean);
 };
 
-const toSeeAll = async (bot, text, extra = {}, exceptTgId = null) => {
-  const ids = (await seeAllIds()).filter((id) => Number(id) !== Number(exceptTgId));
+const toSeeAll = async (bot, text, extra = {}, exceptTgId = null, { noBoss = false } = {}) => {
+  const ids = (await seeAllIds({ noBoss })).filter((id) => Number(id) !== Number(exceptTgId));
   for (const id of ids) {
     await toUser(bot, id, text, extra);
     await tg.throttle();
@@ -140,6 +149,18 @@ const toReviewers = async (bot, emp, text, extra = {}, proof = null) => {
   return sendWithInfoCopies(bot, emp, ids, text, extra, proof);
 };
 
+/** Keldi / ketdi / tashrif — bo'lim rahbarlari + HR (boshliqqa emas); texnik direktorlarga nusxa */
+const toAttendanceWatchers = async (bot, emp, text, extra = {}, proof = null) => {
+  const employees = require('./employees');
+  return sendWithInfoCopies(bot, emp, await employees.attendanceWatchersOf(emp), text, extra, proof);
+};
+
+/** «Bajardim» tekshiruvi — bo'lim rahbarlari + boshliq + beruvchi (+ xohlagan HR) */
+const toDoneReviewers = async (bot, emp, task, text, extra = {}, proof = null) => {
+  const employees = require('./employees');
+  return sendWithInfoCopies(bot, emp, await employees.doneReviewersOf(emp, task), text, extra, proof);
+};
+
 /** ids ga tugmalar bilan; texnik direktorlarga (ADMIN_IDS, rahbariyatda yo'q) — tugmasiz nusxa */
 const sendWithInfoCopies = async (bot, emp, ids, text, extra = {}, proof = null) => {
   let sent = 0;
@@ -174,10 +195,12 @@ const sendProof = async (bot, chatId, proof, caption, extra = {}) => {
 /** Kelmaslik / kechikish xabari: HR + boshliq (direktorlar) + bo'lim rahbari */
 const toHrAndBoss = async (bot, emp, text, extra = {}, proof = null, { decideExtra = null } = {}) => {
   const org = require('./org');
-  const ids = await org.absenceRecipientsOf(emp);
+  let ids = await org.absenceRecipientsOf(emp);
   if (!decideExtra) return sendWithInfoCopies(bot, emp, ids, text, extra, proof);
-  // tasdiqlash tugmalari faqat rahbariyatga (boshliq + HR); bo'lim rahbari va boshqalarga — tugmasiz
+  // tasdiqlash tugmalari faqat bo'lim rahbari va boshliqqa (org.approversOf); HR va boshqalarga — tugmasiz.
+  // Bo'lim rahbari yo'q bo'lsa boshliq (keldi-ketdi sozlamasi o'chiq bo'lsa ham) tugmali xabarni oladi — aks holda hal qiladigan odam qolmaydi
   const top = new Set(await org.approversOf(emp));
+  ids = [...new Set([...ids.map(Number), ...top])];
   let sent = 0;
   for (const id of ids) {
     const ex = top.has(Number(id)) ? decideExtra : extra;
@@ -222,6 +245,6 @@ const toArchive = async (bot, text, proof = null) => {
 };
 
 module.exports = {
-  getGroupId, setGroupId, toGroup, toUser, docToGroup, docToUser, adminIds, toAdmins, docToAdmins, toMany, toReviewers, sendProof,
-  getArchiveId, setArchiveId, toArchive, toHrAndBoss, seeAllIds, toSeeAll,
+  getGroupId, setGroupId, toGroup, toUser, docToGroup, docToUser, adminIds, toAdmins, docToAdmins, toMany, toReviewers, toAttendanceWatchers, toDoneReviewers, sendProof,
+  getArchiveId, setArchiveId, toArchive, toHrAndBoss, seeAllIds, toSeeAll, sendWithInfoCopies,
 };

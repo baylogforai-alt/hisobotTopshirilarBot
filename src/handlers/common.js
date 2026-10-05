@@ -10,6 +10,7 @@ const notify = require('../services/notify');
 const activity = require('../services/activity');
 const access = require('../services/access');
 const webapp = require('../services/webapp');
+const db = require('../db');
 
 const { esc } = ui;
 
@@ -91,17 +92,20 @@ const HELP_EMPLOYEE = `
 <b>📖 QO'LLANMA</b>
 
 <b>Har kuni:</b>
-0️⃣ Har oyning 1-kuni «yangi ish oyi» xabari keladi — «✅ Tanishdim» ni bosing.
-1️⃣ Ishga kelganingizda — <b>«${ui.BTN.checkIn}»</b> → joylashuvni yuborasiz (ofis radiusida; hudud agenti — uyidan 1 km dan uzoqda). Kechiksangiz sabab so'raladi.
+0️⃣ Har oyning 1-kuni «yangi ish oyi» xabari keladi — «✅ Tanishdim» ni bosing${config.monthStartRequired ? ' (shundan keyin «' + ui.BTN.checkIn + '» ochiladi)' : ''}.
+1️⃣ Ishga kelganingizda — <b>«${ui.BTN.checkIn}»</b> → joylashuvni yuborasiz${config.officeCheckinVideo ? ' → <b>video</b>' : ''} (ofis radiusida; hudud agenti — uyidan ${(config.fieldMinDistanceM / 1000).toLocaleString('uz')} km dan uzoqda). Kechiksangiz sabab so'raladi.
 📍 Hudud agenti borgan joyida — «${ui.BTN.visit}» → joylashuv → video yoki audio → izoh.
 2️⃣ Missiyalaringiz «${ui.BTN.myTasks}» da. Boshliq yangi topshiriq bersa (matn, 🎤 ovoz, 🎥 video yoki 📄 fayl) — xabar keladi, <b>«✅ Eshitdim, tushundim»</b> ni bosing (yoki «tushundim» deb yozing).
-3️⃣ Ishni tugatsangiz — <b>«${ui.BTN.done}»</b> → ro'yxatdan tanlang → isbot: rasm, video, audio yoki fayl (PDF, Excel, Word…). Boshliq tekshirib qabul qiladi yoki qaytaradi.
+3️⃣ Ishni tugatsangiz — <b>«${ui.BTN.done}»</b> → ro'yxatdan tanlang → isbot: rasm, video, audio yoki fayl (PDF, Excel, Word…). Boshliq tekshirib qabul qiladi yoki kamchilik yozib qaytaradi. «Bajardim» — faqat «${ui.BTN.checkIn}» dan keyin.
 4️⃣ O'zingizga reja yozish — «${ui.BTN.selfTask}» (har birini yangi qatorda; boshiga <b>!</b> — muhim). Kun ichida paydo bo'lgan ish: <code>/bugun matn</code>.
 5️⃣ Kun oxirida — <b>«${ui.BTN.dailyReport}»</b>: bugun nima qildingiz, qanday muammo bo'ldi — o'z so'zingiz bilan (rasm ham mumkin). Boshliq o'qiydi.
-6️⃣ Ketishda — «${ui.BTN.checkOut}».
+6️⃣ Ketishda — «${ui.BTN.checkOut}» → <b>joylashuv</b> → <b>izoh</b> (nima qildingiz). Ish tugashidan oldin ketsangiz — «erta ketdi» deb belgilanadi.
+📌 «${ui.BTN.stActive}», «${ui.BTN.stFix}», «${ui.BTN.stReview}», «${ui.BTN.stDone}» — missiyalar holati bo'yicha (nechta va qaysilari).
 
-⏰ Kech qolsangiz — «${ui.BTN.late}» → sababini yozing yoki video/audio yuboring. Ish boshlanishidan kamida 1 soat oldin aytsangiz — kechikish hisoblanmaydi.
-🙋 Kela olmasangiz — «${ui.BTN.absence}» → sabab (matn, video, audio yoki rasm). Rahbariyat tasdiqlasa kun sababli hisoblanadi.
+⏰ Kech qolsangiz — «${ui.BTN.late}» → sababini yozing yoki video/audio yuboring. Ish boshlanishidan kamida ${config.lateNoticeMinBefore} daqiqa oldin aytsangiz — kechikish hisoblanmaydi.
+🙋 Kela olmasangiz — «${ui.BTN.absence}» → sabab (matn, video, audio yoki rasm). Rahbar yoki boshliq tasdiqlasa kun sababli hisoblanadi.
+↩️ Ishingiz kamchilik bilan qaytarilsa — «👌 Xo'p, tushundim» yoki «💬 O'z javobim» (matn, ovoz, video, rasm, fayl) bilan javob qaytarasiz.
+⏰ Missiyaga boshlanish soati qo'yilgan bo'lsa — aynan o'sha soatda «hozir bajaring» xabari keladi.
 🔴 Muddati o'tgan topshiriqlar qizil belgi bilan ko'rinadi va KPI ga ta'sir qiladi. Bajarilmagan ish yo'qolmaydi — ertangi ro'yxatda turadi.
 📊 «${ui.BTN.myReport}» — shu oydagi natijalaringiz va KPI. /excel — hisobotingiz Excel faylda.
 🔔 «${ui.BTN.reminders}» — topshiriq eslatmalari qachon kelsin (har N soat yoki o'z vaqtlaringiz) — direktor tasdiqlaydi.
@@ -110,7 +114,7 @@ const HELP_EMPLOYEE = `
 
 📱 /ilova — xuddi shu ishlar qulay oynada (agar ulangan bo'lsa).
 
-<b>Buyruqlar:</b> /menu · /ilova · /keldim · /kech · /kelmayman · /ketdim · /missiyalarim · /bajardim · /vazifa · /bugun · /kunlik · /hisobot · /oylik · /eslatma · /tashrif · /excel · /id · /yordam
+<b>Buyruqlar:</b> /menu · /ilova · /keldim · /kech · /kelmayman · /ketdim · /missiyalarim · /bajardim · /vazifa · /bugun · /kunlik · /faol · /kutilmoqda · /bajarilgan · /korib_chiqish · /hisobot · /oylik · /eslatma · /tashrif · /excel · /id · /yordam
 `.trim();
 
 const HELP_MANAGER = `
@@ -118,7 +122,9 @@ const HELP_MANAGER = `
 <b>Boshliq / direktor / HR uchun:</b>
 👥 «${ui.BTN.myTeam}» — jamoangiz: bugun kim keldi, har bir hodim hisoboti, topshiriq berish.
 📤 «${ui.BTN.assign}» — topshiriq (matn, 🎤 ovoz, 🎥 video yoki 📄 fayl + muddat; hodim «✅ Tushundim» bilan tasdiqlaydi). Direktor avval rahbarni (HR, sotuv rahbari) ko'radi: o'ziga yoki «👥 Hodimlariga» → hodimni tanlaydi.
-🔎 «${ui.BTN.review}» — «Bajardim» deganlarni qabul qilish / qaytarish.
+☑️ «Bir nechta / hammaga» — bir xil topshiriqni belgilangan hodimlarning har biriga. HR va direktor boshliqqa ham topshiriq bera oladi (u bajarganda isbot ixtiyoriy).
+🔎 «${ui.BTN.review}» — «Bajardim» deganlarni qabul qilish / qaytarish. HR: «Bajardim» xabarlari o'ziga kelsinmi — shu yerdagi tugma bilan (/bajardim_xabar).
+📢 «${ui.BTN.announce}» — e'lon (masalan «bugun majlis»): rahbar — o'z bo'limiga, HR va direktor — hammaga / bo'limlarga / tanlanganlarga.
 ⭐ «${ui.BTN.score}» — oy oxirida bo'lim hodimlarini 1–10 baholash (KPI ga kiradi).
 🏢 «${ui.BTN.myDept}» — bo'lim holati (bugun va oy).
 📝 Hodimlarning kunlik hisobotlari sizga shaxsiy keladi — «Ko'rdim» yoki izoh qoldirasiz.
@@ -128,14 +134,17 @@ const HELP_MANAGER = `
 const HELP_ADMIN = `
 
 <b>Direktor:</b>
-⚙️ «${ui.BTN.panel}» — hodimlar, bo'limlar, so'rovlar, ofis va filiallar, ish vaqti, yo'nalishlar, eslatmalar, bugungi holat, kunlik hisobotlar.
+⚙️ «${ui.BTN.panel}» — hodimlar, bo'limlar, so'rovlar, ofis va filiallar, ish vaqti, yo'nalishlar, eslatmalar, bugungi holat, kunlik hisobotlar, ko'rinish sozlamalari, KPI sharti.
 📢 «${ui.BTN.announce}» — hammaga yoki tanlangan hodimlarga bitta e'lon (matn, rasm, video, ovoz, fayl) — kim o'qiganini ko'rasiz.
-📋 «${ui.BTN.journal}» — barcha topshiriqlar jurnali: kim kimga qachon nima bergan, holati, «tushundi», isbot.
+📋 «${ui.BTN.journal}» — barcha topshiriqlar jurnali: kim kimga qachon nima bergan, holati, «tushundi», isbot; 🗑 bekor qilish.
 💰 «${ui.BTN.kpi}» — oylik KPI: hodimni tanlab ko'rish, tahrirlash, tasdiqlash, chiqarish, Excel.
 📈 «${ui.BTN.reports}» — jamoa/bo'lim hisobotlari, davr hisoboti (istalgan sana oralig'i), Excel.
 🗂 «${ui.BTN.archive}» — hodimlar arxivi: kun daftari, harakatlar tarixi, 7/30 kunlik, Excel.
-Hodim kartochkasida: filial, ish turi (ofis/hudud), video, oklad, KPI summasi, HR belgisi, davomat nazorati.
-/panel · /elon · /jurnal · /kpi · /hisobotlar · /arxiv · /davr · /oraliq · /jamoa_excel · /hodim_qosh · /hodimlarim · /ish_vaqti · /nomlar · /filiallar · /tashriflar · /ofis · /holat · /guruh_ulash · /arxiv_ulash (guruh ichida)
+💵 Panel → «Oyliklar» (/oyliklar) — hamma hodimning okladi va KPI summasi, bosib yoziladi.
+📅 /chaqirish (Panel → «Dam olish kuniga chaqirish») — dam olish kuni ishlatish, qo'shimcha haq bilan.
+🎬 /yordam_video — /yordam uchun video qo'llanma yuklash.
+Hodim kartochkasida: filial, ish turi (ofis/hudud), ish boshlanishi va tugashi, video, oklad, KPI summasi, HR belgisi, davomat nazorati, topshiriqlari.
+/panel · /elon · /jurnal · /kpi · /hisobotlar · /arxiv · /davr · /oraliq · /jamoa_excel · /hodim_qosh · /hodimlarim · /oyliklar · /chaqirish · /ish_vaqti · /nomlar · /filiallar · /tashriflar · /ofis · /holat · /guruh_ulash · /arxiv_ulash (guruh ichida)
 `.trim();
 
 const WEBAPP_HINT =
@@ -156,8 +165,48 @@ const welcome = (ctx) => {
   );
 };
 
+/** Guruhlarda faqat shu buyruqlar ishlaydi — /oylik, /oyliklar, /kpi va h.k. guruhga chiqmasin */
+const GROUP_COMMANDS = new Set(['/id', '/guruh_ulash', '/arxiv_ulash']);
+const groupGuard = (ctx, next) => {
+  if (!ctx.chat || ctx.chat.type === 'private') return next();
+  const text = ctx.message && ctx.message.text;
+  if (text && GROUP_COMMANDS.has(text.trim().split(/[\s@]/)[0].toLowerCase())) return next();
+  if (ctx.updateType === 'callback_query') return ctx.answerCbQuery('Bu tugma faqat bot bilan shaxsiy chatda ishlaydi').catch(() => {});
+  return undefined;
+};
+
+/** Menyu tugmasi yoki /buyruq — yarim qolgan bosqich tugaydi (keyingi matn eski bosqichga ketmasin) */
+const KEEP_STEP = new Set([ui.BTN.cancel, ui.BTN.skip, ui.BTN.sendLocation]);
+const MENU_TEXTS = new Set(Object.values(ui.BTN).filter((t) => !KEEP_STEP.has(t)));
+const menuResetsStep = (ctx, next) => {
+  const text = ctx.message && ctx.message.text && ctx.message.text.trim();
+  if (text && ctx.from && ctx.chat && ctx.chat.type === 'private' && (MENU_TEXTS.has(text) || text.startsWith('/'))) session.clear(ctx.from.id);
+  return next();
+};
+
+/**
+ * Bir xil tugma (foydalanuvchi + callback_data) bir vaqtda ikki marta ishlamasin: Telegraf bitta paketdagi
+ * update'larni parallel bajaradi — ikki marta tez bosish ikkita topshiriq / e'lon / xabar yaratardi.
+ * Ketma-ket bosish esa handlerlarning o'zida (holat sharti bilan) to'xtatiladi.
+ */
+const inflight = new Set();
+const dedupeCallbacks = async (ctx, next) => {
+  if (ctx.updateType !== 'callback_query' || !ctx.from || !ctx.callbackQuery) return next();
+  const key = `${ctx.from.id}:${ctx.callbackQuery.data}`;
+  if (inflight.has(key)) return ctx.answerCbQuery('⏳ Bajarilmoqda…').catch(() => {});
+  inflight.add(key);
+  try {
+    return await next();
+  } finally {
+    inflight.delete(key);
+  }
+};
+
 const register = (bot) => {
+  bot.use(dedupeCallbacks);
   bot.use(attachEmployee);
+  bot.use(groupGuard);
+  bot.use(menuResetsStep);
   bot.use(trackUsage);
 
   bot.command('id', (ctx) => ctx.reply(`🆔 Telegram ID: <code>${ctx.from.id}</code>\n💬 Chat ID: <code>${ctx.chat.id}</code>`, { parse_mode: 'HTML' }));
@@ -206,11 +255,50 @@ const register = (bot) => {
     return ctx.reply('🏠 Asosiy menyu', ui.kbFor(ctx));
   });
 
-  bot.command(['yordam', 'help'], (ctx) => {
+  bot.command(['yordam', 'help'], async (ctx) => {
     if (!ctx.state.employee && !ctx.state.isAdmin) return notRegistered(ctx);
     activity.mark(ctx, 'help');
+    // video qo'llanma (boshliq /yordam_video bilan yuklaydi) — avval video, keyin matn
+    const video = await helpVideo();
+    if (video) await notify.sendProof({ telegram: ctx.telegram }, ctx.chat.id, video, "🎬 <b>Botdan foydalanish — video qo'llanma</b>");
     return ctx.reply(helpText(ctx), { parse_mode: 'HTML' });
+  });
+
+  // /yordam_video — boshliq/direktor qo'llanma videosini yuklaydi (keyingi yuborilgan video); «/yordam_video ochir» — olib tashlaydi
+  bot.command('yordam_video', async (ctx) => {
+    if (!ctx.state.isAdmin) return ctx.reply("⛔️ Faqat boshliq/direktor uchun.");
+    if (/ochir|o'chir|olib/i.test(String(ctx.message.text || ''))) {
+      await db.setSetting(HELP_VIDEO_KEY, '');
+      return ctx.reply("🗑 /yordam videosi olib tashlandi.", ui.kbFor(ctx));
+    }
+    session.set(ctx.from.id, { step: 'help_video' });
+    return ctx.reply(
+      `🎬 <b>/yordam uchun video qo'llanma</b>\n\nVideoni shu yerga yuboring (oddiy video yoki fayl). Hodimlar /yordam bosganda avval shu video chiqadi.${(await helpVideo()) ? '\n<i>Hozir video bor — yangisi uning o\'rniga qo\'yiladi. Olib tashlash: /yordam_video ochir</i>' : ''}`,
+      { parse_mode: 'HTML', ...ui.cancelKeyboard() },
+    );
+  });
+  bot.on(['video', 'video_note', 'animation', 'document'], async (ctx, next) => {
+    if (ctx.chat.type !== 'private' || session.get(ctx.from.id).step !== 'help_video') return next();
+    if (!ctx.state.isAdmin) { session.clear(ctx.from.id); return next(); }
+    const m = ctx.message;
+    const media = m.video ? { type: 'video', fileId: m.video.file_id }
+      : m.video_note ? { type: 'video_note', fileId: m.video_note.file_id }
+        : m.animation ? { type: 'video', fileId: m.animation.file_id }
+          : { type: 'document', fileId: m.document.file_id };
+    session.clear(ctx.from.id);
+    await db.setSetting(HELP_VIDEO_KEY, JSON.stringify(media));
+    return ctx.reply("✅ Video saqlandi. Endi /yordam bosilganda avval shu video chiqadi.", ui.kbFor(ctx));
   });
 };
 
-module.exports = { register, attachEmployee, trackUsage, notRegistered, helpText };
+const HELP_VIDEO_KEY = 'help_video';
+/** /yordam video qo'llanmasi {type, fileId} yoki null */
+const helpVideo = async () => {
+  try {
+    const raw = await db.getSetting(HELP_VIDEO_KEY);
+    const v = raw ? JSON.parse(raw) : null;
+    return v && v.fileId ? v : null;
+  } catch { return null; }
+};
+
+module.exports = { register, attachEmployee, trackUsage, notRegistered, helpText, helpVideo };

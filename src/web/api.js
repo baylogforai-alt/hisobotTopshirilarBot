@@ -2,6 +2,7 @@
 
 const https = require('https');
 const config = require('../config');
+const extradays = require('../services/extradays');
 const time = require('../time');
 const ui = require('../ui');
 const session = require('../session');
@@ -22,6 +23,8 @@ const notify = require('../services/notify');
 const office = require('../services/office');
 const org = require('../services/org');
 const excel = require('../services/excel');
+const announcements = require('../services/announcements');
+const chats = require('../services/chats');
 
 /**
  * WEB APP API. Har bir handler: ({ actor, params, query, body, bot, res }) → JSON.
@@ -91,6 +94,14 @@ const moneyOf = (v, name) => {
   if (!Number.isFinite(n) || n < 0 || n > 1e12) bad(`${name} noto'g'ri`);
   return n > 0 ? Math.round(n) : null;
 };
+/** Boshlanish soati 'HH:mm' (ixtiyoriy). Muddat bugun bo'lsa — o'tgan soat bo'lmasin */
+const startOf = (v, due) => {
+  if (v === undefined || v === null || v === '') return null;
+  const t = tasks.normTime(v);
+  if (!t) bad("Soat noto'g'ri (masalan 09:00)");
+  if (tasks.startPassed(due, t)) bad("Bu soat o'tib ketgan");
+  return t;
+};
 const prioOf = (v) => (v === undefined || v === null ? null : v === 'high' ? 'high' : v === 'normal' ? 'normal' : bad("Ustuvorlik noto'g'ri"));
 
 const mustEmployee = (actor) => {
@@ -126,6 +137,7 @@ const empOut = (e, { money = false } = {}) => ({
   videoRequired: Number(e.video_required) === 1,
   homeSet: Boolean(e.home_lat && e.home_lon),
   workStart: e.work_start || null,
+  workEnd: e.work_end || null,
   title: employees.titleOf(e),
   icon: employees.personIcon(e),
   ...(money ? { salary: numOrNull(e.salary), bonusFund: numOrNull(e.bonus_fund) } : {}),
@@ -153,6 +165,7 @@ const taskOut = (t) => {
     media: t.task_file_id ? { type: t.task_media_type, name: t.task_file_name || null } : null,
     ackAt: t.ack_at || null,
     needsAck: tasks.needsAck(t),
+    startTime: t.start_time || null,
     employee: { id: Number(t.employee_id), name: t.full_name },
   };
 };
@@ -192,6 +205,7 @@ const kpiOut = (k, { money = false } = {}) => ({
   fail: k.kpi_fail || null,
   status: k.status,
   note: k.note || null,
+  gate: { attended: Number(k.ontime_days) + (Number(k.extra_days) || 0), required: numOrNull(k.required_days), extra: Number(k.extra_days) || 0, taskPct: numOrNull(k.tasks_gate_pct) },
   ...(money ? { bonusFund: numOrNull(k.bonus_fund), bonus: numOrNull(k.bonus_amount), salary: numOrNull(k.salary), pay: kpi.payOf(k) } : {}),
 });
 
@@ -216,11 +230,7 @@ const loadTask = async (taskId) => {
 };
 
 /** Topshiriqni ko'rish: o'zi, tekshiruvchisi yoki direktor/HR (nazoratchi — yo'q) */
-const canSeeTask = async (actor, t) => {
-  if (actor.employee && Number(t.employee_id) === Number(actor.employee.id)) return true;
-  if (actor.seeAll) return true;
-  return actor.isManager && employees.canManage(actor.employee, actor.isAdmin, await employees.byId(t.employee_id));
-};
+const canSeeTask = access.canSeeTask;
 
 // ---------------------------------------------------------------------------
 // ISBOT FAYLLARI (Telegram'dan oqim — bot tokeni brauzerga chiqmaydi)
@@ -274,7 +284,7 @@ route('GET', '/api/me', async ({ actor }) => {
     company: config.companyName,
     today: time.today(),
     todayPretty: time.prettyDate(time.today()),
-    workStart: worktime.get(),
+    workStart: worktime.get(), lateNoticeMin: config.lateNoticeMinBefore,
     lateGrace: config.lateGraceMinutes,
     kpiMode: config.kpiMode,
     roles: {
@@ -282,6 +292,7 @@ route('GET', '/api/me', async ({ actor }) => {
       isBoss: employees.isBoss(emp),
     },
     employee: emp ? empOut(emp, { money: true }) : null,
+    doneNotify: actor.isHr ? employees.wantsDoneNotify(emp) : null,
     counts: {},
   };
   if (emp) {
@@ -294,8 +305,14 @@ route('GET', '/api/me', async ({ actor }) => {
     out.monthConfirmed = employees.isBoss(emp) || !config.monthStartRequired || (await months.isConfirmed(emp.id));
     out.workStart = emp.work_start || worktime.get();
   }
+  if (emp || actor.isAdmin) {
+    // «⏳ Faol · 🕓 Kutilmoqda · ✅ Bajarilgan» plitkalari: hodim — o'ziniki, rahbar — bo'limi, boshliq/HR — hamma
+    const st = {};
+    for (const k of ['active', 'fix', 'review', 'accepted']) st[k] = (await access.tasksByKind(actor, k)).length;
+    out.counts.status = st;
+  }
   if (actor.isManager) {
-    const list = await tasks.pendingReview(actor.seeAll ? null : emp && emp.department_id);
+    const list = tasks.visibleFor(actor, await tasks.pendingReview(actor.seeAll ? null : emp && emp.department_id));
     let n = 0;
     for (const t of list) if (access.canReview(actor, await employees.byId(t.employee_id))) n += 1;
     out.counts.review = n;
@@ -315,12 +332,38 @@ route('GET', '/api/me', async ({ actor }) => {
 // ===========================================================================
 // TOPSHIRIQLAR
 // ===========================================================================
+/** Holat bo'yicha: ?kind=active|review|accepted&mine=1 — hodim o'ziniki, rahbar bo'limi, boshliq/HR hamma (HR — boshliq berganlarsiz) */
+route('GET', '/api/tasks/status', async ({ actor, query }) => {
+  need(actor.employee || actor.isAdmin, "Ruxsat yo'q");
+  const kind = query.get('kind') || 'active';
+  if (!['active', 'fix', 'review', 'accepted'].includes(kind)) bad("Holat noto'g'ri");
+  const mine = query.get('mine') === '1' || !actor.isManager;
+  const emp = !mine && query.get('emp') ? id(query.get('emp'), 'Hodim') : null;
+  const counts = {};
+  let list = [];
+  for (const k of ['active', 'fix', 'review', 'accepted']) {
+    const l = (await access.tasksByKind(actor, k, { mine })).filter((t) => !emp || Number(t.employee_id) === emp);
+    counts[k] = l.length;
+    if (k === kind) list = l;
+  }
+  const rc = await tasks.replyCounts();
+  return {
+    kind, mine, emp, empName: emp ? ((await employees.byId(emp)) || {}).full_name || null : null, canTeam: actor.isManager, counts, total: list.length,
+    tasks: list.slice(0, 300).map((t) => ({
+      ...taskOut(t), replies: rc.get(Number(t.id)) || 0, kind: t.status_kind, giverKind: t.giver_kind,
+      giverName: t.giver_kind === 'self' ? null : t.giver_name || (t.giver_kind === 'admin' ? 'Direktor' : null),
+    })),
+  };
+});
+
 route('GET', '/api/tasks/my', async ({ actor }) => {
   const emp = mustEmployee(actor);
+  const rc = await tasks.replyCounts();
+  const out = (t) => ({ ...taskOut(t), replies: rc.get(Number(t.id)) || 0 });
   return {
-    open: (await tasks.openFor(emp.id)).map(taskOut),
-    awaiting: (await tasks.awaitingReviewFor(emp.id)).map(taskOut),
-    accepted: (await tasks.acceptedSince(emp.id, time.addDays(time.today(), -30))).map(taskOut),
+    open: (await tasks.openFor(emp.id)).map(out),
+    awaiting: (await tasks.awaitingReviewFor(emp.id)).map(out),
+    accepted: (await tasks.acceptedSince(emp.id, time.addDays(time.today(), -30))).map(out),
   };
 });
 
@@ -329,7 +372,8 @@ route('POST', '/api/tasks/self', async ({ actor, body, bot }) => {
   const emp = mustEmployee(actor);
   const titles = flows.splitTitles(text(body.text, 5000, { name: 'Vazifa matni' }));
   if (!titles.length) bad("Vazifa matni bo'sh");
-  const created = await flows.addSelfTasks(bot, emp, titles, dueOf(body.due), { priority: prioOf(body.priority) });
+  const due = dueOf(body.due);
+  const created = await flows.addSelfTasks(bot, emp, titles, due, { priority: prioOf(body.priority), startTime: startOf(body.time, due) });
   return { created: created.map(taskOut) };
 });
 
@@ -372,6 +416,7 @@ route('POST', '/api/tasks/assign', async ({ actor, body, bot }) => {
   if (!titles.length) bad("Topshiriq matni bo'sh");
   const due = dueOf(body.due);
   const priority = prioOf(body.priority);
+  const startTime = startOf(body.time, due);
   const targets = [];
   for (const empId of ids) {
     const e = await employees.byId(empId);
@@ -382,10 +427,10 @@ route('POST', '/api/tasks/assign', async ({ actor, body, bot }) => {
   }
   const results = [];
   for (const e of targets) {
-    const { created } = await flows.assignTasks(bot, actor, e, titles, due, { priority });
+    const { created } = await flows.assignTasks(bot, actor, e, titles, due, { priority, startTime });
     results.push({ employeeId: Number(e.id), name: e.full_name, count: created.length });
   }
-  return { results, due };
+  return { results, due, startTime };
 });
 
 /** Tahrirlash: { title?, due?, priority? } */
@@ -398,7 +443,11 @@ route('PATCH', '/api/tasks/:id', async ({ actor, params, body }) => {
     if (!p.title) bad("Matn bo'sh");
     await tasks.rename(t.id, p.title);
   }
-  if (body.due !== undefined) await tasks.setDue(t.id, dueOf(body.due));
+  if (body.due !== undefined) {
+    const due = dueOf(body.due);
+    need(access.canSetDue(actor, t, due), access.DUE_LOCKED);
+    await tasks.setDue(t.id, due);
+  }
   if (body.priority !== undefined) await tasks.setPriority(t.id, prioOf(body.priority) || 'normal');
   return { task: taskOut(await tasks.byId(t.id)) };
 });
@@ -406,7 +455,7 @@ route('PATCH', '/api/tasks/:id', async ({ actor, params, body }) => {
 route('DELETE', '/api/tasks/:id', async ({ actor, params, bot }) => {
   const t = await loadTask(params.id);
   if (!['active', 'done'].includes(t.status)) bad('Topshiriq yopilgan');
-  need(t.status === 'active' ? access.canCancelTask(actor, t) : actor.isAdmin, "O'z topshirig'ingizni o'chirib bo'lmaydi — rahbaringiz bekor qiladi");
+  need(access.canCancelTask(actor, t), "O'z topshirig'ingizni o'chirib bo'lmaydi — rahbaringiz bekor qiladi");
   await flows.cancelTask(bot, t, actor.employee ? actor.employee.id : null, actor.tgId);
   return { ok: true };
 });
@@ -417,8 +466,9 @@ route('POST', '/api/tasks/:id/done', async ({ actor, params, bot }) => {
   const t = await loadTask(params.id);
   if (Number(t.employee_id) !== Number(emp.id)) deny();
   if (t.status !== 'active') bad('Topshiriq ochiq emas');
+  if (await flows.doneBlocked(emp)) bad(`Avval «Keldim» bosing — ishga kelmasdan vazifani «Bajardim» qilib bo'lmaydi`);
   if (tasks.isBossOwn(emp, t)) {
-    const own = await tasks.completeOwn(t.id, emp, null);
+    const own = await flows.completeBossTask(bot, emp, t.id, null);
     if (!own.ok) bad('Topshiriq ochiq emas');
     return { ok: true, accepted: true };
   }
@@ -448,13 +498,14 @@ route('GET', '/api/tasks/all', async ({ actor, query }) => {
   if (status && !['open', 'review', 'accepted', 'overdue', 'cancelled'].includes(status)) bad("Holat noto'g'ri");
   const emp = query.get('emp') ? Number(query.get('emp')) : null;
   if (emp !== null && !Number.isInteger(emp)) bad("Hodim noto'g'ri");
-  const list = await tasks.journal({ ...range, employeeId: emp, giver, status });
+  const list = tasks.visibleFor(actor, await tasks.journal({ ...range, employeeId: emp, giver, status }));
   const counts = { open: 0, review: 0, accepted: 0, overdue: 0, cancelled: 0 };
   for (const t of list) counts[t.status_kind] += 1;
+  const rc = await tasks.replyCounts();
   return {
     from: range.from, to: range.to, counts, total: list.length,
     tasks: list.slice(0, 300).map((t) => ({
-      ...taskOut(t), kind: t.status_kind, giverKind: t.giver_kind,
+      ...taskOut(t), replies: rc.get(Number(t.id)) || 0, kind: t.status_kind, giverKind: t.giver_kind,
       giverName: t.giver_kind === 'self' ? null : t.giver_name || (t.giver_kind === 'admin' ? 'Direktor' : null),
     })),
     employees: (await employees.listActive()).map((e) => ({ id: Number(e.id), name: e.full_name })),
@@ -462,9 +513,262 @@ route('GET', '/api/tasks/all', async ({ actor, query }) => {
 });
 
 /** Tekshiruvni kutayotganlar */
+// ===========================================================================
+// E'LONLAR — boshliq/direktor, HR (hammaga), bo'lim rahbari (o'z bo'limiga)
+// ===========================================================================
+const canAnnounce = (actor) => Boolean(actor.isAdmin || actor.isHr || actor.isHead);
+
+route('GET', '/api/announce/targets', async ({ actor }) => {
+  need(canAnnounce(actor), "E'lon — boshliq, direktor, HR va bo'lim rahbarlari uchun");
+  return {
+    people: (await managedList(actor)).map((e) => empOut(e)),
+    departments: actor.seeAll ? (await departments.listActive()).map((d) => ({ id: Number(d.id), name: d.name })) : [],
+  };
+});
+
+/** { to: 'all' | 'depts' | 'emps', ids?: [...], text } */
+route('POST', '/api/announce', async ({ actor, body, bot }) => {
+  need(canAnnounce(actor), "E'lon — boshliq, direktor, HR va bo'lim rahbarlari uchun");
+  const msg = text(body.text, 3500, { name: "E'lon matni" });
+  const list = await managedList(actor);
+  let targets;
+  let label;
+  if (body.to === 'all') {
+    targets = list;
+    label = actor.seeAll ? 'Hammaga' : `Bo'limim: ${actor.employee.department_name || ''}`;
+  } else if (body.to === 'depts' || body.to === 'emps') {
+    if (!Array.isArray(body.ids) || !body.ids.length || body.ids.length > 200) bad('Kamida bittasini tanlang');
+    const ids = new Set(body.ids.map((v) => id(v)));
+    if (body.to === 'depts') {
+      need(actor.seeAll, "Bo'limlarga — faqat direktor va HR");
+      targets = list.filter((e) => ids.has(Number(e.department_id)));
+      const names = (await departments.listActive()).filter((d) => ids.has(Number(d.id))).map((d) => d.name);
+      label = `Bo'lim${names.length > 1 ? 'lar' : ''}: ${names.join(', ')}`;
+    } else {
+      targets = list.filter((e) => ids.has(Number(e.id)));
+      if (targets.length !== ids.size) deny("Ba'zi hodimlarga e'lon bera olmaysiz");
+      label = targets.length === 1 ? targets[0].full_name : `Tanlanganlar: ${targets.map((e) => e.full_name).join(', ')}`.slice(0, 300);
+    }
+  } else bad("Kimga — noto'g'ri");
+  if (!targets.length) bad("Qabul qiluvchi yo'q");
+  const r = await flows.sendAnnouncement(bot, actor, targets, { body: msg, target: label });
+  return { id: Number(r.announcement.id), total: r.total, delivered: r.delivered, target: label };
+});
+
+/** a — announcements qatori, st — announcements.stats() (total, delivered, read) */
+const annOut = (a, st = {}) => ({
+  id: Number(a.id), from: a.sender_name || null, text: a.text || null, mediaType: a.media_type || null, target: a.target || null, at: a.created_at,
+  total: st.total, seen: st.read, delivered: st.delivered,
+});
+const loadAnn = async (actor, annId) => {
+  const a = await announcements.byId(id(annId));
+  if (!a) notFound("E'lon topilmadi");
+  need(actor.seeAll || Number(a.created_by) === Number(actor.tgId));
+  return a;
+};
+
+route('GET', '/api/announce', async ({ actor }) => {
+  need(canAnnounce(actor), "E'lon — boshliq, direktor, HR va bo'lim rahbarlari uchun");
+  const items = [];
+  for (const a of await announcements.list(30, actor.seeAll ? null : actor.tgId)) items.push(annOut(a, await announcements.stats(a.id)));
+  return { items };
+});
+
+route('GET', '/api/announce/:id', async ({ actor, params }) => {
+  const a = await loadAnn(actor, params.id);
+  const st = await announcements.stats(a.id);
+  const recipients = st.rows.map((r) => ({ name: r.full_name, delivered: Number(r.delivered) === 1, seenAt: r.read_at || null }));
+  return { announcement: annOut(a, st), recipients };
+});
+
+route('POST', '/api/announce/:id/resend', async ({ actor, params, bot }) => {
+  const a = await loadAnn(actor, params.id);
+  return { sent: await flows.resendAnnouncement(bot, a) };
+});
+
+// ===========================================================================
+// «💬 SAVOL-JAVOB» — bitta odam, bir nechta, bo'lim(lar), hamma bilan (access.chatCandidates)
+// ===========================================================================
+const loadChat = async (actor, chatId) => {
+  const c = await chats.byId(id(chatId));
+  if (!c) notFound('Chat topilmadi');
+  need(await chats.isParticipant(c, actor.tgId), 'Siz bu chatda emassiz');
+  return c;
+};
+const chatMsgOut = (actor, c, m) => ({
+  id: Number(m.id), fromName: m.from_name || null, fromTg: Number(m.from_tg), mine: Number(m.from_tg) === Number(actor.tgId),
+  fromStarter: chats.isStarter(c, m.from_tg),
+  to: m.to_tg ? (Number(m.to_tg) === Number(actor.tgId) ? 'me' : 'other') : 'all',
+  text: m.body || null, media: m.file_id ? { type: m.media_type, name: m.file_name || null } : null, at: m.created_at,
+});
+const chatOut = (actor, c) => ({
+  id: Number(c.id), target: c.target || null, title: c.title || null, mode: c.mode, at: c.created_at,
+  starter: { tgId: Number(c.starter_tg), name: c.starter_name || null }, mine: chats.isStarter(c, actor.tgId),
+  membersCount: c.members_count !== undefined ? Number(c.members_count) : undefined,
+});
+/** Xabarni shu odam ko'ra oladimi (starter rejimida — faqat o'ziniki / o'ziga / boshlovchining umumiy xabari) */
+const canSeeChatMsg = (actor, c, m) => c.mode === 'all' || chats.isStarter(c, actor.tgId)
+  || [m.from_tg, m.to_tg].some((x) => x && Number(x) === Number(actor.tgId)) || (!m.to_tg && chats.isStarter(c, m.from_tg));
+
+route('GET', '/api/chats', async ({ actor }) => ({
+  items: (await chats.listFor(actor.tgId, 30)).map((c) => chatOut(actor, c)),
+}));
+
+route('GET', '/api/chats/targets', async ({ actor }) => {
+  const seeAll = Boolean(actor.isAdmin || actor.isHr);
+  return {
+    people: (await access.chatCandidates(actor)).map((e) => empOut(e)),
+    departments: seeAll ? (await departments.listActive()).map((d) => ({ id: Number(d.id), name: d.name })) : [],
+    canAll: seeAll || actor.isHead,
+    canDepts: seeAll,
+  };
+});
+
+/** Yangi chat: { to: 'emps' | 'depts' | 'all', ids?, mode: 'all' | 'starter', text } */
+route('POST', '/api/chats', async ({ actor, body, bot }) => {
+  const msg = text(body.text, 3500, { name: 'Xabar' });
+  const seeAll = Boolean(actor.isAdmin || actor.isHr);
+  const list = await access.chatCandidates(actor);
+  let targets;
+  let label;
+  if (body.to === 'all') {
+    need(seeAll || actor.isHead, "«Hamma bilan» — direktor, HR va bo'lim rahbari uchun");
+    targets = seeAll ? list : await employees.teamOf(actor.employee);
+    label = seeAll ? 'Hamma bilan' : `Bo'limim: ${actor.employee.department_name || ''}`;
+  } else if (body.to === 'depts' || body.to === 'emps') {
+    if (!Array.isArray(body.ids) || !body.ids.length || body.ids.length > 200) bad('Kamida bittasini tanlang');
+    const ids = new Set(body.ids.map((v) => id(v)));
+    if (body.to === 'depts') {
+      need(seeAll, "Bo'limlar bilan — faqat direktor va HR");
+      targets = list.filter((e) => ids.has(Number(e.department_id)));
+      const names = (await departments.listActive()).filter((d) => ids.has(Number(d.id))).map((d) => d.name);
+      label = `Bo'lim${names.length > 1 ? 'lar' : ''}: ${names.join(', ')}`;
+    } else {
+      targets = list.filter((e) => ids.has(Number(e.id)));
+      if (targets.length !== ids.size) deny("Ba'zi odamlar bilan chat ocha olmaysiz");
+      label = targets.length === 1 ? `${targets[0].full_name} bilan` : `Tanlanganlar: ${targets.map((e) => e.full_name).join(', ')}`.slice(0, 300);
+    }
+  } else bad("Kim bilan — noto'g'ri");
+  if (!targets.length) bad("Qabul qiluvchi yo'q");
+  const mode = body.mode === 'starter' ? 'starter' : 'all';
+  const r = await flows.startChat(bot, actor, targets, { target: label, mode, body: msg });
+  return { id: Number(r.chat.id), total: r.total, delivered: r.delivered, target: label };
+});
+
+route('GET', '/api/chats/:id', async ({ actor, params }) => {
+  const c = await loadChat(actor, params.id);
+  const members = (await chats.members(c.id)).map((m) => ({
+    tgId: Number(m.tg_id), name: m.name, username: m.username || null, delivered: Number(m.delivered) === 1,
+    icon: employees.personIcon(m), title: m.position || (Number(m.is_hr) === 1 ? 'HR' : null),
+  }));
+  const starterEmp = await employees.byTgId(c.starter_tg);
+  return {
+    chat: chatOut(actor, c),
+    starter: { tgId: Number(c.starter_tg), name: c.starter_name || null, username: starterEmp && starterEmp.username ? starterEmp.username : null },
+    members,
+    messages: (await chats.messagesFor(c, actor.tgId, 50)).map((m) => chatMsgOut(actor, c, m)),
+  };
+});
+
+/** Xabar / javob: { text, replyTo? } — replyTo: kimning xabariga (starter rejimida boshlovchi shu odamga shaxsan yozadi) */
+route('POST', '/api/chats/:id/messages', async ({ actor, params, body, bot }) => {
+  const c = await loadChat(actor, params.id);
+  const msg = text(body.text, 3500, { name: 'Xabar' });
+  let replyMsg = null;
+  if (body.replyTo !== undefined && body.replyTo !== null) {
+    replyMsg = await chats.messageById(id(body.replyTo));
+    if (!replyMsg || Number(replyMsg.chat_id) !== Number(c.id) || !canSeeChatMsg(actor, c, replyMsg)) notFound('Xabar topilmadi');
+  }
+  const r = await flows.sendChatMessage(bot, actor, c, { body: msg, replyMsg });
+  return { message: chatMsgOut(actor, c, r.message), total: r.total, delivered: r.delivered };
+});
+
+const loadChatMedia = async (actor, chatId, msgId) => {
+  const c = await loadChat(actor, chatId);
+  const m = await chats.messageById(id(msgId));
+  if (!m || Number(m.chat_id) !== Number(c.id) || !canSeeChatMsg(actor, c, m)) notFound('Xabar topilmadi');
+  if (!m.file_id) notFound("Media yo'q");
+  return m;
+};
+route('GET', '/api/chats/:id/messages/:msg/media', async ({ actor, params, bot, res }) => {
+  const m = await loadChatMedia(actor, params.id, params.msg);
+  return streamProof(bot, res, { type: m.media_type, fileId: m.file_id });
+});
+route('POST', '/api/chats/:id/messages/:msg/media/send', async ({ actor, params, bot }) => {
+  const m = await loadChatMedia(actor, params.id, params.msg);
+  await notify.sendProof(bot, actor.tgId, { type: m.media_type, fileId: m.file_id }, `💬 ${ui.esc(m.from_name || '')}${m.body ? `: ${ui.esc(m.body)}` : ''}`);
+  return { ok: true };
+});
+
+/**
+ * Lichka havolasi botga (username yo'q odam uchun — Mini App tg://user ni ocha olmaydi).
+ * { tgId, chatId? | taskId? } — faqat gaplasha oladigan odam, chatdoshi yoki topshiriq bo'yicha suhbatdoshi.
+ */
+route('POST', '/api/contact', async ({ actor, body, bot }) => {
+  const tgId = id(body.tgId, 'tgId');
+  let name = null;
+  const cand = (await access.chatCandidates(actor)).find((e) => Number(e.tg_id) === tgId);
+  if (cand) name = cand.full_name;
+  if (!name && body.chatId !== undefined && body.chatId !== null) {
+    const c = await loadChat(actor, body.chatId);
+    if (chats.isStarter(c, tgId)) name = c.starter_name;
+    else { const m = (await chats.members(c.id)).find((x) => Number(x.tg_id) === tgId); if (m) name = m.name; }
+  }
+  if (!name && body.taskId !== undefined && body.taskId !== null) {
+    const t = await loadTask(body.taskId);
+    if (access.canReplyTask(actor, t, await employees.byId(t.employee_id)) && flows.taskReplyTarget(actor, t) === tgId) {
+      const e = await employees.byTgId(tgId);
+      name = e ? e.full_name : 'Rahbariyat';
+    }
+  }
+  if (!name) deny();
+  const e = await employees.byTgId(tgId);
+  await notify.toUser(bot, actor.tgId, `👤 Lichkaga o'tish — ismni bosing: ${e ? employees.contactHtml(e) : flows.personLink(tgId, name)}`);
+  return { ok: true };
+});
+
+// --- qaytarilgan topshiriq bo'yicha yozishma ---
+const replyOut = (actor, r) => ({
+  id: Number(r.id), fromName: r.from_name || null, mine: Number(r.from_tg) === Number(actor.tgId),
+  text: r.body || null, mediaType: r.media_type || null, at: r.created_at,
+});
+
+route('GET', '/api/tasks/:id/replies', async ({ actor, params }) => {
+  const t = await loadTask(params.id);
+  const emp = await employees.byId(t.employee_id);
+  const canWrite = access.canReplyTask(actor, t, emp);
+  need(canWrite || (await canSeeTask(actor, t)), "Ruxsat yo'q");
+  const toTg = canWrite ? flows.taskReplyTarget(actor, t) : null;
+  const to = toTg ? await employees.byTgId(toTg) : null;
+  return {
+    replies: (await tasks.replies(t.id)).map((r) => replyOut(actor, r)),
+    canWrite: Boolean(canWrite && toTg),
+    to: toTg ? { tgId: toTg, name: to ? to.full_name : 'Rahbariyat', username: to && to.username ? to.username : null } : null,
+  };
+});
+
+/** { text } — hodim → qaytargan (bergan) odamga; tekshiruvchi → hodimga */
+route('POST', '/api/tasks/:id/replies', async ({ actor, params, body, bot }) => {
+  const t = await loadTask(params.id);
+  need(access.canReplyTask(actor, t, await employees.byId(t.employee_id)), "Bu topshiriq bo'yicha yoza olmaysiz");
+  const toTg = flows.taskReplyTarget(actor, t);
+  if (!toTg) bad('Kimga yozishni aniqlab bo\'lmadi');
+  const msg = text(body.text, 2000, { name: 'Javob' });
+  const r = await flows.sendTaskReply(bot, actor, t, toTg, { body: msg });
+  return { reply: replyOut(actor, r.reply), delivered: r.delivered };
+});
+
+/** HR: «Bajardim» xabarlari o'ziga kelsinmi. { on: true|false } */
+route('POST', '/api/me/done-notify', async ({ actor, body }) => {
+  need(actor.isHr && actor.employee, 'Faqat HR uchun');
+  const on = bool(body.on, 'on');
+  await employees.setNotifyDone(actor.employee.id, on);
+  return { doneNotify: on };
+});
+
 route('GET', '/api/review', async ({ actor }) => {
   need(actor.isManager, 'Faqat rahbar va direktor uchun');
-  const list = await tasks.pendingReview(actor.seeAll ? null : actor.employee && actor.employee.department_id);
+  const list = tasks.visibleFor(actor, await tasks.pendingReview(actor.seeAll ? null : actor.employee && actor.employee.department_id));
   const out = [];
   for (const t of list) if (access.canReview(actor, await employees.byId(t.employee_id))) out.push(taskOut(t));
   return { tasks: out };
@@ -473,7 +777,7 @@ route('GET', '/api/review', async ({ actor }) => {
 const reviewTask = async (actor, taskId) => {
   const t = await loadTask(taskId);
   if (t.status !== 'done') throw new HttpError(409, "Bu ish allaqachon ko'rib chiqilgan");
-  need(access.canReview(actor, await employees.byId(t.employee_id)), "Bu sizning bo'limingiz emas");
+  need(access.canReview(actor, await employees.byId(t.employee_id)) && tasks.visibleTo(actor, t), "Bu sizning bo'limingiz emas");
   return t;
 };
 
@@ -486,8 +790,15 @@ route('POST', '/api/tasks/:id/accept', async ({ actor, params, bot }) => {
 
 route('POST', '/api/tasks/:id/return', async ({ actor, params, body, bot }) => {
   const t = await reviewTask(actor, params.id);
-  const note = text(body.note, 300, { required: false, name: 'Izoh' });
-  const res = await flows.returnTask(bot, t.id, actor.tgId, note);
+  const note = text(body.note, 300, { name: 'Kamchiliklar' });
+  // hodim kech topshirgan bo'lsa — tekshiruvchi tanlaydi: kechikish KPI da qolsinmi (countLate)
+  // 5-okt: fixDue — tuzatish muddati (bugun yoki keyin); berilmasa eski muddat qoladi
+  let fixDue = null;
+  if (body.fixDue) {
+    fixDue = time.parseDate(String(body.fixDue)) || (/^\d{4}-\d{2}-\d{2}$/.test(String(body.fixDue)) ? String(body.fixDue) : null);
+    if (!fixDue || fixDue < time.today()) bad("Tuzatish muddati noto'g'ri (bugun yoki keyingi sana)");
+  }
+  const res = await flows.returnTask(bot, t.id, actor.tgId, note, { countLate: body.countLate === true && tasks.submittedLate(t), fixDue });
   if (!res.ok) throw new HttpError(409, "Bu ish allaqachon ko'rib chiqilgan");
   return { task: taskOut(res.task) };
 });
@@ -567,8 +878,10 @@ route('POST', '/api/att/checkout', async ({ actor, bot }) => {
   const emp = mustStaff(actor);
   if (!(await attendance.isCheckedIn(emp.id))) bad("Bugun «Keldim» qilmagansiz");
   if (await attendance.isCheckedOut(emp.id)) bad('Ketganingiz allaqachon belgilangan');
-  const r = await flows.checkOut(bot, emp);
-  return { checkedOut: r.row.checked_out, worked: r.worked, done: r.done.length, open: r.open.length };
+  // «Ketdim» — lokatsiya + izoh bilan, faqat botda: bot so'raydi, ilova yopiladi
+  session.set(actor.tgId, { step: 'awaiting_checkout_location' });
+  await notify.toUser(bot, actor.tgId, flows.CHECKOUT_PROMPT, ui.locationKeyboard());
+  return { viaBot: true };
 });
 
 /** Oy boshini tasdiqlash (Keldim ochiladi) */
@@ -584,6 +897,7 @@ route('POST', '/api/month/confirm', async ({ actor }) => {
 route('GET', '/api/employees', async ({ actor, query }) => {
   need(actor.isManager || actor.seeAll, "Faqat rahbar, HR va direktor uchun");
   const money = actor.seeAll;
+  const kpiMoney = !money && actor.isHead && (await org.headSeesMoney());
   let list;
   if (actor.isAdmin && query.get('all') === '1') list = await employees.listAll();
   else if (actor.seeAll) list = await employees.listActive();
@@ -592,6 +906,7 @@ route('GET', '/api/employees', async ({ actor, query }) => {
   const out = [];
   for (const e of list) {
     const item = { ...empOut(e, { money }) };
+    if (kpiMoney) item.bonusFund = numOrNull(e.bonus_fund);
     if (Number(e.active)) {
       item.today = (await todayOf(e)).status;
       item.attPct = (await attendance.stats(e, from, to)).pct;
@@ -619,8 +934,8 @@ route('GET', '/api/employees/:id', async ({ actor, params }) => {
     monthName: time.monthName(time.month()),
     tasksStats: { total: ts.total, ontime: ts.ontime, pct: ts.pct, overdue: ts.overdue, open: ts.open, returns: ts.returns, missed: ts.missed },
     attStats: { workDays: at.workDays, ontime: at.ontime, late: at.late, absent: at.absent, excused: at.excused, pct: at.pct },
-    open: (await tasks.openFor(e.id)).map(taskOut),
-    awaiting: (await tasks.awaitingReviewFor(e.id)).map(taskOut),
+    open: tasks.visibleFor(actor, await tasks.openFor(e.id)).map(taskOut),
+    awaiting: tasks.visibleFor(actor, await tasks.awaitingReviewFor(e.id)).map(taskOut),
     directions: (await directions.ofEmployee(e.id)).map((r) => ({ id: Number(r.id), name: r.name, icon: r.icon || '🧭' })),
     remind: { times: e.remind_times ? reminders.listOf(e.remind_times) : null, pending: e.remind_pending ? reminders.listOf(e.remind_pending) : null },
     can: {
@@ -669,7 +984,7 @@ route('PATCH', '/api/employees/:id', async ({ actor, params, body, bot }) => {
   if (!actor.isAdmin) need(actor.isHr && keys.every((k) => k === 'isViewer'), 'Faqat direktor');
   const self = actor.employee && Number(actor.employee.id) === Number(e.id);
   if (self && (keys.includes('role') || keys.includes('active'))) bad("O'zingizning rolingiz va holatingizni o'zgartira olmaysiz");
-  const ALLOWED = ['name', 'position', 'departmentId', 'branchId', 'role', 'isHr', 'isViewer', 'flexible', 'workMode', 'videoRequired', 'salary', 'bonusFund', 'workStart', 'active'];
+  const ALLOWED = ['name', 'position', 'departmentId', 'branchId', 'role', 'isHr', 'isViewer', 'flexible', 'workMode', 'videoRequired', 'salary', 'bonusFund', 'workStart', 'workEnd', 'active'];
   for (const k of keys) if (!ALLOWED.includes(k)) bad(`Noma'lum maydon: ${k}`);
 
   if ('name' in body) await employees.rename(e.id, text(body.name, 100, { name: 'Ism' }));
@@ -702,6 +1017,14 @@ route('PATCH', '/api/employees/:id', async ({ actor, params, body, bot }) => {
       const hhmm = employees.parseWorkStart(text(body.workStart, 5, { name: 'Ish boshlanishi' }));
       if (!hhmm) bad('Vaqt HH:mm ko\'rinishida bo\'lsin (masalan 09:00)');
       await employees.setWorkStart(e.id, hhmm);
+    }
+  }
+  if ('workEnd' in body) {
+    if (body.workEnd === null || body.workEnd === '') await employees.setWorkEnd(e.id, null);
+    else {
+      const hhmm = employees.parseWorkStart(text(body.workEnd, 5, { name: 'Ish tugashi' }));
+      if (!hhmm) bad('Vaqt HH:mm ko\'rinishida bo\'lsin (masalan 19:00)');
+      await employees.setWorkEnd(e.id, hhmm);
     }
   }
   if ('isViewer' in body) await employees.setViewer(e.id, bool(body.isViewer, 'Davomat nazorati'));
@@ -906,7 +1229,7 @@ route('GET', '/api/kpi/:month/:empId', async ({ actor, params }) => {
     monthName: time.monthName(month),
     canEdit: actor.isAdmin,
     returnPenalty: config.returnPenaltyPct,
-    limits: { late: config.kpiMaxLate, absent: config.kpiMaxAbsent, missed: config.kpiMaxMissedTasks },
+    gate: await kpi.gateSettings(),
   };
 });
 
@@ -940,27 +1263,36 @@ route('POST', '/api/kpi/:month/:empId/decide', async ({ actor, params, body, bot
   const e = await loadEmp(params.empId);
   if (!['confirmed', 'excluded', 'draft'].includes(body.status)) bad("Holat noto'g'ri");
   await kpi.compute(e, month);
+  if (body.status !== 'draft') {
+    const why = await kpi.decideBlock(e.id, month);
+    if (why) throw new HttpError(409, why);
+  }
   if ('note' in body) await kpi.setNote(e.id, month, text(body.note, 500, { required: false, name: 'Izoh' }));
   const k = await flows.decideKpi(bot, e.id, month, body.status, actor.tgId);
+  if (k.blocked) throw new HttpError(409, k.blocked);
   return { kpi: kpiOut(k, { money: true }) };
 });
 
 route('POST', '/api/kpi/:month/confirm-all', async ({ actor, params, bot }) => {
   need(actor.isAdmin, 'Faqat direktor');
   const month = monthOf(params.month);
+  if (month >= time.month()) throw new HttpError(409, `${time.monthName(month)} hali tugamagan — oy yakunida tasdiqlanadi`);
+  await kpi.computeAll(month);
   let n = 0;
+  const skipped = [];
   for (const k of await kpi.listMonth(month)) {
     if (k.status !== 'draft') continue;
-    await flows.decideKpi(bot, k.employee_id, month, 'confirmed', actor.tgId);
+    const d = await flows.decideKpi(bot, k.employee_id, month, 'confirmed', actor.tgId);
+    if (d.blocked) { skipped.push({ name: k.full_name, reason: d.blocked }); continue; }
     n += 1;
   }
-  return { confirmed: n };
+  return { confirmed: n, skipped };
 });
 
 route('POST', '/api/kpi/:month/excel', async ({ actor, params, bot }) => {
   need(actor.seeAll, 'Faqat direktor va HR');
   const month = monthOf(params.month);
-  const { buffer, filename } = await excel.buildMonthly(month);
+  const { buffer, filename } = await excel.buildMonthly(month, { viewer: actor });
   await notify.docToUser(bot, actor.tgId, buffer, filename, `📥 <b>${time.monthName(month)}</b> — KPI, topshiriqlar, davomat`);
   return { ok: true };
 });
@@ -1052,17 +1384,19 @@ route('GET', '/api/excuses', async ({ actor }) => {
   const out = [];
   for (const r of await attendance.pendingExcuses()) {
     const e = await employees.byId(r.employee_id);
-    if (!access.canDecideExcuse(actor, e)) continue;
-    out.push({ attId: Number(r.id), employeeId: Number(e.id), name: e.full_name, date: r.work_date, datePretty: time.prettyDate(r.work_date), reason: r.excuse_reason || '', proofType: r.excuse_proof_type || null });
+    // 5-okt: HR so'rovlarni ko'radi, lekin hal qilmaydi (canDecide=false)
+    const canDecide = access.canDecideExcuse(actor, e);
+    if (!canDecide && !(actor.isHr && Number(e.id) !== Number(actor.employee && actor.employee.id))) continue;
+    out.push({ attId: Number(r.id), employeeId: Number(e.id), name: e.full_name, date: r.work_date, datePretty: time.prettyDate(r.work_date), reason: r.excuse_reason || '', proofType: r.excuse_proof_type || null, canDecide });
   }
   return { rows: out };
 });
 
-const loadExcuse = async (actor, attId) => {
+const loadExcuse = async (actor, attId, { view = false } = {}) => {
   const row = await attendance.byId(id(attId));
   if (!row) notFound();
   const e = await employees.byId(row.employee_id);
-  need(access.canDecideExcuse(actor, e), "Bu sizning bo'limingiz emas");
+  need(access.canDecideExcuse(actor, e) || (view && actor.isHr), "Sababli qilish — faqat bo'lim rahbari yoki boshliq");
   return { row, e };
 };
 
@@ -1075,7 +1409,7 @@ route('POST', '/api/excuses/:attId', async ({ actor, params, body, bot }) => {
 });
 
 route('GET', '/api/excuses/:attId/proof', async ({ actor, params, bot, res }) => {
-  const { row } = await loadExcuse(actor, params.attId);
+  const { row } = await loadExcuse(actor, params.attId, { view: true });
   if (!row.excuse_proof_file_id) notFound("Isbot yo'q");
   return streamProof(bot, res, { type: row.excuse_proof_type, fileId: row.excuse_proof_file_id });
 });
@@ -1095,10 +1429,10 @@ const payMonths = (emp) => {
   return list;
 };
 
-const payRow = (k) => {
+const payRow = (k, extra = 0) => {
   const salary = numOrNull(k.salary);
   const bonus = k.status === 'excluded' ? 0 : numOrNull(k.bonus_amount);
-  return { salary, bonusFund: numOrNull(k.bonus_fund), bonus, total: (salary || 0) + (bonus || 0), final: k.status !== 'draft' };
+  return { salary, bonusFund: numOrNull(k.bonus_fund), bonus, extra: Number(extra) || 0, total: (salary || 0) + (bonus || 0) + (Number(extra) || 0), final: k.status !== 'draft' };
 };
 
 route('GET', '/api/pay', async ({ actor }) => {
@@ -1106,7 +1440,7 @@ route('GET', '/api/pay', async ({ actor }) => {
   const out = [];
   for (const m of payMonths(emp)) {
     const k = await kpi.compute(emp, m);
-    out.push({ month: m, monthName: time.monthName(m), current: m === time.month(), status: k.status, eligible: Number(k.kpi_eligible) === 1, total: Number(k.total), ...payRow(k) });
+    out.push({ month: m, monthName: time.monthName(m), current: m === time.month(), status: k.status, eligible: Number(k.kpi_eligible) === 1, total: Number(k.total), ...payRow(k, await extradays.sumForMonth(emp.id, m)) });
   }
   return { kpiMode: config.kpiMode, months: out };
 });
@@ -1119,10 +1453,10 @@ route('GET', '/api/pay/:month', async ({ actor, params }) => {
   const ms = await months.get(emp.id, month);
   return {
     monthName: time.monthName(month), current: month === time.month(), kpiMode: config.kpiMode,
-    limits: { late: config.kpiMaxLate, absent: config.kpiMaxAbsent, missed: config.kpiMaxMissedTasks, excusedOk: config.kpiExcusedOk },
+    gate: await kpi.gateSettings(),
     monthStart: ms ? ms.confirmed_at : null,
     kpi: kpiOut(k),
-    pay: payRow(k),
+    pay: payRow(k, await extradays.sumForMonth(emp.id, month)),
   };
 });
 
@@ -1264,10 +1598,13 @@ route('GET', '/api/settings', async ({ actor }) => {
     remindTimes: reminders.intervalTimes(worktime.minutes(), step),
     bossName: await org.bossName(),
     headTaskCopy: await org.headTaskCopy(),
+    hrBossTasks: await org.hrSeesBossTasks(),
+    bossAttendance: await org.bossSeesAttendance(),
     groupLinked: Boolean(await notify.getGroupId()),
     archiveLinked: Boolean(await notify.getArchiveId()),
     office: main ? { radius: main.radius } : null,
-    kpi: { mode: config.kpiMode, maxLate: config.kpiMaxLate, maxAbsent: config.kpiMaxAbsent, maxMissed: config.kpiMaxMissedTasks, excusedOk: config.kpiExcusedOk, returnPenalty: config.returnPenaltyPct },
+    kpi: { mode: config.kpiMode, ...(await kpi.gateSettings()), returnPenalty: config.returnPenaltyPct },
+    headMoney: await org.headSeesMoney(),
     monthStart: { month: time.month(), monthName: time.monthName(time.month()), confirmed: confirmed.length, waiting: waiting.map((r) => r.full_name) },
     employeesCount: active.length,
   };
@@ -1296,6 +1633,36 @@ route('POST', '/api/settings/head-task-copy', async ({ actor, body }) => {
   need(actor.isAdmin, 'Faqat direktor');
   await org.setHeadTaskCopy(body.on === true);
   return { on: await org.headTaskCopy() };
+});
+
+/** { on } — HR boshliq/direktor bergan topshiriqlarni ko'radimi */
+route('POST', '/api/settings/hr-boss-tasks', async ({ actor, body }) => {
+  need(actor.isAdmin, 'Faqat direktor');
+  await org.setHrSeesBossTasks(body.on === true);
+  return { on: await org.hrSeesBossTasks() };
+});
+
+/** { minDays?, minTaskPct? } — KPI sharti */
+route('POST', '/api/settings/kpi-gate', async ({ actor, body }) => {
+  need(actor.isAdmin, 'Faqat direktor');
+  const patchGate = {};
+  if ('minDays' in body) { const n = Number(body.minDays); if (!Number.isInteger(n) || n < 1 || n > 31) bad('Kunlar 1–31'); patchGate.minDays = n; }
+  if ('minTaskPct' in body) { const n = Number(body.minTaskPct); if (!Number.isInteger(n) || n < 0 || n > 100) bad('Foiz 0–100'); patchGate.minTaskPct = n; }
+  return { gate: await kpi.setGateSettings(patchGate) };
+});
+
+/** { on } — bo'lim rahbari jamoasining KPI summasini ko'radimi */
+route('POST', '/api/settings/head-money', async ({ actor, body }) => {
+  need(actor.isAdmin, 'Faqat direktor');
+  await org.setHeadSeesMoney(body.on === true);
+  return { on: await org.headSeesMoney() };
+});
+
+/** { on } — boshliq keldi-ketdi va davomat xabarlarini oladimi */
+route('POST', '/api/settings/boss-attendance', async ({ actor, body }) => {
+  need(actor.isAdmin, 'Faqat direktor');
+  await org.setBossSeesAttendance(body.on === true);
+  return { on: await org.bossSeesAttendance() };
 });
 
 route('POST', '/api/settings/boss-name', async ({ actor, body }) => {

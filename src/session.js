@@ -27,11 +27,27 @@ const persist = (key, value) => {
   p.catch((e) => console.warn('[session] saqlanmadi:', e.message));
 };
 
-const get = (key) => store.get(String(key)) || {};
+/**
+ * Javob kutilayotgan bosqich (step) 30 daqiqadan keyin o'z-o'zidan tugaydi — aks holda
+ * soatlar o'tib yozilgan tasodifiy matn (masalan «tushundim») eski bosqichga ketib qolardi
+ * (kechikish sababi, qaytarish izohi, isbot va h.k.). Har yangi bosqichda vaqt yangilanadi.
+ */
+const STEP_TTL_MS = 30 * 60 * 1000;
+
+const get = (key) => {
+  const s = store.get(String(key));
+  if (!s) return {};
+  if (s.step && s.stepAt && Date.now() - s.stepAt > STEP_TTL_MS) {
+    clear(key);
+    return {};
+  }
+  return s;
+};
 
 const set = (key, patch) => {
   const k = String(key);
   const merged = { ...get(k), ...patch };
+  if (patch && Object.prototype.hasOwnProperty.call(patch, 'step')) merged.stepAt = Date.now();
   store.set(k, merged);
   persist(k, merged);
   return merged;
@@ -66,4 +82,4 @@ const load = async () => {
   return loaded;
 };
 
-module.exports = { get, set, clear, load };
+module.exports = { get, set, clear, load, STEP_TTL_MS };

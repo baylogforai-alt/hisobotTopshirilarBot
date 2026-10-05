@@ -104,6 +104,11 @@ const config = {
 
   // Guruhga xabarlar
   dailyGroupReport: bool(process.env.DAILY_GROUP_REPORT, true),
+  /**
+   * Boshliq (bazadagi role='admin') keldi-ketdi, kech qolaman/kelmayman va ertalabki/kun yakuni hisobotlarini oladimi —
+   * Panel «👁 Boshliq keldi-ketdini» dan o'zgartirilmaguncha shu standart (BayLog: ha; BAYOMA: yo'q)
+   */
+  bossSeesAttendance: bool(process.env.BOSS_SEES_ATTENDANCE, true),
   /** Bajarilgan ish / kelish-ketish guruhga e'lon qilinsinmi (real vaqtda) */
   announceDone: bool(process.env.ANNOUNCE_DONE, true),
 
@@ -111,6 +116,8 @@ const config = {
   dailyReportRequired: bool(process.env.DAILY_REPORT_REQUIRED, true),
   /** Ish tugashidan necha daqiqa oldin "hisobot topshiring" eslatmasi */
   dailyReportRemindMin: num(process.env.DAILY_REPORT_REMIND_MIN, 30),
+  // «Kun yakuni» hisoboti soati (standart — ish tugashi soati, WORK_END_HOUR)
+  dailyReportHour: num(process.env.DAILY_REPORT_HOUR, num(process.env.WORK_END_HOUR, 18)),
 
   // Ofis geofence (boshlang'ich qiymat; asosiysi bazadagi sozlama)
   officeLat: process.env.OFFICE_LAT && Number.isFinite(Number(process.env.OFFICE_LAT)) ? Number(process.env.OFFICE_LAT) : null,

@@ -20,23 +20,59 @@ const HEAD_COPY_KEY = 'head_task_copy';
 const headTaskCopy = async () => (await db.getSetting(HEAD_COPY_KEY)) !== '0';
 const setHeadTaskCopy = (on) => db.setSetting(HEAD_COPY_KEY, on ? '1' : '0');
 
+/**
+ * HR boshliq/direktor bergan topshiriqlarni va boshliq missiyalarini ko'radimi (standart — yo'q).
+ * Boshliq Panel → «👁 HR va boshliq topshiriqlari» bilan o'zi yoqadi/o'chiradi
+ */
+const HR_BOSS_KEY = 'hr_boss_tasks';
+const hrSeesBossTasks = async () => (await db.getSetting(HR_BOSS_KEY)) === '1';
+const setHrSeesBossTasks = (on) => db.setSetting(HR_BOSS_KEY, on ? '1' : '0');
+
+/**
+ * Boshliq (Odilxon — bazadagi role='admin' hodim) davomat xabarlarini oladimi: keldi, ketdi, kech qolaman, kelmayman,
+ * ertalabki holat, kun yakuni (standart — BOSS_SEES_ATTENDANCE, BayLog'da ha). Boshliq Panel → «👁 Boshliq keldi-ketdini» bilan o'zi yoqadi
+ */
+/** Bo'lim rahbari jamoasining KPI summasini ko'radimi (standart — yo'q). Boshliq Panel → «💵 Rahbar KPI summasini» */
+const HEAD_MONEY_KEY = 'head_money';
+const headSeesMoney = async () => (await db.getSetting(HEAD_MONEY_KEY)) === '1';
+const setHeadSeesMoney = (on) => db.setSetting(HEAD_MONEY_KEY, on ? '1' : '0');
+
+const BOSS_ATT_KEY = 'boss_attendance';
+// Sozlama hali qo'yilmagan bo'lsa — config.bossSeesAttendance (BayLog: BOSS_SEES_ATTENDANCE, standart ha — direktorlar hisobotni oladi)
+const bossSeesAttendance = async () => {
+  const v = await db.getSetting(BOSS_ATT_KEY);
+  return v === null || v === undefined || v === '' ? config.bossSeesAttendance : v === '1';
+};
+const setBossSeesAttendance = (on) => db.setSetting(BOSS_ATT_KEY, on ? '1' : '0');
+
+/** Sozlama o'chiq bo'lsa — boshliq(lar)ni chiqarib tashlaydi; hech kim qolmasa — o'zgarishsiz (xabar yo'qolmasin) */
+const withoutHiddenBoss = async (ids) => {
+  if (await bossSeesAttendance()) return ids;
+  const bosses = new Set((await require('./employees').listAdmins()).map((e) => Number(e.tg_id)));
+  const rest = ids.filter((id) => !bosses.has(Number(id)));
+  return rest.length ? rest : ids;
+};
+
 /** Kelmaslik/kechikish xabarini oladiganlar (tg_id lar), hodimning o'zidan tashqari */
 const absenceRecipientsOf = async (emp) => {
   const employees = require('./employees');
-  const notify = require('./notify');
   const ids = new Set(await employees.reviewersOf(emp));
   for (const h of await employees.listHr()) ids.add(Number(h.tg_id));
   ids.delete(Number(emp.tg_id));
-  return [...ids];
+  return withoutHiddenBoss([...ids]);
 };
 
-/** Tasdiqlovchilar (eslatma jadvali va h.k.): HR + direktorlar, hodimning o'zidan tashqari */
+/**
+ * Sababli qilish (kelmayman / kechikish) tugmalari kimga: bo'lim rahbari + boshliq (5-okt qarori — HR faqat ko'radi),
+ * hodimning o'zidan tashqari. Bo'lim rahbari bo'lmasa — boshliq.
+ */
 const approversOf = async (emp) => {
   const employees = require('./employees');
-  const ids = new Set((await employees.bossTgIds()).map(Number));
-  for (const h of await employees.listHr()) ids.add(Number(h.tg_id));
+  const hr = new Set((await employees.listHr()).map((h) => Number(h.tg_id)));
+  const heads = (await employees.deptHeadIdsOf(emp)).map(Number).filter((id) => !hr.has(id));
+  const ids = new Set([...heads, ...(await employees.bossTgIds()).map(Number)]);
   ids.delete(Number(emp.tg_id));
-  return [...ids];
+  return withoutHiddenBoss([...ids]);
 };
 
 /** Texnik direktorlar (ADMIN_IDS, rahbariyatda yo'q) — faqat ma'lumot oladi, tasdiqlash tugmalarisiz */
@@ -55,7 +91,8 @@ const recipientsLabel = async (emp = null, { approvers = false } = {}) => {
   const hr = (await employees.listHr()).filter((h) => !emp || Number(h.id) !== Number(emp.id));
   const boss = await bossName();
   const hrText = hr.map((h) => h.full_name).join(', ');
-  if (approvers) return hr.length ? `Boshliq (${boss}) yoki HR (${hrText})` : `Boshliq (${boss})`;
+  if (hr.length && !(await bossSeesAttendance())) return `HR (${hrText})`;
+  if (approvers) return `bo'lim rahbari yoki boshliq (${boss})`;
   return hr.length ? `HR (${hrText}) va boshliq (${boss})` : `boshliq (${boss})`;
 };
 
@@ -69,4 +106,4 @@ const actorName = (ctx) => {
   return [f.first_name, f.last_name].filter(Boolean).join(' ').trim() || 'Direktor';
 };
 
-module.exports = { infoOnlyIds, actorName, bossName, setBossName, headTaskCopy, setHeadTaskCopy, absenceRecipientsOf, approversOf, recipientsLabel };
+module.exports = { infoOnlyIds, actorName, bossName, setBossName, headTaskCopy, setHeadTaskCopy, hrSeesBossTasks, setHrSeesBossTasks, bossSeesAttendance, setBossSeesAttendance, headSeesMoney, setHeadSeesMoney, absenceRecipientsOf, approversOf, recipientsLabel };

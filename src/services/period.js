@@ -62,6 +62,7 @@ const eachDay = (from, to) => {
 
 const DAY_NOTE = {
   ontime: '', late: 'Kech keldi', absent: 'Kelmagan', excused: 'Sababli', pending: "So'rov kutilmoqda", future: '', off: 'Dam olish kuni',
+  extra: 'Dam olish kuni ishladi',
 };
 
 // ---------------------------------------------------------------------------

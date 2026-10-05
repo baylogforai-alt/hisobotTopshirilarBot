@@ -128,7 +128,7 @@
 
   const DAY = {
     ontime: ['Vaqtida keldi', 'ontime'], late: ['Kech keldi', 'late'], absent: ['Kelmagan', 'absent'], excused: ['Sababli', 'excused'],
-    pending: ['Sabab ko\'rilmoqda', 'pending'], future: ['Hali vaqti emas', 'future'], off: ['Dam olish', 'off'],
+    pending: ['Sabab ko\'rilmoqda', 'pending'], future: ['Hali vaqti emas', 'future'], off: ['Dam olish', 'off'], extra: ['Dam olish kuni keldi', 'ontime'],
   };
   const dot = (st) => h('span', { class: `dot ${(DAY[st] || DAY.future)[1]}`, 'aria-hidden': 'true' });
   const chip = (txt, cls = '') => h('span', { class: `chip ${cls}`.trim() }, txt);
@@ -154,10 +154,22 @@
     return { el: h('div', { class: 'field' }, h('span', null, 'Muddat'), wrap, input), get: () => value };
   };
 
+  /** Boshlanish soati (ixtiyoriy): «ertaga 09:00» — shu soatda hodimga xabar */
+  const startField = (hint) => {
+    const input = h('input', { class: 'input', type: 'time', step: '300' });
+    const clear = h('button', { class: 'btn ghost small', type: 'button', onclick: () => { input.value = ''; } }, 'Soatsiz');
+    return {
+      el: h('div', { class: 'field' }, h('span', null, '⏰ Boshlanish soati (ixtiyoriy)'), h('div', { class: 'btns' }, input, clear), h('div', { class: 'hint' }, hint)),
+      get: () => input.value || null,
+    };
+  };
+  const OK_REPLY = "👌 Xo'p, tushundim — tuzataman.";
+
   const taskChips = (t, { withName = false } = {}) => {
     const c = [];
     if (withName) c.push(chip(`👤 ${t.employee.name}`));
     if (t.status === 'active') c.push(t.overdue ? chip(`🔴 muddat o'tdi (${shortDate(t.due)})`, 'red') : chip(`⏱ ${relDate(t.due)}`, t.due === today() ? 'amber' : ''));
+    if (t.status === 'active' && t.startTime) c.push(chip(`⏰ ${t.startTime} da boshlanadi`, 'amber'));
     if (t.status === 'done') c.push(chip(`🕓 tekshiruvda · ${clock(t.doneAt)}`, t.lateDone ? 'red' : ''));
     if (t.status === 'accepted') c.push(chip(`✅ qabul · ${shortDate((t.doneAt || '').slice(0, 10))}`, t.lateDone ? 'amber' : 'green'));
     if (t.priority === 'high') c.push(chip('🔥 muhim', 'red'));
@@ -248,14 +260,15 @@
       const btns = [];
       if (!a.checkedIn) {
         btns.push(h('button', { class: 'btn', type: 'button', onclick: () => { toast("Chatda «✅ Keldim» ni bosing (GPS + video)"); if (tg && INIT) setTimeout(() => tg.close(), 900); } }, '✅ Keldim (botda)'));
-        btns.push(h('button', { class: 'btn ghost', type: 'button', onclick: () => reasonSheet('⏰ Kech qolaman', `Xabar HR va boshliqqa boradi. Ish boshlanishidan (${me.workStart}) kamida 1 soat oldin aytsangiz — kechikish hisoblanmaydi.`, '/api/att/late', (x) => toast(x.inTime ? 'Yuborildi — kechikish hisoblanmaydi' : 'Yuborildi')) }, '⏰ Kech qolaman'));
+        btns.push(h('button', { class: 'btn ghost', type: 'button', onclick: () => reasonSheet('⏰ Kech qolaman', `Xabar bo'lim rahbari va HR ga boradi. Ish boshlanishidan (${me.workStart}) kamida ${me.lateNoticeMin || 20} daqiqa oldin aytsangiz — kechikish hisoblanmaydi.`, '/api/att/late', (x) => toast(x.inTime ? 'Yuborildi — kechikish hisoblanmaydi' : 'Yuborildi')) }, '⏰ Kech qolaman'));
         if (a.excuse !== 'approved') btns.push(h('button', { class: 'btn ghost', type: 'button', onclick: () => reasonSheet('🙋 Bugun kelmayman', 'HR yoki boshliq tasdiqlasa — kun sababli hisoblanadi (KPI ga ta\'sir qilmaydi).', '/api/att/absence', () => toast("So'rov yuborildi")) }, '🙋 Kelmayman'));
       } else if (!a.checkedOut) {
         btns.push(h('button', { class: 'btn ghost', type: 'button', onclick: action(async () => {
-          if (!(await confirmBox('Ish kunini yakunlaysizmi?'))) return;
-          const x = await api('POST', '/api/att/checkout');
-          toast(`Ish kuni yakunlandi${x.worked ? ` · ${dur(x.worked)}` : ''}`); router();
-        }) }, '🏁 Ketdim'));
+          if (!(await confirmBox("Ish kunini yakunlaysizmi? Botda joylashuvingiz va izoh so'raladi."))) return;
+          await api('POST', '/api/att/checkout');
+          toast('Chatda 📍 joylashuv va izohni yuboring');
+          if (tg && INIT) setTimeout(() => tg.close(), 900);
+        }) }, '🏁 Ketdim (botda)'));
       }
       out.push(h('div', { class: 'card' },
         h('h2', null, 'Bugun'),
@@ -274,6 +287,12 @@
       tiles.push(tile('📋', 'Topshiriqlarim', '#/tasks', c.overdue || c.open, !c.overdue));
       tiles.push(tile('➕', "O'zimga vazifa", '#/self'));
     }
+    if (c.status) {
+      tiles.push(tile('⏳', 'Faol', '#/status?kind=active', c.status.active, true));
+      tiles.push(tile('🔁', "Ko'rib chiqish", '#/status?kind=fix', c.status.fix, true));
+      tiles.push(tile('🕓', 'Kutilmoqda', '#/status?kind=review', c.status.review, true));
+      tiles.push(tile('✅', 'Bajarilgan', '#/status?kind=accepted', c.status.accepted, true));
+    }
     if (r.isManager) {
       tiles.push(tile('📤', 'Topshiriq berish', '#/assign'));
       tiles.push(tile('🔎', 'Tekshiruv', '#/review', c.review));
@@ -288,6 +307,7 @@
     if (r.seeAll) tiles.push(tile('🏢', 'Tashkilot', '#/org'));
     if (me.employee && !me.roles.isBoss) tiles.push(tile('💵', 'Oylik va KPI', '#/pay'));
     if (r.isAdmin || (me.employee && !r.isHr)) tiles.push(tile('🔔', 'Eslatmalar', '#/reminders', c.reminders));
+    if (r.isManager || r.isHr) tiles.push(tile('📢', "E'lon", '#/announce'));
     if (r.isAdmin) tiles.push(tile('⚙️', 'Sozlamalar', '#/settings'));
     out.push(h('div', { class: 'tiles' }, tiles));
     if (!me.employee && r.isAdmin) out.push(h('p', { class: 'muted' }, "Siz direktor sifatida kirgansiz (hodim emas) — davomat va o'z topshiriqlaringiz yo'q."));
@@ -344,6 +364,13 @@
         t.media || t.needsAck ? h('div', { class: 'btns' },
           t.media ? h('button', { class: 'btn ghost small', type: 'button', onclick: () => showMedia(box, `/api/tasks/${t.id}/media`, t.media.type, async () => { await api('POST', `/api/tasks/${t.id}/media/send`); toast('Chatga yuborildi'); }) }, `${MEDIA_ICON[t.media.type] || '📎'} Topshiriq`) : null,
           t.needsAck ? h('button', { class: 'btn ok small', type: 'button', onclick: action(async () => { await api('POST', `/api/tasks/${t.id}/ack`); toast('👂 Tushundim — belgilandi'); router(); }) }, '✅ Tushundim') : null) : null,
+        t.returned && t.status === 'active' ? h('div', { class: 'btns' },
+          h('button', { class: 'btn ok small', type: 'button', onclick: action(async () => {
+            await api('POST', `/api/tasks/${t.id}/replies`, { text: OK_REPLY }); toast("👌 «Xo'p, tushundim» yuborildi"); router();
+          }) }, "👌 Xo'p, tushundim"),
+          h('button', { class: 'btn ghost small', type: 'button', onclick: action(() => taskRepliesSheet(t)) }, t.replies ? `💬 O'z javobim (${t.replies})` : "💬 O'z javobim"))
+          : t.replies ? h('div', { class: 'btns' },
+            h('button', { class: 'btn ghost small', type: 'button', onclick: action(() => taskRepliesSheet(t)) }, `💬 Yozishma (${t.replies})`)) : null,
         t.status === 'active' ? h('div', { class: 'btns' },
           h('button', { class: 'btn small', type: 'button', onclick: action(() => doneTask(t)) }, '✔️ Bajardim'),
           t.source === 'self' ? h('button', { class: 'btn ghost small', type: 'button', onclick: () => editTaskSheet(t) }, '⚙️ Tahrirlash') : null) : null)); });
@@ -359,13 +386,14 @@
     setTitle("➕ O'zimga vazifa", "Har qator — alohida vazifa");
     const ta = h('textarea', { class: 'input', maxlength: '5000', placeholder: "Masalan:\nHisobotni tayyorlash\n!Mijozga qo'ng'iroq" });
     const due = duePicker();
+    const tm = startField('Shu soatda sizga «hozir bajaring» xabari keladi.');
     const prio = h('input', { type: 'checkbox' });
     mount(h('div', { class: 'card' },
       h('label', { class: 'field' }, h('span', null, 'Vazifalar'), ta, h('div', { class: 'hint' }, "Boshiga ! qo'ysangiz — muhim.")),
-      due.el, h('label', { class: 'check' }, prio, '🔥 Hammasi muhim'),
+      due.el, tm.el, h('label', { class: 'check' }, prio, '🔥 Hammasi muhim'),
       h('button', { class: 'btn block', type: 'button', onclick: action(async () => {
         if (!ta.value.trim()) throw new Error("Vazifa matnini yozing");
-        const r = await api('POST', '/api/tasks/self', { text: ta.value, due: due.get(), priority: prio.checked ? 'high' : null });
+        const r = await api('POST', '/api/tasks/self', { text: ta.value, due: due.get(), time: tm.get(), priority: prio.checked ? 'high' : null });
         toast(`${r.created.length} ta vazifa qo'shildi`); go('#/tasks');
       }) }, "Qo'shish")));
   };
@@ -420,14 +448,15 @@
     searchInput.addEventListener('input', () => { search = searchInput.value.trim().toLowerCase(); paintList(); });
     const ta = h('textarea', { class: 'input', maxlength: '5000', placeholder: "Topshiriq matni.\nBir nechta bo'lsa — har biri yangi qatorda." });
     const due = duePicker();
+    const tm = startField('Aynan shu soatda hodimga «hozir shu missiyani bajaring» xabari boradi.');
     const prio = h('input', { type: 'checkbox' });
 
     submit.addEventListener('click', action(async () => {
       if (!ta.value.trim()) throw new Error('Topshiriq matnini yozing');
-      const r = await api('POST', '/api/tasks/assign', { employeeIds: [...selected], text: ta.value, due: due.get(), priority: prio.checked ? 'high' : null });
+      const r = await api('POST', '/api/tasks/assign', { employeeIds: [...selected], text: ta.value, due: due.get(), time: tm.get(), priority: prio.checked ? 'high' : null });
       haptic();
       setTitle('✅ Yuborildi');
-      mount(h('div', { class: 'card' }, h('h2', null, `Muddat: ${relDate(r.due)}`),
+      mount(h('div', { class: 'card' }, h('h2', null, `Muddat: ${relDate(r.due)}${r.startTime ? ` · ⏰ ${r.startTime}` : ''}`),
         h('div', { class: 'list' }, r.results.map((x) => h('div', { class: 'item static' }, h('div', { class: 'grow t' }, x.name), h('div', { class: 'end' }, `${x.count} ta`)))),
         h('p', { class: 'muted' }, "Har bir hodimga botda xabar bordi."),
         h('div', { class: 'btns' }, h('button', { class: 'btn ghost', type: 'button', onclick: () => go('#/') }, 'Bosh sahifa'),
@@ -442,7 +471,7 @@
       listBox,
       h('div', { class: 'card' },
         h('label', { class: 'field' }, h('span', null, 'Topshiriq'), ta, h('div', { class: 'hint' }, "Boshiga ! qo'ysangiz — muhim. Har bir belgilangan hodimga alohida beriladi.")),
-        due.el, h('label', { class: 'check' }, prio, '🔥 Muhim')),
+        due.el, tm.el, h('label', { class: 'check' }, prio, '🔥 Muhim')),
       h('div', { class: 'sticky-bar' }, submit));
   };
 
@@ -450,19 +479,39 @@
   // TEKSHIRUV
   // =========================================================================
   const returnSheet = (t) => {
-    const ta = h('textarea', { class: 'input', maxlength: '300', placeholder: "Nima uchun qaytaryapsiz? (hodim ko'radi)" });
-    openSheet(`↩️ ${t.title}`, h('label', { class: 'field' }, ta),
+    const ta = h('textarea', { class: 'input', maxlength: '300', placeholder: 'Qanday kamchiliklar bor? Nimani tuzatish kerak?' });
+    // 5-okt: tuzatish muddati — shu kungacha tuzatsa vaqtida; bo'sh — eski muddat qoladi (o'tgan bo'lsa kechikkan)
+    const fix = h('input', { class: 'input', type: 'date', min: (state.me && state.me.today) || '' });
+    openSheet(`📝 ${t.title}`, h('label', { class: 'field' }, ta),
+      h('label', { class: 'field' }, h('span', null, "🔁 Tuzatish muddati"), fix),
+      h('p', { class: 'hint' }, `Bo'sh qoldirsangiz eski muddat (${shortDate(t.due)}) qoladi — o'tgan bo'lsa, tuzatilgan ish ham kechikkan hisoblanadi.`),
+      h('p', { class: 'hint' }, "Hodimga boradi. U «👌 Xo'p, tushundim» yoki o'z javobini qaytaradi — siz yana javob bera olasiz."),
       h('div', { class: 'btns' }, h('button', { class: 'btn ghost', type: 'button', onclick: closeSheet }, 'Bekor'),
         h('button', { class: 'btn danger', type: 'button', onclick: action(async () => {
-          await api('POST', `/api/tasks/${t.id}/return`, { note: ta.value.trim() || null }); closeSheet(); toast('Qaytarildi'); router();
-        }) }, '↩️ Qaytarish')));
+          if (!ta.value.trim()) throw new Error('Kamchiliklarni yozing');
+          await api('POST', `/api/tasks/${t.id}/return`, { note: ta.value.trim(), fixDue: fix.value || null }); closeSheet(); toast('Kamchiliklar bilan qaytarildi'); router();
+        }) }, '📝 Javob qaytarish')));
   };
+
+  /** 🗑 O'chirish (bekor qilish) — boshliq/direktor, HR, bo'lim rahbari; huquqni server tekshiradi */
+  const delBtn = (t) => h('button', { class: 'btn ghost small', type: 'button', onclick: action(async () => {
+    if (!(await confirmBox(`«${t.title}» — o'chirilsinmi? Ro'yxatlar va KPI dan chiqadi (bazada «bekor qilingan» bo'lib qoladi).`))) return;
+    await api('DELETE', `/api/tasks/${t.id}`); toast("🗑 O'chirildi"); router();
+  }) }, "🗑 O'chirish");
 
   const pageReview = async () => {
     setTitle('🔎 Tekshiruv', '«Bajardim» deganlar');
     const { tasks } = await api('GET', '/api/review');
-    if (!tasks.length) return mount(empty("Tekshiruvni kutayotgan ish yo'q ✅"));
-    mount(h('div', { class: 'list' }, tasks.map((t) => {
+    const me = state.me || (state.me = await api('GET', '/api/me'));
+    const hrBox = me.roles.isHr && me.employee ? h('div', { class: 'card' },
+      h('p', null, '«Bajardim» xabarlari botda menga ham kelsinmi?'),
+      seg([['1', '✅ Kelsin'], ['0', '🚫 Kelmasin']], me.doneNotify ? '1' : '0', action(async (k) => {
+        const r = await api('POST', '/api/me/done-notify', { on: k === '1' });
+        me.doneNotify = r.doneNotify; toast(r.doneNotify ? 'Endi sizga ham keladi' : 'Endi sizga kelmaydi'); router();
+      })),
+      h('p', { class: 'muted' }, "Xabar bo'lim rahbari va boshliqqa boradi. O'zingiz bergan topshiriqlar baribir keladi; ro'yxat shu yerda doim ko'rinadi.")) : null;
+    if (!tasks.length) return mount(hrBox, empty("Hozircha «Bajardim» deb yuborilgan ish yo'q"));
+    mount(hrBox, h('div', { class: 'list' }, tasks.map((t) => {
       const box = h('div', { class: 'media' });
       const send = async () => { await api('POST', `/api/tasks/${t.id}/proof/send`); toast('Isbot chatga yuborildi'); };
       return h('div', { class: 'item static' }, h('div', { class: 'grow' },
@@ -476,7 +525,8 @@
           h('button', { class: 'btn ok small', type: 'button', onclick: action(async () => {
             const r = await api('POST', `/api/tasks/${t.id}/accept`); toast(r.onTime ? 'Qabul qilindi ✅' : 'Qabul qilindi (muddatdan kech)'); router();
           }) }, '✅ Qabul'),
-          h('button', { class: 'btn danger small', type: 'button', onclick: () => returnSheet(t) }, '↩️ Qaytarish'))));
+          h('button', { class: 'btn danger small', type: 'button', onclick: () => returnSheet(t) }, '📝 Kamchilik bor'),
+          delBtn(t))));
     })));
   };
 
@@ -518,9 +568,11 @@
           h('p', { class: 'muted' }, `Berilgan ${shortDate((t.createdAt || '').slice(0, 10))} ${clock(t.createdAt)} · muddat ${shortDate(t.due)}${t.doneAt ? ` · bajardi ${shortDate(t.doneAt.slice(0, 10))} ${clock(t.doneAt)}${t.lateDone ? ' (kech)' : ''}` : ''}`),
           t.proofNote ? h('p', null, `💬 «${t.proofNote}»`) : null,
           box,
-          t.hasProof || t.media ? h('div', { class: 'btns' },
+          t.hasProof || t.media || t.replies ? h('div', { class: 'btns' },
+            t.replies ? h('button', { class: 'btn ghost small', type: 'button', onclick: action(() => taskRepliesSheet(t)) }, `💬 Yozishma (${t.replies})`) : null,
             t.media ? h('button', { class: 'btn ghost small', type: 'button', onclick: () => showMedia(box, `/api/tasks/${t.id}/media`, t.media.type, async () => { await api('POST', `/api/tasks/${t.id}/media/send`); toast('Chatga yuborildi'); }) }, `${MEDIA_ICON[t.media.type] || '📎'} Topshiriq`) : null,
-            t.hasProof ? h('button', { class: 'btn ghost small', type: 'button', onclick: () => showMedia(box, `/api/tasks/${t.id}/proof`, t.proofType, send) }, '👁 Isbot') : null) : null));
+            t.hasProof ? h('button', { class: 'btn ghost small', type: 'button', onclick: () => showMedia(box, `/api/tasks/${t.id}/proof`, t.proofType, send) }, '👁 Isbot') : null) : null,
+          ['open', 'review', 'overdue'].includes(t.kind) ? h('div', { class: 'btns' }, delBtn(t)) : null));
       })) : empty("Bu filtr bo'yicha topshiriq yo'q"),
       d.total > d.tasks.length ? h('p', { class: 'muted' }, `Oxirgi ${d.tasks.length} tasi ko'rsatildi — davrni qisqartiring.`) : null,
     );
@@ -630,10 +682,11 @@
       department: h('select', { class: 'input' }, h('option', { value: '' }, "— Bo'limsiz"), org.departments.map((x) => h('option', { value: String(x.id) }, x.name))),
       branch: h('select', { class: 'input' }, h('option', { value: '' }, 'Asosiy ofis'), org.branches.map((x) => h('option', { value: String(x.id) }, x.name))),
       role: h('select', { class: 'input' }, h('option', { value: 'employee' }, '👤 Hodim'), h('option', { value: 'head' }, '🎖 Rahbar'), h('option', { value: 'admin' }, '👑 Direktor')),
-      workMode: h('select', { class: 'input' }, h('option', { value: 'office' }, '🏢 Ofis (geofence + video)'), h('option', { value: 'field' }, '🚶 Hudud / agent (uydan 1 km+)')),
+      workMode: h('select', { class: 'input' }, h('option', { value: 'office' }, '🏢 Ofis (geofence + video)'), h('option', { value: 'field' }, '🚶 Hudud / agent (uydan 1,5 km+)')),
       salary: h('input', { class: 'input', type: 'number', min: '0', step: '10000', inputmode: 'numeric', value: e.salary === null ? '' : String(e.salary) }),
       bonusFund: h('input', { class: 'input', type: 'number', min: '0', step: '10000', inputmode: 'numeric', value: e.bonusFund === null ? '' : String(e.bonusFund) }),
       workStart: h('input', { class: 'input', type: 'time', value: e.workStart || '' }),
+      workEnd: h('input', { class: 'input', type: 'time', value: e.workEnd || '' }),
       isHr: h('input', { type: 'checkbox', checked: e.isHr }),
       isViewer: h('input', { type: 'checkbox', checked: e.isViewer }),
       flexible: h('input', { type: 'checkbox', checked: e.flexible }),
@@ -660,6 +713,7 @@
       set('salary', numOrNull(f.salary.value), e.salary);
       set('bonusFund', numOrNull(f.bonusFund.value), e.bonusFund);
       set('workStart', f.workStart.value || null, e.workStart);
+      set('workEnd', f.workEnd.value || null, e.workEnd);
       set('isHr', f.isHr.checked, e.isHr);
       set('isViewer', f.isViewer.checked, e.isViewer);
       set('flexible', f.flexible.checked, e.flexible);
@@ -681,6 +735,7 @@
         fld('Filial', f.branch), fld('Ish turi', f.workMode),
         fld("💵 Oklad (so'm)", f.salary), fld("🏆 KPI summasi (so'm)", f.bonusFund, "Oy davomida vaqtida kelib, topshiriqlarni muddatida bajarsa — to'liq, aks holda 0."),
         fld('🕘 Alohida ish boshlanishi', f.workStart, "Bo'sh — umumiy vaqt."),
+        fld('🏁 Alohida ish tugashi', f.workEnd, "Bo'sh — umumiy (18:00). Undan oldin ketsa — «erta ketdi» belgisi."),
         sw('🧑‍💼 HR', f.isHr, "Hamma narsani ko'radi, kelmaslik xabarlarini oladi"),
         sw('👁 Davomat nazorati', f.isViewer, 'Kelgan-ketgan, davomat % va KPI % (topshiriqlarsiz)'),
         sw('🕊 Erkin jadval', f.flexible, 'Kechikish va masofadan ozod'),
@@ -765,7 +820,7 @@
 
   const branchSheet = (b) => {
     const name = h('input', { class: 'input', maxlength: '60', value: b.name });
-    const radius = h('input', { class: 'input', type: 'number', min: '30', max: '5000', step: '10', value: b.radius ? String(b.radius) : '300' });
+    const radius = h('input', { class: 'input', type: 'number', min: '30', max: '5000', step: '10', value: b.radius ? String(b.radius) : '150' });
     openSheet(`🏙 ${b.name}`, h('label', { class: 'field' }, h('span', null, 'Nomi'), name),
       h('label', { class: 'field' }, h('span', null, 'Ofis radiusi (metr)'), radius),
       h('p', { class: 'hint' }, "Ofis nuqtasini belgilash — botda: Panel → 🏙 Filiallar → 📍 Ofis nuqtasi (ofisda turib)."),
@@ -982,8 +1037,9 @@
         h('div', { class: 't' }, `${x.name} — ${x.datePretty}`), h('p', null, `«${x.reason}»`), box,
         h('div', { class: 'btns' },
           x.proofType ? h('button', { class: 'btn ghost small', type: 'button', onclick: () => showMedia(box, `/api/excuses/${x.attId}/proof`, x.proofType) }, '👁 Isbot') : null,
-          h('button', { class: 'btn ok small', type: 'button', onclick: decide('approved') }, '✅ Sababli'),
-          h('button', { class: 'btn danger small', type: 'button', onclick: decide('rejected') }, '❌ Sababsiz'))));
+          x.canDecide === false ? h('span', { class: 'hint' }, "👁 Faqat ko'rish — bo'lim rahbari yoki boshliq hal qiladi") : null,
+          x.canDecide === false ? null : h('button', { class: 'btn ok small', type: 'button', onclick: decide('approved') }, '✅ Sababli'),
+          x.canDecide === false ? null : h('button', { class: 'btn danger small', type: 'button', onclick: decide('rejected') }, '❌ Sababsiz'))));
     })));
   };
 
@@ -1005,18 +1061,26 @@
     const d = await api('GET', `/api/pay/${month}`);
     const k = d.kpi;
     setTitle('💵 Oylik va KPI', d.monthName);
-    const lim = (label, v, max) => [h('div', { class: 'k' }, `${v > max ? '❌' : '✅'} ${label}${max ? ` (ruxsat ${max})` : ''}`), h('div', { class: 'v' }, String(v))];
+    const g = d.gate || { minDays: 25, minTaskPct: 90 };
+    const need = k.gate && k.gate.required !== null ? k.gate.required : g.minDays;
+    const came = k.gate ? k.gate.attended : k.att.ontime;
+    const tp = k.gate && k.gate.taskPct !== null ? k.gate.taskPct : k.tasks.pct;
+    const row = (ok, label, v) => [h('div', { class: 'k' }, `${ok === null ? '' : ok ? '✅ ' : '❌ '}${label}`), h('div', { class: 'v' }, String(v))];
     mount(
       h('div', { class: 'card' }, h('div', { class: 'kv' },
         h('div', { class: 'k' }, '💼 Oklad'), h('div', { class: 'v' }, money(d.pay.salary)),
         h('div', { class: 'k' }, '🏆 KPI summasi'), h('div', { class: 'v' }, money(d.pay.bonusFund)),
         h('div', { class: 'k' }, 'KPI beriladi'), h('div', { class: 'v' }, money(d.pay.bonus)),
+        d.pay.extra ? [h('div', { class: 'k' }, '📅 Dam olish kuni (chaqiruv)'), h('div', { class: 'v' }, `+${money(d.pay.extra)}`)] : null,
         h('div', { class: 'k' }, h('b', null, '💰 Jami')), h('div', { class: 'v' }, money(d.pay.total))),
         h('p', { class: 'muted' }, d.pay.final ? STATUS[k.status][1] : 'Taxminiy — oy yakunida direktor tasdiqlaydi'),
         d.monthStart ? h('p', { class: 'hint' }, `⏱ Oy hisobi: ${shortDate(d.monthStart.slice(0, 10))} ${clock(d.monthStart)} dan`) : null),
       d.kpiMode === 'gate' ? h('div', { class: 'card' }, h('h2', null, 'KPI sharti'),
-        h('div', { class: 'kv' }, lim('🕘 Kech kelgan kunlar', k.att.late, d.limits.late), lim('🔴 Sababsiz kelmagan', k.att.absent, d.limits.absent), lim('📋 Muddatida bajarilmagan', k.tasks.missed, d.limits.missed),
-          h('div', { class: 'k' }, '📄 Sababli kunlar'), h('div', { class: 'v' }, String(k.att.excused))),
+        h('p', { class: 'muted' }, `Oyiga ${g.minDays} kun vaqtida kelish va topshiriqlarning ${g.minTaskPct}% i muddatida.`),
+        h('div', { class: 'kv' }, row(came >= need, `🗓 Vaqtida kelgan kunlar (kerak ${need})`, came),
+          row(null, '🕘 Kech kelgan (sababli qilinmasa kirmaydi)', k.att.late), row(null, '🔴 Sababsiz kelmagan', k.att.absent),
+          row(null, '📄 Sababli (talabni kamaytiradi)', k.att.excused),
+          row(!k.tasks.total || tp >= g.minTaskPct, `📋 Topshiriqlar muddatida (kerak ≥${g.minTaskPct}%)`, k.tasks.total ? `${tp}%` : '—')),
         h('p', null, k.eligible ? (d.current ? '✅ Hozircha shart bajarilyapti — shu tarzda davom eting!' : '✅ Shart bajarildi') : `❌ KPI berilmaydi: ${k.fail || ''}`)) : null,
       h('div', { class: 'card' }, h('h2', null, `KPI ball: ${k.total}`), bar(k.total),
         h('p', { class: 'muted' }, `📋 topshiriq ${k.tasks.pct}% · 🕘 davomat ${k.att.pct}% · ⭐ ${k.headScore === null ? '—' : `${k.headScore}/10`}`),
@@ -1117,6 +1181,30 @@
       h('div', { class: 'card' }, seg([['1', '✅ Yoqilgan'], ['0', "🚫 O'chiq"]], d.headTaskCopy ? '1' : '0', action(async (k) => {
         await api('POST', '/api/settings/head-task-copy', { on: k === '1' }); toast('Saqlandi'); router();
       })), h('p', { class: 'muted' }, "Yoqilgan bo'lsa, bo'lim rahbari bergan topshiriq nusxasi direktor va HR ga boradi. Direktor va HR bergan topshiriqlar nusxasiz.")),
+      section('👁 HR va boshliq topshiriqlari'),
+      h('div', { class: 'card' }, seg([['1', "✅ HR ko'radi"], ['0', "🚫 Ko'rmaydi"]], d.hrBossTasks ? '1' : '0', action(async (k) => {
+        await api('POST', '/api/settings/hr-boss-tasks', { on: k === '1' }); toast('Saqlandi'); router();
+      })), h('p', { class: 'muted' }, "Boshliq/direktor bergan topshiriqlar va boshliqning o'z missiyalari HR ga (jurnal, ro'yxatlar, tekshiruv, Excel) ko'rinsinmi.")),
+      section('🚦 KPI sharti'),
+      (() => {
+        const days = h('input', { class: 'input', type: 'number', min: '1', max: '31', value: String(d.kpi.minDays) });
+        const pct = h('input', { class: 'input', type: 'number', min: '0', max: '100', value: String(d.kpi.minTaskPct) });
+        return h('div', { class: 'card' },
+          h('label', { class: 'field' }, h('span', null, '🗓 Oyiga necha kun vaqtida kelishi kerak'), days),
+          h('label', { class: 'field' }, h('span', null, '📋 Topshiriqlarning necha foizi muddatida'), pct),
+          h('p', { class: 'muted' }, "Kech kelgan kun — faqat sababli qilinsa kiradi; sababli kunlar talabni kamaytiradi. Bajarilmasa KPI summasi 0."),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: action(async () => {
+            await api('POST', '/api/settings/kpi-gate', { minDays: Number(days.value), minTaskPct: Number(pct.value) }); toast('Saqlandi');
+          }) }, 'Saqlash'));
+      })(),
+      section("💵 Rahbar va KPI summasi"),
+      h('div', { class: 'card' }, seg([['1', "✅ Ko'radi"], ['0', "🚫 Ko'rmaydi"]], d.headMoney ? '1' : '0', action(async (k) => {
+        await api('POST', '/api/settings/head-money', { on: k === '1' }); toast('Saqlandi'); router();
+      })), h('p', { class: 'muted' }, "Bo'lim rahbari o'z jamoasining KPI summasini ko'rsinmi (ball va foizlarni har doim ko'radi).")),
+      section('👁 Boshliq va keldi-ketdi'),
+      h('div', { class: 'card' }, seg([['1', "✅ Boshliq ko'radi"], ['0', "🚫 Ko'rmaydi"]], d.bossAttendance ? '1' : '0', action(async (k) => {
+        await api('POST', '/api/settings/boss-attendance', { on: k === '1' }); toast('Saqlandi'); router();
+      })), h('p', { class: 'muted' }, "Keldi / ketdi, kech qolaman, kelmayman xabarlari va ertalabki / kun yakuni hisobotlari boshliqqa ham borsinmi. O'chiq bo'lsa — faqat bo'lim rahbarlari va HR ga.")),
       section('🏷 Boshliq ismi'),
       h('div', { class: 'card' }, h('label', { class: 'field' }, boss, h('div', { class: 'hint' }, "«HR va boshliq (…)ga yuborildi» yorlig'ida ko'rinadi.")),
         h('button', { class: 'btn ghost block', type: 'button', onclick: action(async () => { await api('POST', '/api/settings/boss-name', { name: boss.value }); toast('Saqlandi'); }) }, 'Saqlash')),
@@ -1136,11 +1224,278 @@
   };
 
   // =========================================================================
+  // E'LONLAR
+  // =========================================================================
+  const pageAnnounce = async () => {
+    setTitle("📢 E'lon", 'Hammaga, bo\'limlarga yoki tanlanganlarga');
+    const [data, hist] = await Promise.all([api('GET', '/api/announce/targets'), api('GET', '/api/announce')]);
+    const seeAll = state.me && state.me.roles.seeAll;
+    let to = 'all';
+    const selPeople = new Set();
+    const selDepts = new Set();
+    const pickBox = h('div');
+    const submit = h('button', { class: 'btn block', type: 'button' });
+    const count = () => (to === 'all' ? data.people.length : to === 'depts'
+      ? data.people.filter((p) => p.department && selDepts.has(p.department.id)).length : selPeople.size);
+    const paintSubmit = () => { const n = count(); submit.textContent = n ? `📤 Yuborish — ${n} kishiga` : 'Kimga — tanlang'; submit.disabled = !n; };
+    const checkRow = (label, sub, set, key) => {
+      const cb = h('input', { type: 'checkbox', checked: set.has(key), 'aria-label': label });
+      cb.addEventListener('change', () => { if (cb.checked) set.add(key); else set.delete(key); paintSubmit(); });
+      return h('label', { class: 'pick' }, cb, h('div', { class: 'grow' }, h('div', { class: 't' }, label), sub ? h('div', { class: 's' }, sub) : null));
+    };
+    const paintPick = () => {
+      if (to === 'all') pickBox.replaceChildren(h('p', { class: 'muted' }, seeAll ? `Hamma hodimlarga — ${data.people.length} kishi.` : `Bo'limingizdagi hamma hodimlarga — ${data.people.length} kishi.`));
+      else if (to === 'depts') pickBox.replaceChildren(h('div', { class: 'list' }, data.departments.map((d) => checkRow(`🏢 ${d.name}`, `${data.people.filter((p) => p.department && p.department.id === d.id).length} kishi`, selDepts, d.id))));
+      else pickBox.replaceChildren(h('div', { class: 'list' }, data.people.map((p) => checkRow(`${p.icon} ${p.name}`, [p.title, p.department && p.department.name].filter(Boolean).join(' · '), selPeople, p.id))));
+      paintSubmit();
+    };
+    const tabs = [['all', seeAll ? '👥 Hammaga' : "👥 Bo'limimga"]];
+    if (seeAll) tabs.push(['depts', "🏢 Bo'limlarga"]);
+    tabs.push(['emps', '☑️ Tanlash']);
+    const tabBox = h('div');
+    const paintTabs = () => tabBox.replaceChildren(seg(tabs, to, (k) => { to = k; paintTabs(); paintPick(); }));
+    const ta = h('textarea', { class: 'input', maxlength: '3500', placeholder: 'Masalan: Bugun soat 15:00 da majlis bor. Hamma qatnashsin.' });
+    submit.addEventListener('click', action(async () => {
+      if (!ta.value.trim()) throw new Error("E'lon matnini yozing");
+      const ids = to === 'depts' ? [...selDepts] : to === 'emps' ? [...selPeople] : [];
+      if (!(await confirmBox(`E'lon ${count()} kishiga yuborilsinmi?`))) return;
+      const r = await api('POST', '/api/announce', { to, ids, text: ta.value });
+      toast(`Yuborildi: ${r.delivered}/${r.total}`);
+      go(`#/announce/${r.id}`);
+    }));
+    paintTabs(); paintPick();
+    if (!data.people.length) return mount(empty("E'lon yuboradigan hodim yo'q."));
+    mount(
+      h('div', { class: 'card' }, h('label', { class: 'field' }, h('span', null, "E'lon matni"), ta,
+        h('div', { class: 'hint' }, "Har bir hodimga botda keladi va «👀 Tanishdim» bosadi. Ovozli / video e'lon — botda «📢 E'lon» orqali."))),
+      section('Kimga'), tabBox, pickBox,
+      h('div', { class: 'sticky-bar' }, submit),
+      hist.items.length ? [section("📜 Yuborilgan e'lonlar"), h('div', { class: 'list' }, hist.items.map((a) => h('button', { class: 'item', type: 'button', onclick: () => go(`#/announce/${a.id}`) },
+        h('div', { class: 'grow' }, h('div', { class: 't' }, a.text || `${MEDIA_ICON[a.mediaType] || '📎'} media`),
+          h('div', { class: 's' }, `${shortDate(a.at.slice(0, 10))} ${clock(a.at)} · ${a.from || ''} · ${a.target || ''}`)),
+        h('div', { class: 'end' }, `👀 ${a.seen}/${a.total}`))))] : null);
+  };
+
+  const pageAnnounceOne = async (m) => {
+    const d = await api('GET', `/api/announce/${m[1]}`);
+    const a = d.announcement;
+    setTitle("📢 E'lon", `${shortDate(a.at.slice(0, 10))} ${clock(a.at)} · 👀 ${a.seen}/${a.total}`);
+    const wait = d.recipients.filter((r) => !r.seenAt).length;
+    mount(
+      h('div', { class: 'card' }, h('p', null, a.text || `${MEDIA_ICON[a.mediaType] || '📎'} media (botda)`),
+        h('p', { class: 'muted' }, `${a.from || ''} → ${a.target || ''}`)),
+      section(`👀 Tanishdi: ${a.seen} / ${a.total}`),
+      h('div', { class: 'list' }, d.recipients.map((r) => h('div', { class: 'item static' },
+        h('div', { class: 'grow t' }, `${r.seenAt ? '✅' : r.delivered ? '⏳' : '🚫'} ${r.name}`),
+        h('div', { class: 'end' }, r.seenAt ? `${shortDate(r.seenAt.slice(0, 10))} ${clock(r.seenAt)}` : r.delivered ? 'hali ko\'rmadi' : 'yetmadi')))),
+      wait ? h('button', { class: 'btn ghost block', type: 'button', onclick: action(async () => {
+        const r = await api('POST', `/api/announce/${a.id}/resend`); toast(`${r.sent} kishiga qayta yuborildi`);
+      }) }, `🔔 Tanishmaganlarga qayta yuborish (${wait})`) : null,
+      h('button', { class: 'btn block', type: 'button', onclick: () => go('#/announce') }, "📢 Yangi e'lon"));
+  };
+
+
+  // =========================================================================
+  // 💬 SAVOL-JAVOB
+  // =========================================================================
+  /** Lichkaga o'tish: username bo'lsa — t.me; bo'lmasa bot havolani chatga yuboradi */
+  const openContact = async (p, ctx = {}) => {
+    if (p.username && /^\w{3,32}$/.test(p.username)) {
+      const url = `https://t.me/${p.username}`;
+      if (tg && INIT && tg.openTelegramLink) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener');
+      return;
+    }
+    await api('POST', '/api/contact', { tgId: p.tgId, ...ctx });
+    toast('Lichka havolasi botga yuborildi — chatda ismni bosing');
+  };
+  const contactBtn = (p, ctx) => h('button', { class: 'btn ghost small', type: 'button', onclick: action(() => openContact(p, ctx)) }, '👤 Lichka');
+
+  const pageChats = async () => {
+    setTitle('💬 Savol-javob', 'Bitta odam, bir nechta yoki bo\'lim bilan');
+    const d = await api('GET', '/api/chats');
+    mount(
+      h('button', { class: 'btn block', type: 'button', onclick: () => go('#/chats/new') }, '💬 Yangi chat'),
+      section('📜 Chatlarim'),
+      d.items.length ? h('div', { class: 'list' }, d.items.map((c) => h('button', { class: 'item', type: 'button', onclick: () => go(`#/chats/${c.id}`) },
+        h('div', { class: 'grow' },
+          h('div', { class: 't' }, `${c.mine ? '' : `${firstName(c.starter.name)}: `}${c.target || 'Chat'}`),
+          h('div', { class: 's' }, `${shortDate(c.at.slice(0, 10))} · ${c.title || ''}`)),
+        h('div', { class: 'end' }, `👥 ${c.membersCount}${c.mode === 'starter' ? ' 🔒' : ''}`)))) : empty("Hali chat yo'q"));
+  };
+
+  const pageChatNew = async () => {
+    setTitle('💬 Yangi chat', 'Kim bilan gaplashamiz?');
+    const data = await api('GET', '/api/chats/targets');
+    if (!data.people.length) return mount(empty("Gaplashish uchun odam yo'q."));
+    let to = 'emps';
+    let mode = 'all';
+    const selPeople = new Set();
+    const selDepts = new Set();
+    const pickBox = h('div');
+    const modeBox = h('div');
+    const submit = h('button', { class: 'btn block', type: 'button' });
+    const chosen = () => (to === 'all' ? data.people.length : to === 'depts'
+      ? data.people.filter((p) => p.department && selDepts.has(p.department.id)).length : selPeople.size);
+    const paint = () => {
+      const n = chosen();
+      submit.textContent = n ? `📤 Yuborish — ${n} kishiga` : 'Kim bilan — tanlang';
+      submit.disabled = !n;
+      modeBox.replaceChildren(...(n > 1 ? [section("Javoblar kimga ko'rinsin?"), seg([['all', '👥 Hammaga (guruh)'], ['starter', '🔒 Faqat menga']], mode, (k) => { mode = k; paint(); })] : []));
+    };
+    const checkRow = (label, sub, set, key, person) => {
+      const cb = h('input', { type: 'checkbox', checked: set.has(key), 'aria-label': label });
+      cb.addEventListener('change', () => { if (cb.checked) set.add(key); else set.delete(key); paint(); });
+      return h('div', { class: 'pick-row' },
+        h('label', { class: 'pick' }, cb, h('div', { class: 'grow' }, h('div', { class: 't' }, label), sub ? h('div', { class: 's' }, sub) : null)),
+        person ? contactBtn(person) : null);
+    };
+    const paintPick = () => {
+      if (to === 'all') pickBox.replaceChildren(h('p', { class: 'muted' }, `${data.canDepts ? 'Hamma hodimlar' : "Bo'limingizdagi hamma hodimlar"} bilan.`));
+      else if (to === 'depts') pickBox.replaceChildren(h('div', { class: 'list' }, data.departments.map((dp) => checkRow(`🏢 ${dp.name}`, `${data.people.filter((p) => p.department && p.department.id === dp.id).length} kishi`, selDepts, dp.id))));
+      else pickBox.replaceChildren(h('p', { class: 'muted' }, "Belgilang (1, 2, 3…). «👤 Lichka» — to'g'ridan-to'g'ri Telegram lichkasiga."),
+        h('div', { class: 'list' }, data.people.map((p) => checkRow(`${p.icon} ${p.name}`, [p.title, p.department && p.department.name].filter(Boolean).join(' · '), selPeople, p.id, p))));
+      paint();
+    };
+    const tabs = [['emps', '☑️ Tanlash']];
+    if (data.canDepts) tabs.push(['depts', "🏢 Bo'limlar"]);
+    if (data.canAll) tabs.push(['all', data.canDepts ? '👥 Hamma' : "👥 Bo'limim"]);
+    const tabBox = h('div');
+    const paintTabs = () => tabBox.replaceChildren(seg(tabs, to, (k) => { to = k; paintTabs(); paintPick(); }));
+    const ta = h('textarea', { class: 'input', maxlength: '3500', placeholder: 'Savol yoki xabaringiz…' });
+    submit.addEventListener('click', action(async () => {
+      if (!ta.value.trim()) throw new Error('Xabarni yozing');
+      const ids = to === 'depts' ? [...selDepts] : to === 'emps' ? [...selPeople] : [];
+      const r = await api('POST', '/api/chats', { to, ids, mode, text: ta.value });
+      toast(`Yuborildi: ${r.delivered}/${r.total}`);
+      go(`#/chats/${r.id}`);
+    }));
+    paintTabs(); paintPick();
+    mount(section('Kim bilan'), tabBox, pickBox, modeBox,
+      h('div', { class: 'card' }, h('label', { class: 'field' }, h('span', null, 'Xabar'), ta,
+        h('div', { class: 'hint' }, "Botda keladi, «↩️ Javob yozish» bilan javob qaytaradi. Ovoz / video / rasm / fayl — botda «💬 Savol-javob» orqali."))),
+      h('div', { class: 'sticky-bar' }, submit));
+  };
+
+  const pageChat = async (m) => {
+    const d = await api('GET', `/api/chats/${m[1]}`);
+    const c = d.chat;
+    const myTg = state.me ? state.me.tgId : null;
+    const multi = d.members.length > 1;
+    setTitle(`💬 ${c.target || 'Chat'}`, multi ? (c.mode === 'starter' ? '🔒 javoblar boshlovchiga' : '👥 guruh chat') : 'yuzma-yuz');
+    let replyTo = null;
+    const replyBox = h('div');
+    const ta = h('textarea', { class: 'input', maxlength: '3500', placeholder: 'Javobingiz…' });
+    const targetLabel = () => {
+      if (c.mode === 'starter' && !c.mine) return `${d.starter.name || 'boshlovchi'} ga (shaxsan)`;
+      if (c.mode === 'starter' && replyTo) return `${replyTo.fromName} ga (shaxsan)`;
+      return multi || c.mine ? 'hamma ishtirokchiga' : `${d.starter.name || ''} ga`;
+    };
+    const paintReply = () => replyBox.replaceChildren(h('div', { class: 'chips' }, chip(`✉️ Kimga: ${targetLabel()}`),
+      replyTo ? h('button', { class: 'btn ghost small', type: 'button', onclick: () => { replyTo = null; paintReply(); } }, '✖ hammaga') : null));
+    const people = [
+      { tgId: d.starter.tgId, name: d.starter.name, username: d.starter.username, icon: '👑', title: 'boshlagan' },
+      ...d.members.map((x) => ({ ...x })),
+    ].filter((p) => p.tgId !== myTg);
+    const msgs = d.messages.map((x) => {
+      const box = h('div', { class: 'media' });
+      const toLbl = x.to === 'me' ? ' → sizga' : x.to === 'other' ? ' → shaxsan' : '';
+      return h('div', { class: `msg ${x.mine ? 'mine' : ''}`.trim() },
+        h('div', { class: 'who' }, `${x.mine ? 'Siz' : x.fromName || ''}${toLbl} · ${shortDate(x.at.slice(0, 10))} ${clock(x.at)}`),
+        x.text ? h('div', { class: 'txt' }, x.text) : null,
+        box,
+        h('div', { class: 'btns' },
+          x.media ? h('button', { class: 'btn ghost small', type: 'button', onclick: () => showMedia(box, `/api/chats/${c.id}/messages/${x.id}/media`, x.media.type, async () => { await api('POST', `/api/chats/${c.id}/messages/${x.id}/media/send`); toast('Chatga yuborildi'); }) }, `${MEDIA_ICON[x.media.type] || '📎'} Ochish`) : null,
+          c.mine && c.mode === 'starter' && !x.mine ? h('button', { class: 'btn ghost small', type: 'button', onclick: () => { replyTo = x; paintReply(); ta.focus(); } }, '↩️ Shaxsan javob') : null));
+    });
+    const send = h('button', { class: 'btn block', type: 'button', onclick: action(async () => {
+      if (!ta.value.trim()) throw new Error('Javobni yozing');
+      const r = await api('POST', `/api/chats/${c.id}/messages`, { text: ta.value, replyTo: replyTo ? replyTo.id : null });
+      toast(`Yuborildi: ${r.delivered}/${r.total}`); router();
+    }) }, '📤 Yuborish');
+    paintReply();
+    mount(
+      section("👤 Lichkaga o'tish"),
+      h('div', { class: 'list' }, people.map((p) => h('div', { class: 'item static' },
+        h('div', { class: 'grow' }, h('div', { class: 't' }, `${p.icon || '👤'} ${p.name || ''}`), p.title ? h('div', { class: 's' }, p.title) : null),
+        contactBtn(p, { chatId: c.id })))),
+      section('Yozishma'),
+      msgs.length ? h('div', { class: 'msgs' }, msgs) : empty("Xabar yo'q"),
+      h('div', { class: 'card' }, replyBox, ta, h('div', { class: 'hint' }, 'Ovoz / video / rasm / fayl — botdagi «↩️ Javob yozish» orqali.')),
+      h('div', { class: 'sticky-bar' }, send),
+      h('button', { class: 'btn ghost block', type: 'button', onclick: () => go('#/chats') }, '📜 Chatlarim'));
+    if (msgs.length) setTimeout(() => { const last = $app.querySelector('.msgs .msg:last-child'); if (last) last.scrollIntoView({ block: 'center' }); }, 30);
+  };
+
+  // =========================================================================
+  // HOLAT BO'YICHA — ⏳ Faol · 🕓 Kutilmoqda · ✅ Bajarilgan
+  // =========================================================================
+  const S_KIND = [['active', '⏳ Faol'], ['fix', "🔁 Ko'rib chiqish"], ['review', '🕓 Kutilmoqda'], ['accepted', '✅ Bajarilgan']];
+  const S_GIVER = { admin: 'boshliq/direktor', hr: 'HR', head: 'rahbar', self: "o'zi yozgan" };
+  const pageStatus = async (m, q) => {
+    const kind = q.get('kind') || 'active';
+    const mine = q.get('mine') === '1';
+    const emp = q.get('emp') || '';
+    const d = await api('GET', `/api/tasks/status?kind=${encodeURIComponent(kind)}${mine ? '&mine=1' : ''}${emp ? `&emp=${encodeURIComponent(emp)}` : ''}`);
+    const who = d.mine ? 'Meniki' : d.emp ? d.empName || 'Hodim' : (state.me && state.me.roles.seeAll ? 'Hamma hodimlar' : "Men va bo'limim");
+    setTitle(S_KIND.find(([k]) => k === kind)[1], `${who} · ${d.total} ta${kind === 'accepted' ? ' (shu oy)' : ''}`);
+    const link = (x) => `#/status?${new URLSearchParams(Object.entries({ kind, mine: mine ? '1' : '', emp, ...x }).filter(([, v]) => v)).toString()}`;
+    const tabs = seg(S_KIND.map(([k, l]) => [k, `${l} (${d.counts[k]})`]), kind, (k) => go(link({ kind: k })));
+    const scope = d.canTeam && state.me && state.me.employee
+      ? seg([['0', state.me.roles.seeAll ? '👥 Hodimlar' : "👥 Bo'limim"], ['1', '👤 Meniki']], mine ? '1' : '0', (k) => go(link({ mine: k === '1' ? '1' : '', emp: '' })))
+      : null;
+    // jamoa: avval hodimlar (ism + soni) — bosilsa shu hodimning vazifalari
+    if (!d.mine && !d.emp) {
+      const byEmp = new Map();
+      d.tasks.forEach((t) => { const x = byEmp.get(t.employee.id) || { id: t.employee.id, name: t.employee.name, n: 0, late: 0 }; x.n += 1; if (t.overdue) x.late += 1; byEmp.set(t.employee.id, x); });
+      const people = [...byEmp.values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+      return mount(tabs, scope,
+        people.length ? h('div', { class: 'list' }, people.map((x) => h('button', { class: 'item', type: 'button', onclick: () => go(link({ emp: String(x.id) })) },
+          h('div', { class: 'grow' }, h('div', { class: 't' }, `👤 ${x.name}`), x.late ? h('div', { class: 's' }, `🔴 ${x.late} ta kechikkan`) : null),
+          h('span', { class: 'badge soft' }, String(x.n))))) : empty("Bo'sh"),
+        kind === 'review' && d.total ? h('button', { class: 'btn block', type: 'button', onclick: () => go('#/review') }, "🔎 Tekshiruvga o'tish") : null);
+    }
+    const list = d.tasks.map((t) => h('div', { class: 'item static' }, h('div', { class: 'grow' },
+      h('div', { class: 't' }, `${t.priority === 'high' ? '🔥 ' : ''}${t.media ? `${MEDIA_ICON[t.media.type] || '📎'} ` : ''}${t.title}`),
+      taskChips(t),
+      h('p', { class: 'muted' }, [
+        `🗓 yozilgan ${shortDate((t.createdAt || '').slice(0, 10))} ${clock(t.createdAt)}`,
+        t.giverKind === 'self' ? "✍️ o'zi yozgan" : `bergan: ${t.giverName || '—'} (${S_GIVER[t.giverKind] || t.giverKind})`,
+        t.doneAt && t.status !== 'active' ? `✔️ ${shortDate(t.doneAt.slice(0, 10))} ${clock(t.doneAt)}` : null,
+      ].filter(Boolean).join(' · ')))));
+    mount(tabs, scope,
+      d.emp ? h('button', { class: 'btn ghost block', type: 'button', onclick: () => go(link({ emp: '' })) }, '⬅️ Hodimlar') : null,
+      list.length ? h('div', { class: 'list' }, list) : empty("Bo'sh"),
+      kind === 'review' && d.canTeam && !d.mine && d.total ? h('button', { class: 'btn block', type: 'button', onclick: () => go('#/review') }, "🔎 Tekshiruvga o'tish") : null);
+  };
+
+  /** Qaytarilgan topshiriq bo'yicha yozishma (hodim ↔ tekshiruvchi) */
+  const taskRepliesSheet = async (t) => {
+    const d = await api('GET', `/api/tasks/${t.id}/replies`);
+    const ta = h('textarea', { class: 'input', maxlength: '2000', placeholder: "Javob yoki e'tirozingiz…" });
+    openSheet(`💬 ${t.title}`,
+      t.reviewNote ? h('p', { class: 'muted' }, `📝 Kamchiliklar: «${t.reviewNote}»`) : null,
+      d.replies.length ? h('div', { class: 'msgs' }, d.replies.map((r) => h('div', { class: `msg ${r.mine ? 'mine' : ''}`.trim() },
+        h('div', { class: 'who' }, `${r.mine ? 'Siz' : r.fromName || ''} · ${shortDate(r.at.slice(0, 10))} ${clock(r.at)}`),
+        h('div', { class: 'txt' }, r.text || `${MEDIA_ICON[r.mediaType] || '📎'} media (botda)`)))) : h('p', { class: 'muted' }, "Hali yozishma yo'q."),
+      d.canWrite ? [
+        h('div', { class: 'chips' }, chip(`✉️ Kimga: ${d.to.name}`), contactBtn(d.to, { taskId: t.id })),
+        ta,
+        h('div', { class: 'btns' }, h('button', { class: 'btn', type: 'button', onclick: action(async () => {
+          if (!ta.value.trim()) throw new Error('Javobni yozing');
+          const r = await api('POST', `/api/tasks/${t.id}/replies`, { text: ta.value });
+          closeSheet(); toast(r.delivered ? 'Javob yuborildi' : 'Saqlandi, lekin yetkazib bo\'lmadi'); router();
+        }) }, '📤 Yuborish')),
+        h('div', { class: 'hint' }, "Ovoz / video / fayl — botdagi «💬 O'z javobim» / «💬 Javob yozish» orqali."),
+      ] : null);
+  };
+
+  // =========================================================================
   // ROUTER
   // =========================================================================
   const ROUTES = [
     [/^\/$/, pageHome],
     [/^\/tasks$/, pageTasks],
+    [/^\/status$/, pageStatus],
     [/^\/self$/, pageSelf],
     [/^\/assign$/, pageAssign],
     [/^\/review$/, pageReview],
@@ -1158,6 +1513,11 @@
     [/^\/pay\/(\d{4}-\d{2})$/, pagePayMonth],
     [/^\/reminders$/, pageReminders],
     [/^\/settings$/, pageSettings],
+    [/^\/announce$/, pageAnnounce],
+    [/^\/announce\/(\d+)$/, pageAnnounceOne],
+    [/^\/chats$/, pageChats],
+    [/^\/chats\/new$/, pageChatNew],
+    [/^\/chats\/(\d+)$/, pageChat],
   ];
 
   let seq = 0;

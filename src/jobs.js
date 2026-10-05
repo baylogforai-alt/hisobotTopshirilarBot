@@ -38,6 +38,8 @@ const dailyReport = require('./handlers/dailyReport');
  *   1-kun 09:00  month-start     — hammaga «yangi ish oyi boshlandi» + tasdiqlash tugmasi
  *   1-kun 09:20  monthly-kpi     — o'tgan oy KPI + oylik Excel → direktor/HR; boshliqlarga baholash eslatmasi
  *   23:50        backup          — SQLite zaxira / Postgres'da JSON eksport direktorga (backup-export)
+ *   har daqiqa   task-start      — topshiriqning boshlanish soati kelganda hodimga «hozir bajaring» xabari
+ *   06:00–21:30  home-location   — uy joylashuvi yo'q hudud agentlariga har 30 daqiqada eslatma
  */
 
 const logRun = (kind, detail = '') =>
@@ -52,16 +54,16 @@ const schedule = (name, expr, fn) => {
   }, { timezone: config.timezone });
 };
 
-/** Rahbarlarga o'z bo'limi, direktorlar va HR ga hamma */
-const sendToManagers = async (bot, buildFor) => {
+/** Rahbarlarga o'z bo'limi, direktorlar va HR ga hamma. noBoss — davomat hisobotlari boshliqqa bormaydi */
+const sendToManagers = async (bot, buildFor, { noBoss = false } = {}) => {
   let sent = 0;
-  const full = await notify.seeAllIds();
+  const full = await notify.seeAllIds({ noBoss });
   for (const id of full) {
-    const msg = await buildFor(null);
+    const msg = await buildFor(null, id);
     if (msg) { await notify.toUser(bot, id, msg.text, msg.extra || {}); sent += 1; await tg.throttle(); }
   }
   for (const h of await employees.listHeads()) {
-    if (!h.department_id || full.includes(Number(h.tg_id))) continue;
+    if (!h.department_id || full.includes(Number(h.tg_id)) || (noBoss && h.role === 'admin')) continue;
     const msg = await buildFor(h.department_id);
     if (msg) { await notify.toUser(bot, h.tg_id, msg.text, msg.extra || {}); sent += 1; await tg.throttle(); }
   }
@@ -144,12 +146,13 @@ const tick = async (bot, now = time.now()) => {
   }
   await morningCall(bot, nowMin);
   if (inSlot(g + config.lateGraceMinutes + 5, nowMin)) {
-    const n = await sendToManagers(bot, async (deptId) => ({ text: (await reports.buildMorningDigest({ deptId })).text }));
+    const n = await sendToManagers(bot, async (deptId) => ({ text: (await reports.buildMorningDigest({ deptId })).text }), { noBoss: !(await require('./services/org').bossSeesAttendance()) });
     await logRun('morning-digest', `${n} ta rahbarga`);
   }
   if (inSlot(g + 40, nowMin)) {
-    const n = await sendToManagers(bot, async (deptId) => {
-      const list = await tasks.overdue(deptId);
+    const n = await sendToManagers(bot, async (deptId, tgId) => {
+      // HR boshliq/direktor bergan topshiriqlarni ko'rmaydi
+      const list = tgId ? tasks.visibleFor(await require('./services/access').resolve(tgId), await tasks.overdue(deptId)) : await tasks.overdue(deptId);
       if (!list.length) return null;
       return { text: `⚠️ <b>MUDDATI O'TGAN TOPSHIRIQLAR (${list.length})</b>\n\n${ui.taskList(list, { withName: true })}` };
     });
@@ -171,10 +174,26 @@ const start = (bot) => {
     });
   }
 
-  schedule('daily-report', `0 ${endH} * * ${dow}`, async () => {
+  // topshiriq boshlanish soati (masalan ertaga 09:00) — aynan o'sha daqiqada hodimga xabar
+  schedule('task-start', '* * * * *', async () => {
+    const n = await require('./services/flows').notifyTaskStarts(bot);
+    if (n) await logRun('task-start', `${n} ta topshiriq`);
+  });
+
+  // 5-okt: uy joylashuvi yo'q agentlarga — har kuni 06:00 dan har 30 daqiqada (saqlangach to'xtaydi)
+  schedule('home-location', '0,30 6-21 * * *', async () => {
+    const n = await require('./services/flows').remindHomeLocation(bot);
+    if (n) await logRun('home-location', `${n} ta agentga`);
+  });
+
+  // topshiriq eslatmalari — tick ichida (remindTick): har hodim o'z jadvalida
+
+  schedule('daily-report', `0 ${config.dailyReportHour} * * ${dow}`, async () => {
     if (config.dailyGroupReport) await notify.toGroup(bot, await reports.buildDailyGroupText());
     const { text } = await reports.buildToday({ title: 'KUN YAKUNI' });
-    await notify.toSeeAll(bot, text, ui.inline([[ui.cb('📋 Kunlik hisobotlar', 'dr:today'), ui.cb('📥 Excel (bugun)', 'rp:xlday')]]));
+    // boshliqqa — faqat Panelda «Boshliq keldi-ketdini: ko'radi» yoqilgan bo'lsa
+    await notify.toSeeAll(bot, text, ui.inline([[ui.cb('📋 Kunlik hisobotlar', 'dr:today'), ui.cb('📥 Excel (bugun)', 'rp:xlday')]]), null,
+      { noBoss: !(await require('./services/org').bossSeesAttendance()) });
     // hodimlarga: ertangi rejani yozish
     let asked = 0;
     for (const e of await employees.listStaff()) {
@@ -217,9 +236,12 @@ const start = (bot) => {
     const to = time.endOfWeek(anchor);
     const text = await period.teamReport(from, to);
     await notify.toSeeAll(bot, `🔔 <b>HAFTALIK AVTOMATIK HISOBOT</b>\n\n${text}`);
-    const { buffer, filename } = await excel.buildTeamPeriod(from, to);
+    const full = await excel.buildTeamPeriod(from, to);
+    let hrFile = null; // HR ga — boshliq sozlamasiga qarab boshliq/direktor topshiriqlarisiz
     for (const id of await notify.seeAllIds()) {
-      await notify.docToUser(bot, id, buffer, filename, `📥 <b>O'tgan hafta</b> — ${time.prettyRange(from, to)} (Excel)`);
+      const viewer = await require('./services/access').resolve(id);
+      const file = viewer.hrSeesBoss ? full : hrFile || (hrFile = await excel.buildTeamPeriod(from, to, { viewer }));
+      await notify.docToUser(bot, id, file.buffer, file.filename, `📥 <b>O'tgan hafta</b> — ${time.prettyRange(from, to)} (Excel)`);
       await tg.throttle();
     }
     await logRun('weekly-report', `${from} → ${to}`);
@@ -247,10 +269,14 @@ const start = (bot) => {
     const rows = await kpi.computeAll(m);
     const { from, to } = time.monthRange(m);
     await notify.toSeeAll(bot, `🔔 <b>OYLIK AVTOMATIK HISOBOT</b>\n\n${await period.teamReport(from, to)}`);
-    const { buffer, filename } = await excel.buildMonthly(m);
+    const full = await excel.buildMonthly(m);
+    let hrFile = null; // HR ga — boshliq sozlamasiga qarab boshliq/direktor topshiriqlarisiz
     const missingScore = rows.filter((k) => Number(k.w_head) > 0 && k.head_score === null).length;
     for (const id of await notify.seeAllIds()) {
-      await notify.docToUser(bot, id, buffer, filename, `📥 <b>${time.monthName(m)}</b> — oylik hisobot (KPI, topshiriqlar, davomat, kunlik hisobotlar)`);
+      const viewer = await require('./services/access').resolve(id);
+      let file = full;
+      if (!viewer.hrSeesBoss) file = hrFile || (hrFile = await excel.buildMonthly(m, { viewer }));
+      await notify.docToUser(bot, id, file.buffer, file.filename, `📥 <b>${time.monthName(m)}</b> — oylik hisobot (KPI, topshiriqlar, davomat, kunlik hisobotlar)`);
       await notify.toUser(
         bot, id,
         `💰 <b>${time.monthName(m)} KPI hisoblandi</b> — ${rows.length} hodim.\n` +

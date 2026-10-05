@@ -19,6 +19,8 @@ const today = () => now().toFormat('yyyy-MM-dd');
 
 /** ISO timestamp (log/audit uchun) */
 const stamp = () => now().toISO();
+/** Telegram xabari yuborilgan payt (unix soniya) — bot o'chiq turganda kelgan xabar kechikmasin */
+const stampOf = (unixSec) => DateTime.fromSeconds(Number(unixSec)).setZone(TZ).toISO();
 
 /** 'HH:mm' */
 const clock = (iso) => (iso ? DateTime.fromISO(iso).setZone(TZ).toFormat('HH:mm') : '—');
@@ -186,7 +188,7 @@ const workDaysBetween = (from, to, upTo = today()) => {
 };
 
 module.exports = {
-  TZ, now, today, stamp, clock, minutesOfDay, addDays, diffDays, prettyDate, isWorkHours,
+  TZ, now, today, stamp, stampOf, clock, minutesOfDay, addDays, diffDays, prettyDate, isWorkHours,
   startOfMonth, endOfMonth, startOfWeek, endOfWeek, addMonths, daysIn,
   shortDate, weekdayShort, isSunday, monthLabel, prettyRange, isValidDate, parseDate,
   prettyDuration, hhmm, UZ_MONTHS, UZ_SHORT, UZ_WEEKDAYS,

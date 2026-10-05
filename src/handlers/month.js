@@ -8,6 +8,7 @@ const { render } = require('../render');
 const employees = require('../services/employees');
 const kpi = require('../services/kpi');
 const months = require('../services/months');
+const extradays = require('../services/extradays');
 const notify = require('../services/notify');
 const { notRegistered } = require('./common');
 
@@ -82,12 +83,13 @@ const sendMonthStart = async (bot, month = time.month()) => {
 const money = kpi.fmtMoney;
 
 /** Oy uchun: oklad, KPI summasi, shart, jami (tasdiqlanmagan bo'lsa — taxminiy) */
-const payInfo = (k) => {
+const payInfo = (k, extra = 0) => {
   const salary = k.salary === null || k.salary === undefined ? null : Number(k.salary);
   const final = k.status !== 'draft';
   const bonus = k.status === 'excluded' ? 0 : k.bonus_amount === null || k.bonus_amount === undefined ? null : Number(k.bonus_amount);
-  const total = (salary || 0) + (bonus || 0);
-  return { salary, bonus, total, final };
+  // dam olish kuniga chaqiruv bo'yicha ishlangan kunlar (5-okt)
+  const total = (salary || 0) + (bonus || 0) + (Number(extra) || 0);
+  return { salary, bonus, extra: Number(extra) || 0, total, final };
 };
 
 const monthsOf = (emp) => {
@@ -110,11 +112,11 @@ const payHome = async (ctx) => {
   const rows = [];
   for (const m of monthsOf(emp)) {
     const k = await kpi.compute(emp, m);
-    const p = payInfo(k);
+    const p = payInfo(k, await extradays.sumForMonth(emp.id, m));
     const gate = config.kpiMode === 'gate' ? (Number(k.kpi_eligible) === 1 ? '✅' : '❌') : `${k.total} ball`;
     lines.push(
       `🗓 <b>${time.monthName(m)}</b>${m === time.month() ? ' <i>(joriy)</i>' : ''}\n` +
-        `   💼 ${money(p.salary)} · 🏆 KPI ${gate} ${money(p.bonus)}\n` +
+        `   💼 ${money(p.salary)} · 🏆 KPI ${gate} ${money(p.bonus)}${p.extra ? ` · 📅 +${money(p.extra)}` : ''}\n` +
         `   💰 Jami: <b>${money(p.total)}</b> ${p.final ? kpi.statusLabel(k.status) : '<i>taxminiy</i>'}`,
     );
     rows.push([cb(`🗓 ${time.monthName(m)}`, `pay:m:${m}`)]);
@@ -129,7 +131,8 @@ const payMonth = async (ctx, month) => {
   if (!emp) return notRegistered(ctx);
   if (!time.isValidMonth(month)) return payHome(ctx);
   const k = await kpi.compute(emp, month);
-  const p = payInfo(k);
+  const extraList = await extradays.workedInMonth(emp.id, month);
+  const p = payInfo(k, extraList.reduce((s, x) => s + (Number(x.amount) || 0), 0));
   const ms = await months.get(emp.id, month);
   const current = month === time.month();
   const lines = [`💵 <b>Oylik va KPI — ${time.monthName(month)}</b>`];
@@ -142,13 +145,17 @@ const payMonth = async (ctx, month) => {
 
   if (config.kpiMode === 'gate') {
     const ok = Number(k.kpi_eligible) === 1;
+    const gs = await kpi.gateSettings();
+    const came = Number(k.ontime_days) + (Number(k.extra_days) || 0);
+    const need = k.required_days === null || k.required_days === undefined ? gs.minDays : Number(k.required_days);
+    const tp = k.tasks_gate_pct === null || k.tasks_gate_pct === undefined ? Number(k.tasks_pct) : Number(k.tasks_gate_pct);
     lines.push(
       '',
-      `<b>KPI sharti</b> — oy davomida vaqtida kelish va topshiriqlarni muddatida bajarish:`,
-      limitLine('🕘', 'Kech kelgan kunlar', Number(k.late_days), config.kpiMaxLate),
-      limitLine('🔴', 'Sababsiz kelmagan kunlar', Number(k.absent_days), config.kpiMaxAbsent),
-      limitLine('📋', 'Muddatida bajarilmagan topshiriqlar', Number(k.tasks_missed) || 0, config.kpiMaxMissedTasks),
-      `   📄 Sababli kunlar: ${k.excused_days}${config.kpiExcusedOk ? ' (KPI ga ta\'sir qilmaydi)' : ''}`,
+      `<b>KPI sharti</b> — oyiga ${gs.minDays} kun vaqtida kelish va topshiriqlarning ${gs.minTaskPct}% i muddatida:`,
+      `   ${came >= need ? '✅' : '❌'} 🗓 Vaqtida kelgan kunlar: <b>${came}</b>${current ? ` (hozircha kerak ${need})` : ` (kerak ${need})`}`,
+      `   🕘 Kech kelgan: ${k.late_days} <i>(hisobga kirmaydi; rahbariyat sababli qilsa — kiradi)</i>`,
+      `   🔴 Sababsiz kelmagan: ${k.absent_days} · 📄 Sababli: ${k.excused_days} <i>(talabni kamaytiradi)</i>${Number(k.extra_days) ? ` · 🗓 Dam olish kuni: ${k.extra_days}` : ''}`,
+      `   ${Number(k.tasks_total) === 0 || tp >= gs.minTaskPct ? '✅' : '❌'} 📋 Topshiriqlar muddatida: <b>${Number(k.tasks_total) ? `${tp}%` : '—'}</b> (kerak ≥${gs.minTaskPct}%)`,
       '',
       ok
         ? current ? `✅ <b>Hozircha shart bajarilyapti</b> — shu tarzda davom eting!` : `✅ <b>Shart bajarildi</b>`
@@ -158,6 +165,7 @@ const payMonth = async (ctx, month) => {
     lines.push(`🏆 KPI ball: <b>${k.total}</b> ${ui.pctBar(k.total)}`);
   }
   if (k.status === 'excluded') lines.push(`⛔ Bu oy KPI dan chiqarilgan${k.note ? `: ${esc(k.note)}` : ''}`);
+  if (p.extra) lines.push(`📅 Dam olish kuniga chaqiruv: <b>+${money(p.extra)}</b> (${extraList.map((x) => time.shortDate(x.work_date)).join(', ')})`);
   lines.push(ui.LINE, `💰 <b>Jami: ${money(p.total)}</b> ${p.final ? kpi.statusLabel(k.status) : '<i>(taxminiy — oy yakunida direktor tasdiqlaydi)</i>'}`);
   if (k.note && k.status !== 'excluded') lines.push(`💬 ${esc(k.note)}`);
   return render(ctx, lines.join('\n'), inline([[cb('📊 Batafsil hisobot', `rp:me:${month}`), cb('⬅️ Oylar', 'pay:home')]]));

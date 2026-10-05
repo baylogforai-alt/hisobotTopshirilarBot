@@ -14,6 +14,7 @@ const reports = require('../services/reports');
 const flows = require('../services/flows');
 const access = require('../services/access');
 const { notRegistered } = require('./common');
+const picker = require('./picker');
 
 const { esc, cb, inline } = ui;
 const botOf = (ctx) => ({ telegram: ctx.telegram });
@@ -66,6 +67,8 @@ const showTaskMenu = async (ctx, id) => {
   const t = await tasks.byId(id);
   if (!t || t.status !== 'active') return render(ctx, "Topshiriq topilmadi yoki yopilgan.", ui.backKeyboard('tk:list', "⬅️ Ro'yxatga"));
   const mine = ctx.state.employee && Number(t.employee_id) === Number(ctx.state.employee.id);
+  // begona topshiriq (id ni o'zgartirib) ko'rinmasin
+  if (!mine && !(await access.canSeeTask(ctx.state.actor, t))) return render(ctx, "Topshiriq topilmadi yoki yopilgan.", ui.backKeyboard('tk:list', "⬅️ Ro'yxatga"));
   if (!canEdit(ctx, t)) {
     const why = mine && t.source === 'self'
       ? "🔒 Muddati o'tgan — endi o'zgartirib bo'lmaydi. Bajaring va «Bajardim» bosing."
@@ -73,7 +76,7 @@ const showTaskMenu = async (ctx, id) => {
     return render(ctx, `${ui.taskLine(t, 1, { withName: !mine })}\n\n${why}`, inline([...taskExtraRows(t, mine), [cb("⬅️ Ro'yxatga", 'tk:list')]]));
   }
   return render(ctx, `⚙️ ${ui.taskLine(t, 1, { withName: !mine })}${t.review_note ? `\n\n💬 Tekshiruvchi: «${esc(t.review_note)}»` : ''}` +
-    (mine ? "\n\n<i>Topshiriqni o'chirib bo'lmaydi — kerak bo'lmasa rahbaringiz bekor qiladi.</i>" : ''), ui.taskMenuKeyboard(t, { canDelete: canCancel(ctx, t), extra: taskExtraRows(t, mine) }));
+    (mine && !canCancel(ctx, t) ? "\n\n<i>Topshiriqni o'chirib bo'lmaydi — kerak bo'lmasa rahbaringiz bekor qiladi.</i>" : ''), ui.taskMenuKeyboard(t, { canDelete: canCancel(ctx, t), extra: taskExtraRows(t, mine) }));
 };
 
 // ---------------------------------------------------------------------------
@@ -116,23 +119,86 @@ const mediaOf = (m) => {
   return null;
 };
 
-const handleSelfTaskMedia = async (ctx, media) => {
-  const titles = flows.mediaTitles(media, ctx.message.caption);
+/**
+ * Izohsiz ovoz/video/rasm — nomi «🎤 Ovozli topshiriq» bo'lib qolmasin: qisqa mazmun majburiy so'raladi.
+ * Shu matn «Bajardim» ro'yxatida, Topshiriqlarimda, jurnalda ko'rinadi — hodim qaysi birini bajarganini biladi.
+ */
+const needsMediaTitle = (media, caption) => !String(caption || '').trim() && !(media.type === 'document' && media.fileName);
+
+const askMediaTitle = (ctx, media) =>
+  ctx.reply(
+    `${ui.MEDIA_ICON[media.type] || '📎'} Qabul qilindi.\n\n✍️ <b>Endi qisqacha yozing: bu topshiriq nima haqida?</b>\n` +
+      `<i>Masalan: «Ombor qoldig'ini sanash» yoki «Mijozga shartnoma yuborish».</i>\n` +
+      `Hodim «Bajardim» bosganda aynan shu matn chiqadi — qaysi birini bajarganini bilib belgilaydi.`,
+    { parse_mode: 'HTML', ...ui.cancelKeyboard() },
+  );
+
+/** Qisqa mazmun matni → bitta qator (bir nechta qator yozilsa ham bitta topshiriq) */
+const mediaTitleFromText = (text) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+
+const handleSelfMediaTitle = async (ctx) => {
+  const s = session.get(ctx.from.id);
+  if (!s.media) { session.clear(ctx.from.id); return ctx.reply('Sessiya eskirgan. Qaytadan boshlang.', ui.kbFor(ctx)); }
+  const title = mediaTitleFromText(ctx.message.text);
+  if (!title) return ctx.reply("Matn bo'sh. Qisqacha yozing — nima haqida:", ui.cancelKeyboard());
+  return handleSelfTaskMedia(ctx, s.media, title);
+};
+
+const handleSelfTaskMedia = async (ctx, media, typedTitle = null) => {
+  if (!typedTitle && needsMediaTitle(media, ctx.message.caption)) {
+    session.set(ctx.from.id, { step: 'self_media_title', media });
+    return askMediaTitle(ctx, media);
+  }
+  const titles = typedTitle ? [typedTitle] : flows.mediaTitles(media, ctx.message.caption);
   session.set(ctx.from.id, { step: 'self_task_due', titles, media });
   await ctx.reply(`📝 ${ui.MEDIA_ICON[media.type] || '📎'} ${esc(titles[0])}\nMuddatini tanlang:`, { parse_mode: 'HTML', reply_markup: { remove_keyboard: true } });
   return ctx.reply('⏱ Muddat:', ui.dueKeyboard('st'));
 };
 
-const createSelfTasks = async (ctx, dueDate) => {
+/**
+ * Muddatdan keyin — boshlanish soati (ixtiyoriy): «ertaga soat 9:00» → aynan 9:00 da hodimga «hozir bajaring» xabari.
+ * prefix: 'st' (o'zimga) yoki 'as' (topshiriq berish)
+ */
+const askStartTime = (ctx, prefix, due) => {
+  session.set(ctx.from.id, { step: prefix === 'st' ? 'self_task_time' : 'assign_time', due });
+  const who = prefix === 'st' ? 'sizga' : 'hodimga';
+  return render(
+    ctx,
+    `📅 Muddat: <b>${time.prettyDate(due)}</b>\n\n⏰ <b>Soat nechida boshlanadi?</b>\nAynan shu soatda ${who} «hozir shu missiyani bajaring» degan xabar boradi.`,
+    ui.startTimeKeyboard(prefix, due),
+  );
+};
+
+/** st:tm:<HHmm|-|type> / as:tm:… */
+const pickStartTime = async (ctx, prefix, raw) => {
+  const s = session.get(ctx.from.id);
+  const step = prefix === 'st' ? 'self_task_time' : 'assign_time';
+  if (s.step !== step || !s.due) return render(ctx, 'Sessiya eskirgan. Qaytadan boshlang.');
+  if (raw === 'type') {
+    session.set(ctx.from.id, { step: 'typed_time', timeFor: prefix });
+    return ctx.reply('⏰ Soatni yozing (masalan 09:00 yoki 14:30):', ui.cancelKeyboard());
+  }
+  const startTime = raw === '-' ? null : `${raw.slice(0, 2)}:${raw.slice(2)}`;
+  return prefix === 'st' ? createSelfTasks(ctx, s.due, startTime) : createAssigned(ctx, s.due, startTime);
+};
+
+const handleTypedTime = async (ctx) => {
+  const s = session.get(ctx.from.id);
+  const t = tasks.normTime(ctx.message.text);
+  if (!t) return ctx.reply('Soat tushunilmadi. Masalan: 09:00 yoki 14:30', ui.cancelKeyboard());
+  if (!s.due || !['st', 'as'].includes(s.timeFor)) { session.clear(ctx.from.id); return ctx.reply('Sessiya eskirgan.', ui.kbFor(ctx)); }
+  if (tasks.startPassed(s.due, t)) return ctx.reply("Bu soat o'tib ketgan. Boshqa soat yozing:", ui.cancelKeyboard());
+  return s.timeFor === 'st' ? createSelfTasks(ctx, s.due, t) : createAssigned(ctx, s.due, t);
+};
+
+const createSelfTasks = async (ctx, dueDate, startTime = null) => {
   const s = session.get(ctx.from.id);
   const emp = ctx.state.employee;
   if (!s.titles || !emp) return render(ctx, 'Sessiya eskirgan. Qaytadan boshlang.');
   session.clear(ctx.from.id);
-  const created = await flows.addSelfTasks(botOf(ctx), emp, s.titles, dueDate, { media: s.media || null });
+  const created = await flows.addSelfTasks(botOf(ctx), emp, s.titles, dueDate, { media: s.media || null, startTime });
   ctx.state.logged = true;
-  await render(ctx, `✅ <b>${created.length} ta missiya qo'shildi</b> — muddat: ${time.prettyDate(dueDate)}
-
-${ui.taskList(created)}`);
+  await render(ctx, `✅ <b>${created.length} ta missiya qo'shildi</b> — muddat: ${flows.whenText(dueDate, startTime)}\n\n${ui.taskList(created)}`);
   await ctx.reply('👌', ui.kbFor(ctx));
 };
 
@@ -154,8 +220,33 @@ const startAssign = async (ctx) => {
   const me = ctx.state.employee;
   const list = (await employees.listByDepartment(me.department_id)).filter((e) => Number(e.id) !== Number(me.id));
   if (!list.length) return render(ctx, "Bo'limingizda boshqa hodim yo'q.");
-  return render(ctx, `📤 <b>Kimga topshiriq berasiz?</b> (${esc(me.department_name)})`, employeeButtons(list, 'as:emp', 'as:cancel'));
+  const kb = employeeButtons(list, 'as:emp', 'as:cancel');
+  if (list.length > 1) kb.reply_markup.inline_keyboard.splice(-1, 0, [cb('☑️ Bir nechta / hammasiga', 'as:multi')]);
+  return render(ctx, `📤 <b>Kimga topshiriq berasiz?</b> (${esc(me.department_name)})`, kb);
 };
+
+/** Boshliq(lar)ga topshiriq tugmasi — direktor va HR uchun (isbotni boshliq ixtiyoriy yuboradi) */
+const bossRows = async (ctx) => {
+  const me = ctx.state.employee;
+  return (await employees.listAdmins())
+    .filter((b) => !me || Number(b.id) !== Number(me.id))
+    .map((b) => [cb(`👑 ${b.full_name}ga (boshliq)`.slice(0, 50), `as:emp:${b.id}`)]);
+};
+
+/** Bir nechta hodimni belgilab — hammasiga bir xil topshiriq */
+const multiPick = picker.create({
+  prefix: 'am',
+  allowed: (ctx) => ctx.state.isManager,
+  candidates: picker.managedCandidates,
+  title: (ctx, n) => `📤 <b>Kimlarga topshiriq berasiz?</b>${n ? ` — belgilandi: <b>${n}</b>` : ''}\nHar biriga alohida topshiriq bo'lib boradi.`,
+  onDone: async (ctx, ids) => {
+    const list = [];
+    for (const empId of ids) list.push(await employees.byId(empId));
+    session.set(ctx.from.id, { step: 'assign_text', assign: { employeeIds: ids }, pick: null, pickFor: null });
+    await render(ctx, `📤 <b>${ids.length} ta hodimga</b> topshiriq: ${picker.namesText(list)}`);
+    return askAssignText(ctx);
+  },
+});
 
 /** Direktor (va HR «Rahbarlar orqali»): avval rahbarlar (o'ziga yoki jamoasiga) */
 const managersMenu = async (ctx) => {
@@ -172,7 +263,8 @@ const managersMenu = async (ctx) => {
     }
     const loose = await employees.listUnmanaged();
     if (loose.length) rows.push([cb(`👤 Rahbarsiz hodimlar (${loose.length})`, 'as:none')]);
-    rows.push([cb("🧭 Yo'nalish bo'yicha", 'as:dirs')]);
+    rows.push(...(await bossRows(ctx)));
+    rows.push([cb("🧭 Yo'nalish bo'yicha", 'as:dirs'), cb('☑️ Bir nechta / hammaga', 'as:multi')]);
     rows.push([cb("🏢 Bo'lim bo'yicha", 'as:depts'), cb('👥 Hamma hodimlar', 'as:dept:0')], [cb(ui.BTN.cancel, 'as:cancel')]);
     return render(
       ctx,
@@ -219,17 +311,23 @@ const pickEmployee = async (ctx, empId) => {
   if (!target || !target.active) return ctx.answerCbQuery('Hodim topilmadi');
   if (!employees.canManage(ctx.state.employee, ctx.state.isAdmin, target)) return ctx.answerCbQuery("⛔️ Bu sizning bo'limingiz emas");
   session.set(ctx.from.id, { step: 'assign_text', assign: { employeeId: target.id } });
-  await render(ctx, `📤 <b>${esc(target.full_name)}</b>${target.position ? ` (${esc(target.position)})` : ''} ga topshiriq.`);
-  return ctx.reply(
+  await render(ctx, `📤 <b>${esc(target.full_name)}</b>${target.position ? ` (${esc(target.position)})` : ''} ga topshiriq.` +
+    (employees.isBoss(target) ? '\n<i>Boshliq bajarganda isbot ixtiyoriy — bajarilgani haqida sizga xabar keladi.</i>' : ''));
+  return askAssignText(ctx);
+};
+
+const askAssignText = (ctx) =>
+  ctx.reply(
     `✍️ Topshiriq matnini yozing (bir nechta — har biri yangi qatorda; boshiga <b>!</b> — muhim)\n` +
       `— yoki 🎤 <b>ovozli xabar</b>, 🎥 video, 📄 fayl (PDF, Excel, Word…), 🖼 rasm yuboring (izohi — topshiriq nomi):`,
     { parse_mode: 'HTML', ...ui.cancelKeyboard() },
   );
-};
+
+const hasTargets = (a) => Boolean(a && (a.employeeId || (Array.isArray(a.employeeIds) && a.employeeIds.length)));
 
 const handleAssignText = async (ctx) => {
   const s = session.get(ctx.from.id);
-  if (!s.assign || !s.assign.employeeId) return ctx.reply('Sessiya eskirgan. Qaytadan boshlang.', ui.kbFor(ctx));
+  if (!hasTargets(s.assign)) return ctx.reply('Sessiya eskirgan. Qaytadan boshlang.', ui.kbFor(ctx));
   const lines = flows.splitTitles(ctx.message.text);
   if (!lines.length) return ctx.reply("Matn bo'sh. Qaytadan yozing:", ui.cancelKeyboard());
   session.set(ctx.from.id, { step: 'assign_due', assign: { ...s.assign, titles: lines } });
@@ -237,25 +335,48 @@ const handleAssignText = async (ctx) => {
   return ctx.reply('⏱ Muddat:', ui.dueKeyboard('as'));
 };
 
-const handleAssignMedia = async (ctx, media) => {
+const handleAssignMedia = async (ctx, media, typedTitle = null) => {
   const s = session.get(ctx.from.id);
-  if (!s.assign || !s.assign.employeeId) return ctx.reply('Sessiya eskirgan. Qaytadan boshlang.', ui.kbFor(ctx));
-  const titles = flows.mediaTitles(media, ctx.message.caption);
+  if (!hasTargets(s.assign)) return ctx.reply('Sessiya eskirgan. Qaytadan boshlang.', ui.kbFor(ctx));
+  if (!typedTitle && needsMediaTitle(media, ctx.message.caption)) {
+    session.set(ctx.from.id, { step: 'assign_media_title', assign: { ...s.assign, media } });
+    return askMediaTitle(ctx, media);
+  }
+  const titles = typedTitle ? [typedTitle] : flows.mediaTitles(media, ctx.message.caption);
   session.set(ctx.from.id, { step: 'assign_due', assign: { ...s.assign, titles, media } });
   await ctx.reply(`📝 ${ui.MEDIA_ICON[media.type] || '📎'} ${esc(titles[0])}\nMuddatini tanlang:`, { parse_mode: 'HTML', reply_markup: { remove_keyboard: true } });
   return ctx.reply('⏱ Muddat:', ui.dueKeyboard('as'));
 };
 
-const createAssigned = async (ctx, dueDate) => {
+const handleAssignMediaTitle = async (ctx) => {
+  const s = session.get(ctx.from.id);
+  if (!hasTargets(s.assign) || !s.assign.media) { session.clear(ctx.from.id); return ctx.reply('Sessiya eskirgan. Qaytadan boshlang.', ui.kbFor(ctx)); }
+  const title = mediaTitleFromText(ctx.message.text);
+  if (!title) return ctx.reply("Matn bo'sh. Qisqacha yozing — nima haqida:", ui.cancelKeyboard());
+  return handleAssignMedia(ctx, s.assign.media, title);
+};
+
+const createAssigned = async (ctx, dueDate, startTime = null) => {
   const s = session.get(ctx.from.id);
   if (!s.assign || !s.assign.titles) return render(ctx, 'Sessiya eskirgan.');
-  const target = await employees.byId(s.assign.employeeId);
-  if (!target) return render(ctx, 'Hodim topilmadi.');
-  if (!employees.canManage(ctx.state.employee, ctx.state.isAdmin, target)) return render(ctx, "⛔️ Bu sizning bo'limingiz emas.");
+  // birinchi await dan oldin — ikkinchi bosish «Sessiya eskirgan» bo'ladi, topshiriq ikki marta yaratilmaydi
   session.clear(ctx.from.id);
-  const { created } = await flows.assignTasks(botOf(ctx), ctx.state.actor, target, s.assign.titles, dueDate, { media: s.assign.media || null });
+  const ids = s.assign.employeeIds && s.assign.employeeIds.length ? s.assign.employeeIds : [s.assign.employeeId];
+  const targets = [];
+  for (const empId of ids) {
+    const target = await employees.byId(empId);
+    if (!target || !target.active) continue;
+    if (!employees.canManage(ctx.state.employee, ctx.state.isAdmin, target)) return render(ctx, `⛔️ ${esc(target.full_name)} — sizning bo'limingiz emas.`);
+    targets.push(target);
+  }
+  if (!targets.length) return render(ctx, 'Hodim topilmadi.');
+  let created = [];
+  for (const target of targets) {
+    created = (await flows.assignTasks(botOf(ctx), ctx.state.actor, target, s.assign.titles, dueDate, { media: s.assign.media || null, startTime })).created;
+  }
   ctx.state.logged = true;
-  await render(ctx, `✅ <b>${esc(target.full_name)}</b> ga ${created.length} ta topshiriq berildi (muddat: ${time.prettyDate(dueDate)}):\n\n${ui.taskList(created)}`);
+  const who = targets.length === 1 ? `<b>${esc(targets[0].full_name)}</b> ga` : `<b>${targets.length} ta hodimga</b> (${picker.namesText(targets)})`;
+  await render(ctx, `✅ ${who} ${created.length} ta topshiriq berildi (muddat: ${flows.whenText(dueDate, startTime)}):\n\n${ui.taskList(created)}`);
   await ctx.reply('👌', ui.kbFor(ctx));
 };
 
@@ -265,15 +386,24 @@ const handleTypedDate = async (ctx) => {
   const d = time.parseDate(ctx.message.text);
   if (!d) return ctx.reply('Sana tushunilmadi. Masalan: 25.09 yoki 25.09.2026 yoki 25-sentabr', ui.cancelKeyboard());
   if (d < time.today()) return ctx.reply("Muddat o'tgan sana bo'lishi mumkin emas. Qaytadan:", ui.cancelKeyboard());
-  if (s.dateFor === 'st') return createSelfTasks(ctx, d);
-  if (s.dateFor === 'as') return createAssigned(ctx, d);
-  if (s.dateFor === 'tk' && s.taskId) {
-    const t = await tasks.byId(s.taskId);
+  if (s.dateFor === 'st') return askStartTime(ctx, 'st', d);
+  if (s.dateFor === 'as') return askStartTime(ctx, 'as', d);
+  if (s.dateFor === 'rv' && s.returnTaskId) {
     session.clear(ctx.from.id);
-    if (!t || t.status !== 'active' || !canEdit(ctx, t)) return ctx.reply("⛔️ O'zgartira olmaysiz.", ui.kbFor(ctx));
-    if (isOwnOverdue(ctx, t)) return ctx.reply(OVERDUE_LOCK, ui.kbFor(ctx));
-    await tasks.setDue(t.id, d);
-    if (d !== t.due_date) await tellReviewers(ctx, t, `📆 <b>${esc(ctx.state.employee ? ctx.state.employee.full_name : '')}</b> muddatni o'zgartirdi: ${esc(t.title)}\n${time.prettyDate(t.due_date)} → ${time.prettyDate(d)}`);
+    const cur = await tasks.byId(s.returnTaskId);
+    if (!cur || cur.status !== 'done') return ctx.reply("Bu ish allaqachon ko'rib chiqilgan.", ui.kbFor(ctx));
+    if (!access.canReview(ctx.state.actor, await employees.byId(cur.employee_id))) return ctx.reply("⛔️ Ruxsat yo'q", ui.kbFor(ctx));
+    return finishReturn(ctx, cur.id, s.returnNote, { fixDue: d });
+  }
+  if (s.dateFor === 'tk' && s.taskId) {
+    session.clear(ctx.from.id);
+    // sana yozilguncha holat o'zgargan bo'lishi mumkin — huquq qayta tekshiriladi
+    const cur = await tasks.byId(s.taskId);
+    if (!cur || cur.status !== 'active' || !canEdit(ctx, cur)) return ctx.reply("🔒 Topshiriq endi o'zgartirib bo'lmaydi.", ui.kbFor(ctx));
+    if (isOwnOverdue(ctx, cur)) return ctx.reply(OVERDUE_LOCK, ui.kbFor(ctx));
+    if (!access.canSetDue(ctx.state.actor, cur, d)) return ctx.reply(access.DUE_LOCKED, ui.kbFor(ctx));
+    await tasks.setDue(cur.id, d);
+    if (d !== cur.due_date) await tellReviewers(ctx, cur, `📆 <b>${esc(ctx.state.employee ? ctx.state.employee.full_name : '')}</b> muddatni o'zgartirdi: ${esc(cur.title)}\n${time.prettyDate(cur.due_date)} → ${time.prettyDate(d)}`);
     await ctx.reply(`📆 Muddat: ${time.prettyDate(d)}`, ui.kbFor(ctx));
     return showTaskMenu(ctx, s.taskId);
   }
@@ -295,33 +425,44 @@ const showDone = async (ctx) => {
   const emp = ctx.state.employee;
   const open = await tasks.openFor(emp.id);
   const doneToday = await tasks.doneOn(emp.id);
+  // 5-okt: «Keldim» qilmagan hodim «Bajardim» qila olmaydi (boshliq ozod)
+  const blocked = await flows.doneBlocked(emp);
+  if (blocked && open.length) return render(ctx, `${blocked}
+
+📋 Ochiq missiyalar: <b>${open.length}</b>`);
   return render(ctx, ui.doneChecklist(open, doneToday), ui.doneKeyboard(open));
 };
 
 const pickDone = async (ctx, id) => {
   const emp = ctx.state.employee;
+  if (!emp) return ctx.answerCbQuery('⛔️');
   const t = await tasks.byId(id);
   if (!t || Number(t.employee_id) !== Number(emp.id) || t.status !== 'active') return ctx.answerCbQuery('Topshiriq ochiq emas');
+  const blocked = await flows.doneBlocked(emp);
+  if (blocked) { await ctx.answerCbQuery(); return ctx.reply(blocked, { parse_mode: 'HTML', ...ui.kbFor(ctx) }); }
   session.set(ctx.from.id, { step: 'done_proof', doneTaskId: t.id });
   await ctx.answerCbQuery();
+  // ovozli/video topshiriq — adashmaslik uchun qayta eshitib ko'rish mumkin
+  const extra = t.task_file_id ? [[cb(`${ui.MEDIA_ICON[t.task_media_type] || '📎'} Topshiriqni qayta eshitish / ko'rish`, `tk:media:${t.id}`)]] : [];
+  const head = `📎 <b>${esc(t.title)}</b>\n<i>⏱ muddat ${time.prettyDate(t.due_date)}${t.task_media_type ? ` · ${ui.MEDIA_LABEL[t.task_media_type] || 'media'}` : ''}</i>`;
   if (tasks.isBossOwn(emp, t)) {
     return render(
       ctx,
-      `📎 <b>${esc(t.title)}</b>\n\nIsbot <b>ixtiyoriy</b>: xohlasangiz 🖼 rasm, 🎥 video, 🎙 audio yoki 📄 fayl yuboring — yoki «✅ Isbotsiz bajardim» ni bosing.`,
-      ui.proofKeyboard({ noProof: true }),
+      `${head}\n\nIsbot <b>ixtiyoriy</b>: xohlasangiz 🖼 rasm, 🎥 video, 🎙 audio yoki 📄 fayl yuboring — yoki «✅ Isbotsiz bajardim» ni bosing.`,
+      ui.proofKeyboard({ noProof: true, extra }),
     );
   }
   if (!config.proofRequired) {
     return render(
       ctx,
-      `📎 <b>${esc(t.title)}</b>\n\nIsbot sifatida 🖼 rasm, 🎥 video, 🎙 audio yoki 📄 fayl (PDF, Excel, Word…) yuboring — izohni ostiga yozsangiz bo'ladi.\nIsbot bo'lmasa — «⏭ Isbotsiz yuborish».`,
-      ui.proofKeyboard({ optional: true }),
+      `${head}\n\nIsbot sifatida 🖼 rasm, 🎥 video, 🎙 audio yoki 📄 fayl (PDF, Excel, Word…) yuboring — izohni ostiga yozsangiz bo'ladi.\nIsbot bo'lmasa — «⏭ Isbotsiz yuborish».`,
+      ui.proofKeyboard({ optional: true, extra }),
     );
   }
   return render(
     ctx,
-    `📎 <b>${esc(t.title)}</b>\n\n<b>Isbot majburiy:</b> 🖼 rasm, 🎥 video, 🎙 audio yoki 📄 fayl (PDF, Excel, Word…) yuboring — izohni ostiga yozsangiz bo'ladi.\nIsbotsiz bajarilgan deb qabul qilinmaydi.`,
-    ui.proofKeyboard(),
+    `${head}\n\n<b>Isbot majburiy:</b> 🖼 rasm, 🎥 video, 🎙 audio yoki 📄 fayl (PDF, Excel, Word…) yuboring — izohni ostiga yozsangiz bo'ladi.\nIsbotsiz bajarilgan deb qabul qilinmaydi.`,
+    ui.proofKeyboard({ extra }),
   );
 };
 
@@ -330,14 +471,19 @@ const finishDone = async (ctx, proof) => {
   const emp = ctx.state.employee;
   if (s.doneTaskIds && emp) return finishDoneMany(ctx, proof, s.doneTaskIds);
   if (!s.doneTaskId || !emp) return;
+  // albom (bir nechta rasm) — birinchisi isbot bo'ladi, qolganlari jim o'tadi
+  session.clear(ctx.from.id);
+  const blocked = await flows.doneBlocked(emp);
+  if (blocked) return ctx.reply(blocked, { parse_mode: 'HTML', ...ui.kbFor(ctx) });
+  const album = Boolean(ctx.message && ctx.message.media_group_id);
   if (tasks.isBossOwn(emp, await tasks.byId(s.doneTaskId))) {
-    const own = await tasks.completeOwn(s.doneTaskId, emp, proof);
+    const own = await flows.completeBossTask(botOf(ctx), emp, s.doneTaskId, proof);
     session.clear(ctx.from.id);
     if (!own.ok) return ctx.reply('Topshiriq ochiq emas.', ui.kbFor(ctx));
-    const text = `✅ <b>${esc(own.task.title)}</b> — bajarildi${proof ? ' (isbot bilan)' : ''}.`;
+    const given = own.task.source !== 'self' && own.task.created_by && Number(own.task.created_by) !== Number(emp.tg_id);
+    const text = `✅ <b>${esc(own.task.title)}</b> — bajarildi${proof ? ' (isbot bilan)' : ''}.${given ? '\nTopshiriq bergan odamga xabar bordi.' : ''}`;
     if (ctx.updateType === 'callback_query') await render(ctx, text); else await ctx.reply(text, { parse_mode: 'HTML' });
     await ctx.reply('👌', ui.kbFor(ctx));
-    if (proof && proof.fileId) await notify.toArchive(botOf(ctx), `✔️ <b>${esc(emp.full_name)}</b> bajardi: ${esc(own.task.title)} · ${time.clock(own.task.done_at)}`, proof);
     return;
   }
   const res = await tasks.markDone(s.doneTaskId, emp.id, proof);
@@ -347,14 +493,14 @@ const finishDone = async (ctx, proof) => {
   const overdue = String(t.done_at).slice(0, 10) > t.due_date;
   const left = (await tasks.openFor(emp.id)).length;
   activity.mark(ctx, 'task_done', { title: t.title, detail: `${left ? `yana ${left} ta qoldi` : 'barcha ishlar tugadi'}${proof ? ' · isbot bilan' : ''}` });
-  const text = `✅ <b>${esc(t.title)}</b> — tekshiruvga yuborildi${proof ? ' (isbot bilan)' : ''}.${overdue ? '\n⚠️ Muddatdan kech bajarildi.' : ''}\n<i>${left ? `Qolgan: ${left} ta` : '🎉 Ochiq missiya qolmadi!'}</i>`;
+  const text = `✅ <b>${esc(t.title)}</b> — tekshiruvga yuborildi${proof ? ' (isbot bilan)' : ''}.${overdue ? '\n⚠️ Muddatdan kech bajarildi.' : ''}${album ? '\n<i>ℹ️ Albomdan bitta fayl isbot sifatida saqlandi.</i>' : ''}\n<i>${left ? `Qolgan: ${left} ta` : '🎉 Ochiq missiya qolmadi!'}</i>`;
   if (ctx.updateType === 'callback_query') await render(ctx, text); else await ctx.reply(text, { parse_mode: 'HTML' });
   await ctx.reply('👌', ui.kbFor(ctx));
   if (config.announceDone) {
     await notify.toGroup(botOf(ctx), `✅ ${reports.mentionHtml(emp)} — «<b>${esc(t.title)}</b>» bajarildi · ${time.clock(t.done_at)}\n<i>${left ? `Qolgan missiyalar: ${left} ta` : '🎉 Barcha missiyalar bajarildi!'}</i>`);
   }
-  await notify.toReviewers(
-    botOf(ctx), emp,
+  await notify.toDoneReviewers(
+    botOf(ctx), emp, t,
     `🕓 <b>${esc(emp.full_name)}</b> bajardi: <b>${esc(t.title)}</b>\n` +
       `⏱ muddat ${time.prettyDate(t.due_date)} · bajarildi ${time.clock(t.done_at)}${overdue ? ' 🔴 <i>kech</i>' : ' ✅'}` +
       (proof && proof.note ? `\n💬 «${esc(proof.note)}»` : '') + (t.source !== 'self' ? '' : '\n<i>(o\'zi yozgan vazifa)</i>') +
@@ -416,6 +562,8 @@ const goDoneMulti = async (ctx) => {
     if (t && Number(t.employee_id) === Number(emp.id) && t.status === 'active') list.push(t);
   }
   if (!list.length) return ctx.answerCbQuery('Avval kamida bittasini belgilang ☑️', { show_alert: true });
+  const blocked = await flows.doneBlocked(emp);
+  if (blocked) { session.clear(ctx.from.id); await ctx.answerCbQuery(); return render(ctx, blocked); }
   if (list.length === 1) return pickDone(ctx, list[0].id);
   session.set(ctx.from.id, { step: 'done_proof', doneTaskIds: list.map((t) => Number(t.id)) });
   await ctx.answerCbQuery();
@@ -432,13 +580,16 @@ const goDoneMulti = async (ctx) => {
 const finishDoneMany = async (ctx, proof, ids) => {
   const emp = ctx.state.employee;
   session.clear(ctx.from.id);
+  const blocked = await flows.doneBlocked(emp);
+  if (blocked) return ctx.reply(blocked, { parse_mode: 'HTML', ...ui.kbFor(ctx) });
   const own = [];
   const sent = [];
   for (const id of ids) {
     const cur = await tasks.byId(id);
     if (!cur) continue;
     if (tasks.isBossOwn(emp, cur)) {
-      const r = await tasks.completeOwn(id, emp, proof);
+      // boshliqning topshirig'i — darhol bajarildi, bergan odamga xabar (flows.completeBossTask)
+      const r = await flows.completeBossTask(botOf(ctx), emp, id, proof);
       if (r.ok) own.push(r.task);
     } else {
       const r = await tasks.markDone(id, emp.id, proof);
@@ -462,15 +613,23 @@ const finishDoneMany = async (ctx, proof, ids) => {
   if (config.announceDone && sent.length) {
     await notify.toGroup(botOf(ctx), `✅ ${reports.mentionHtml(emp)} — ${sent.length} ta ish bajarildi:\n${sent.map((t) => `• <b>${esc(t.title)}</b>`).join('\n')}\n<i>${left ? `Qolgan missiyalar: ${left} ta` : '🎉 Barcha missiyalar bajarildi!'}</i>`);
   }
-  if (sent.length) {
-    await notify.toReviewers(
-      botOf(ctx), emp,
-      `🕓 <b>${esc(emp.full_name)}</b> ${sent.length} ta ishni bajardi:\n` +
-        sent.map((t, i) => `${i + 1}. <b>${esc(t.title)}</b> · ⏱ ${time.prettyDate(t.due_date)}${isLate(t) ? ' 🔴 <i>kech</i>' : ' ✅'}${t.source === 'self' ? " <i>(o'zi yozgan)</i>" : ''}`).join('\n') +
-        `\n🕒 ${time.clock(sent[0].done_at)}` +
+  // tekshiruvchilar har ishda boshqacha bo'lishi mumkin (topshiriqni bergan odam) — bir xil oluvchilar to'plamiga bitta xabar
+  const groups = new Map();
+  for (const t of sent) {
+    const ids = [...new Set((await employees.doneReviewersOf(emp, t)).map(Number))].sort((x, y) => x - y);
+    const key = ids.join(',');
+    if (!groups.has(key)) groups.set(key, { ids, list: [] });
+    groups.get(key).list.push(t);
+  }
+  for (const { ids: to, list } of groups.values()) {
+    await notify.sendWithInfoCopies(
+      botOf(ctx), emp, to,
+      `🕓 <b>${esc(emp.full_name)}</b> ${list.length} ta ishni bajardi:\n` +
+        list.map((t, i) => `${i + 1}. <b>${esc(t.title)}</b> · ⏱ ${time.prettyDate(t.due_date)}${isLate(t) ? ' 🔴 <i>kech</i>' : ' ✅'}${t.source === 'self' ? " <i>(o'zi yozgan)</i>" : ''}`).join('\n') +
+        `\n🕒 ${time.clock(list[0].done_at)}` +
         (proof && proof.note ? `\n💬 «${esc(proof.note)}»` : '') +
         `\n\nQabul qilasizmi?`,
-      sent.length === 1 ? ui.reviewKeyboard(sent[0].id) : ui.reviewMultiKeyboard(sent),
+      list.length === 1 ? ui.reviewKeyboard(list[0].id) : ui.reviewMultiKeyboard(list),
       proof && proof.fileId ? proof : null,
     );
   }
@@ -491,6 +650,9 @@ const onMedia = async (ctx, next) => {
     const media = mediaOf(ctx.message);
     return media ? handleSelfTaskMedia(ctx, media) : ctx.reply('Matn, ovozli xabar, video, fayl yoki rasm yuboring.', ui.cancelKeyboard());
   }
+  if ((s.step === 'assign_media_title' && ctx.state.isManager) || (s.step === 'self_media_title' && ctx.state.employee)) {
+    return ctx.reply("✍️ Media allaqachon qabul qilindi. Endi <b>matn bilan</b> qisqacha yozing — topshiriq nima haqida:", { parse_mode: 'HTML', ...ui.cancelKeyboard() });
+  }
   if (s.step !== 'done_proof') return next();
   const m = ctx.message;
   let proof = null;
@@ -510,28 +672,48 @@ const onMedia = async (ctx, next) => {
 // TEKSHIRUV (qabul / qaytarish)
 // ---------------------------------------------------------------------------
 
-const reviewScope = (ctx) => (ctx.state.isAdmin || ctx.state.isHr ? null : ctx.state.employee.department_id);
+const reviewScope = (ctx) => access.deptScope(ctx.state.actor);
+
+/** HR: «Bajardim» xabarlari o'ziga kelsinmi — o'zi tanlaydi (standart: kelmaydi, ro'yxatda baribir ko'rinadi) */
+const hrNotifyRow = (ctx) => (ctx.state.isHr && ctx.state.employee
+  ? [[cb(`🔔 «Bajardim» xabarlari menga: ${employees.wantsDoneNotify(ctx.state.employee) ? '✅ kelsin' : '🚫 kelmasin'}`, `rv:hrn:${employees.wantsDoneNotify(ctx.state.employee) ? 0 : 1}`)]]
+  : []);
+const HR_NOTIFY_HINT = "\n\n<i>«Bajardim» xabarlari bo'lim rahbari va boshliqqa boradi. Sizga ham kelsinmi — pastdagi tugma bilan o'zingiz tanlaysiz; o'zingiz bergan topshiriqlar baribir keladi.</i>";
 
 const showReview = async (ctx) => {
   if (!ctx.state.isManager) return ctx.reply('⛔️ Faqat boshliq va direktor uchun.');
-  if (!ctx.state.isAdmin && !reviewScope(ctx)) return ctx.reply("Sizga bo'lim biriktirilmagan — direktorga ayting.");
-  const list = await tasks.pendingReview(reviewScope(ctx));
-  if (!list.length) return render(ctx, '🔎 Tekshiruvni kutayotgan ish yo\'q. ✅');
+  const list = tasks.visibleFor(ctx.state.actor, await tasks.pendingReview(reviewScope(ctx)));
+  const hint = ctx.state.isHr && ctx.state.employee ? HR_NOTIFY_HINT : '';
+  if (!list.length) return render(ctx, `🔎 <b>TEKSHIRUV</b>\n\nHozircha «Bajardim» deb yuborilgan ish yo'q.${hint}`, hint ? inline(hrNotifyRow(ctx)) : undefined);
   const rows = list.map((t) => [cb(`🕓 ${t.full_name.split(' ')[0]}: ${t.title.slice(0, 35)}`, `rv:view:${t.id}`)]);
-  rows.push([cb('🔄 Yangilash', 'rv:list')]);
-  return render(ctx, `🔎 <b>TEKSHIRUV (${list.length})</b>\n\n${ui.taskList(list, { withName: true })}\n\n👇 Birini tanlang.`, inline(rows));
+  rows.push([cb('🔄 Yangilash', 'rv:list')], ...hrNotifyRow(ctx));
+  return render(ctx, `🔎 <b>TEKSHIRUV (${list.length})</b>\n\n${ui.taskList(list, { withName: true })}\n\n👇 Birini tanlang.${hint}`, inline(rows));
+};
+
+const toggleHrNotify = async (ctx) => {
+  const me = ctx.state.employee;
+  if (!ctx.state.isHr || !me) return ctx.answerCbQuery('⛔️ Faqat HR uchun');
+  if (!ctx.match || !ctx.match[1]) { await ctx.answerCbQuery('Eskirgan tugma'); return showReview(ctx); }
+  const on = ctx.match[1] === '1';
+  await employees.setNotifyDone(me.id, on);
+  ctx.state.employee = await employees.byId(me.id);
+  await ctx.answerCbQuery(on ? '✅ «Bajardim» xabarlari sizga ham keladi' : '🚫 «Bajardim» xabarlari endi sizga kelmaydi');
+  return showReview(ctx);
 };
 
 const viewReview = async (ctx, id) => {
   const t = await tasks.byId(id);
   if (!t || t.status !== 'done') return ctx.answerCbQuery('Bu ish tekshiruvda emas');
   const emp = await employees.byId(t.employee_id);
-  if (!employees.canManage(ctx.state.employee, ctx.state.isAdmin, emp)) return ctx.answerCbQuery("⛔️ Bu sizning bo'limingiz emas");
+  if (!employees.canManage(ctx.state.employee, ctx.state.isAdmin, emp) || !tasks.visibleTo(ctx.state.actor, t)) return ctx.answerCbQuery("⛔️ Bu sizning bo'limingiz emas");
   await ctx.answerCbQuery();
   const overdue = String(t.done_at).slice(0, 10) > t.due_date;
+  const kb = canCancel(ctx, t)
+    ? inline([...ui.reviewKeyboard(t.id).reply_markup.inline_keyboard, [cb("🗑 O'chirish (bekor qilish)", `tk:del:${t.id}`)]])
+    : ui.reviewKeyboard(t.id);
   const caption = `🕓 <b>${esc(t.full_name)}</b>: <b>${esc(t.title)}</b>\n⏱ muddat ${time.prettyDate(t.due_date)} · bajarildi ${String(t.done_at).slice(0, 10) === time.today() ? time.clock(t.done_at) : time.prettyDate(String(t.done_at).slice(0, 10))}${overdue ? ' 🔴 kech' : ' ✅'}${t.proof_note ? `\n💬 «${esc(t.proof_note)}»` : ''}`;
-  if (t.proof_file_id) return notify.sendProof(botOf(ctx), ctx.chat.id, { type: t.proof_type, fileId: t.proof_file_id }, caption, ui.reviewKeyboard(t.id));
-  return ctx.reply(`${caption}\n<i>(isbot biriktirilmagan)</i>`, { parse_mode: 'HTML', ...ui.reviewKeyboard(t.id) });
+  if (t.proof_file_id) return notify.sendProof(botOf(ctx), ctx.chat.id, { type: t.proof_type, fileId: t.proof_file_id }, caption, kb);
+  return ctx.reply(`${caption}\n<i>(isbot biriktirilmagan)</i>`, { parse_mode: 'HTML', ...kb });
 };
 
 const reviewGuard = async (ctx, id) => {
@@ -539,7 +721,7 @@ const reviewGuard = async (ctx, id) => {
   if (!t) { await ctx.answerCbQuery('Topilmadi'); return null; }
   if (t.status !== 'done') { await ctx.answerCbQuery('Bu ish allaqachon ko\'rib chiqilgan'); return null; }
   const emp = await employees.byId(t.employee_id);
-  if (!access.canReview(ctx.state.actor, emp)) {
+  if (!access.canReview(ctx.state.actor, emp) || !tasks.visibleTo(ctx.state.actor, t)) {
     await ctx.answerCbQuery('⛔️ Ruxsat yo\'q'); return null;
   }
   return { t, emp };
@@ -596,7 +778,7 @@ const doAccept = async (ctx, id) => {
   const g = await reviewGuard(ctx, id);
   if (!g) return;
   const res = await flows.acceptTask(botOf(ctx), id, ctx.from.id);
-  if (!res.ok) return ctx.answerCbQuery("Bu ish allaqachon ko'rib chiqilgan.");
+  if (!res.ok) return ctx.answerCbQuery("Bu ish allaqachon ko'rib chiqilgan");
   activity.mark(ctx, 'review_ok', { title: g.t.title, detail: g.emp.full_name });
   await ctx.answerCbQuery('Qabul qilindi ✅');
   if (await dropReviewRow(ctx, id, `${g.emp.full_name}: ${g.t.title}`)) return;
@@ -608,22 +790,71 @@ const startReturn = async (ctx, id) => {
   if (!g) return;
   session.set(ctx.from.id, { step: 'return_note', returnTaskId: id });
   await ctx.answerCbQuery();
-  return ctx.reply(`↩️ <b>${esc(g.t.title)}</b> — nima uchun qaytaryapsiz? Izoh yozing (hodim ko'radi) yoki «${ui.BTN.skip}».`, { parse_mode: 'HTML', ...ui.skipKeyboard() });
+  return ctx.reply(
+    `📝 <b>${esc(g.t.title)}</b> — qanday kamchiliklar bor? Nimani tuzatish kerak — yozing.\n<i>Hodimga boradi; u «👌 Xo'p, tushundim» yoki o'z javobini qaytaradi, siz yana javob bera olasiz.</i>`,
+    { parse_mode: 'HTML', ...ui.cancelKeyboard() },
+  );
 };
 
 const handleReturnNote = async (ctx, { skip = false } = {}) => {
   const s = session.get(ctx.from.id);
+  if (skip || !String(ctx.message.text || '').trim()) return ctx.reply('📝 Kamchiliklarni yozing — hodim nimani tuzatishini bilsin:', ui.cancelKeyboard());
   session.clear(ctx.from.id);
   if (!s.returnTaskId) return ctx.reply('Sessiya eskirgan.', ui.kbFor(ctx));
-  const note = skip ? null : ctx.message.text.trim().slice(0, 300);
+  const note = ctx.message.text.trim().slice(0, 300);
   const pending = await tasks.byId(s.returnTaskId);
   if (!pending || pending.status !== 'done') return ctx.reply("Bu ish allaqachon ko'rib chiqilgan.", ui.kbFor(ctx));
   if (!access.canReview(ctx.state.actor, await employees.byId(pending.employee_id))) return ctx.reply("⛔️ Ruxsat yo'q", ui.kbFor(ctx));
-  const res = await flows.returnTask(botOf(ctx), s.returnTaskId, ctx.from.id, note);
+  // 5-okt: tuzatish muddati — shu sanagacha tuzatsa vaqtida; muddat berilmasa eski muddat qoladi (o'tgan bo'lsa — kechikkan)
+  session.set(ctx.from.id, { step: 'return_due', returnTaskId: pending.id, returnNote: note });
+  const old = pending.due_date;
+  return ctx.reply(
+    `🔁 <b>Tuzatish muddati</b> — hodim qachongacha tuzatsin?\n<i>Shu kungacha tuzatsa — vaqtida hisoblanadi. Muddat bermasangiz eski muddat (${time.prettyDate(old)}) qoladi${old < time.today() ? " — u o'tgan, tuzatilsa ham <b>kechikkan</b> hisoblanadi" : ''}.</i>`,
+    { parse_mode: 'HTML', ...inline([
+      [cb('Bugun', `rv:fd:${pending.id}:0`), cb('Ertaga', `rv:fd:${pending.id}:1`), cb('Indinga', `rv:fd:${pending.id}:2`)],
+      [cb('✍️ Sana yozish', `rv:fd:${pending.id}:type`)],
+      [cb(`⏭ Muddatsiz (eski: ${time.prettyDate(old)})`, `rv:fd:${pending.id}:none`)],
+    ]) },
+  );
+};
+
+const finishReturn = async (ctx, taskId, note, { countLate = false, fixDue = null } = {}) => {
+  const res = await flows.returnTask(botOf(ctx), taskId, ctx.from.id, note, { countLate, fixDue });
   if (!res.ok) return ctx.reply("Bu ish allaqachon ko'rib chiqilgan.", ui.kbFor(ctx));
   const t = res.task;
   activity.mark(ctx, 'review_back', { title: t.title, detail: note });
-  await ctx.reply(`↩️ Qaytarildi: <b>${esc(t.title)}</b>${note ? `\n«${esc(note)}»` : ''}`, { parse_mode: 'HTML', ...ui.kbFor(ctx) });
+  const dueText = fixDue ? `\n🔁 Tuzatish muddati: <b>${time.prettyDate(t.due_date)}</b>` : `\n⏱ Eski muddat qoldi: ${time.prettyDate(t.due_date)}${t.due_date < time.today() ? ' — <b>kechikkan</b> hisoblanadi' : ''}`;
+  await ctx.reply(`↩️ Kamchiliklar bilan qaytarildi: <b>${esc(t.title)}</b>\n📝 «${esc(note)}»${dueText}${countLate ? '\n⏰ Kechikish KPI da qoladi.' : ''}\n<i>Hodim javobi sizga keladi. Tuzatilayotganlar — «${ui.BTN.stFix}» ro'yxatida.</i>`, { parse_mode: 'HTML', ...ui.kbFor(ctx) });
+};
+
+/** rv:fd:<id>:<0|1|2|type|none> — tuzatish muddati tanlovi */
+const onReturnDue = async (ctx) => {
+  const id = Number(ctx.match[1]);
+  const pick = ctx.match[2];
+  const s = session.get(ctx.from.id);
+  if (s.step !== 'return_due' || Number(s.returnTaskId) !== id) return ctx.answerCbQuery('Eskirgan tugma — qaytadan «📝 Kamchilik bor» ni bosing', { show_alert: true });
+  const pending = await tasks.byId(id);
+  if (!pending || pending.status !== 'done') { session.clear(ctx.from.id); return ctx.answerCbQuery("Bu ish allaqachon ko'rib chiqilgan", { show_alert: true }); }
+  if (!access.canReview(ctx.state.actor, await employees.byId(pending.employee_id))) return ctx.answerCbQuery("⛔️ Ruxsat yo'q");
+  await ctx.answerCbQuery();
+  await ctx.editMessageReplyMarkup(undefined).catch(() => {});
+  if (pick === 'type') return askTypedDate(ctx, 'rv', { returnTaskId: id, returnNote: s.returnNote });
+  session.clear(ctx.from.id);
+  return finishReturn(ctx, id, s.returnNote, { fixDue: pick === 'none' ? null : dueFromDays(pick) });
+};
+
+/** rv:rl:<id>:<1|0> — qaytarishda kechikish tanlovi */
+const onReturnLate = async (ctx) => {
+  const id = Number(ctx.match[1]);
+  const s = session.get(ctx.from.id);
+  if (s.step !== 'return_late' || Number(s.returnTaskId) !== id) return ctx.answerCbQuery('Eskirgan tugma — qaytadan «📝 Kamchilik bor» ni bosing', { show_alert: true });
+  session.clear(ctx.from.id);
+  const pending = await tasks.byId(id);
+  if (!pending || pending.status !== 'done') return ctx.answerCbQuery("Bu ish allaqachon ko'rib chiqilgan", { show_alert: true });
+  if (!access.canReview(ctx.state.actor, await employees.byId(pending.employee_id))) return ctx.answerCbQuery("⛔️ Ruxsat yo'q");
+  await ctx.answerCbQuery();
+  await ctx.editMessageReplyMarkup(undefined).catch(() => {});
+  return finishReturn(ctx, id, s.returnNote, { countLate: ctx.match[2] === '1' });
 };
 
 // ---------------------------------------------------------------------------
@@ -666,6 +897,8 @@ const handleEditTitle = async (ctx) => {
   if (!s.taskId) return ctx.reply('Sessiya eskirgan.', ui.kbFor(ctx));
   const { title, priority } = parseTitle(ctx.message.text);
   if (!title) return ctx.reply("Matn bo'sh.", ui.kbFor(ctx));
+  const cur = await tasks.byId(s.taskId);
+  if (!cur || cur.status !== 'active' || !canEdit(ctx, cur)) return ctx.reply("🔒 Topshiriq endi o'zgartirib bo'lmaydi.", ui.kbFor(ctx));
   await tasks.rename(s.taskId, title);
   if (priority === 'high') await tasks.setPriority(s.taskId, 'high');
   activity.mark(ctx, 'task_edit', { title });
@@ -702,10 +935,13 @@ const register = (bot) => {
   bot.command('missiyalarim', showMyTasks);
   bot.command('bugun', addTodayTask);
   bot.command('topshiriqlarim', showMyTasks);
-  bot.action(/^ak:(\d+|all)$/, async (ctx) => {
+  // ak:<id> · ak:l:<id,id,…> (xabardagi ro'yxat) · ak:all — eski xabarlar
+  bot.action(/^ak:(\d+|all|l:[\d,]+)$/, async (ctx) => {
     const emp = ctx.state.employee;
     if (!emp) return ctx.answerCbQuery('⛔️');
-    const done = await flows.ackTasks(botOf(ctx), emp, ctx.match[1] === 'all' ? null : [Number(ctx.match[1])]);
+    const m = ctx.match[1];
+    const ids = m === 'all' ? null : m.startsWith('l:') ? m.slice(2).split(',').map(Number).filter(Boolean) : [Number(m)];
+    const done = await flows.ackTasks(botOf(ctx), emp, ids);
     await ctx.answerCbQuery(done.length ? `✅ ${done.length} ta topshiriq — tushundim` : 'Allaqachon belgilangan');
     if (done.length) await ctx.reply(`👂 Belgilandi: «Tushundim» — ${done.map((t) => `«${t.title}»`).join(', ')}.\nTopshiriq bergan odam xabardor qilindi.`, ui.kbFor(ctx));
   });
@@ -714,7 +950,7 @@ const register = (bot) => {
     const emp = ctx.state.employee;
     const target = t ? await employees.byId(t.employee_id) : null;
     const mine = emp && t && Number(t.employee_id) === Number(emp.id);
-    if (!t || !t.task_file_id || !(mine || ctx.state.isAdmin || ctx.state.isHr || (ctx.state.isManager && employees.canManage(emp, ctx.state.isAdmin, target)))) return ctx.answerCbQuery("Topilmadi");
+    if (!t || !t.task_file_id || !tasks.visibleTo(ctx.state.actor, t) || !(mine || ctx.state.isAdmin || ctx.state.isHr || (ctx.state.isManager && employees.canManage(emp, ctx.state.isAdmin, target)))) return ctx.answerCbQuery("Topilmadi");
     await ctx.answerCbQuery();
     await flows.sendTaskMedia(botOf(ctx), ctx.from.id, t, mine && tasks.needsAck(t) ? inline(ui.ackRows([t])) : {});
   });
@@ -750,13 +986,14 @@ const register = (bot) => {
     await ctx.answerCbQuery();
     if (ctx.match[2] === 'type') return askTypedDate(ctx, 'tk', { taskId: t.id });
     const d = dueFromDays(ctx.match[2]);
+    if (!access.canSetDue(ctx.state.actor, t, d)) return ctx.reply(access.DUE_LOCKED, ui.kbFor(ctx));
     await tasks.setDue(t.id, d);
     if (d !== t.due_date) await tellReviewers(ctx, t, `📆 <b>${esc(ctx.state.employee ? ctx.state.employee.full_name : '')}</b> muddatni o'zgartirdi: ${esc(t.title)}\n${time.prettyDate(t.due_date)} → ${time.prettyDate(d)}`);
     return showTaskMenu(ctx, t.id);
   });
   const cancelGuard = async (ctx, id) => {
     const t = await tasks.byId(id);
-    if (!t || t.status !== 'active') { await ctx.answerCbQuery('Topshiriq ochiq emas'); return null; }
+    if (!t || !['active', 'done'].includes(t.status)) { await ctx.answerCbQuery('Topshiriq allaqachon yopilgan'); return null; }
     if (!canCancel(ctx, t)) { await ctx.answerCbQuery("⛔️ O'z topshirig'ingizni o'chirib bo'lmaydi — rahbaringiz bekor qiladi", { show_alert: true }); return null; }
     return t;
   };
@@ -764,15 +1001,17 @@ const register = (bot) => {
     const t = await cancelGuard(ctx, ctx.match[1]);
     if (!t) return;
     await ctx.answerCbQuery();
-    return render(ctx, `🗑 <b>${esc(t.title)}</b> — bekor qilinsinmi?\n<i>Yozuv o'chmaydi, «bekor qilingan» bo'lib qoladi.</i>`, ui.confirmKeyboard(`tk:delok:${t.id}`, `tk:${t.id}`, '🗑 Ha, bekor qilinsin'));
+    const back = t.status === 'active' ? `tk:${t.id}` : 'tk:keep';
+    return render(ctx, `🗑 <b>${esc(t.full_name)}</b>: <b>${esc(t.title)}</b> — o'chirilsinmi (bekor qilinsinmi)?\n<i>Ro'yxatlardan, tekshiruvdan va KPI dan chiqadi; yozuv bazada «bekor qilingan» bo'lib qoladi.</i>`, ui.confirmKeyboard(`tk:delok:${t.id}`, back, "🗑 Ha, o'chirilsin"));
   });
+  bot.action('tk:keep', async (ctx) => { await ctx.answerCbQuery(); return render(ctx, "👌 O'chirilmadi."); });
   bot.action(/^tk:delok:(\d+)$/, async (ctx) => {
     const t = await cancelGuard(ctx, ctx.match[1]);
     if (!t) return;
     await flows.cancelTask(botOf(ctx), t, ctx.state.employee ? ctx.state.employee.id : null, ctx.from.id);
     activity.mark(ctx, 'task_cancel', { title: t.title, detail: t.full_name });
-    await ctx.answerCbQuery('Bekor qilindi');
-    return showMyTasks(ctx);
+    await ctx.answerCbQuery("O'chirildi");
+    return render(ctx, `🗑 O'chirildi (bekor qilindi): <s>${esc(t.title)}</s> — ${esc(t.full_name)}`);
   });
 
   // o'zimga vazifa
@@ -781,8 +1020,9 @@ const register = (bot) => {
   bot.action(/^st:due:(\d+|type)$/, async (ctx) => {
     await ctx.answerCbQuery();
     if (ctx.match[1] === 'type') return askTypedDate(ctx, 'st', { titles: session.get(ctx.from.id).titles });
-    return createSelfTasks(ctx, dueFromDays(ctx.match[1]));
+    return askStartTime(ctx, 'st', dueFromDays(ctx.match[1]));
   });
+  bot.action(/^st:tm:(\d{4}|-|type)$/, async (ctx) => { await ctx.answerCbQuery(); return pickStartTime(ctx, 'st', ctx.match[1]); });
   bot.action('st:cancel', async (ctx) => { session.clear(ctx.from.id); await ctx.answerCbQuery(); await render(ctx, '❌ Bekor qilindi.'); });
 
   // topshiriq berish
@@ -794,12 +1034,15 @@ const register = (bot) => {
   bot.action('as:none', async (ctx) => { if (!ctx.state.isAdmin && !ctx.state.isHr) return ctx.answerCbQuery('⛔️'); await ctx.answerCbQuery(); await pickUnmanaged(ctx); });
   bot.action('as:depts', async (ctx) => { if (!ctx.state.isAdmin && !ctx.state.isHr) return ctx.answerCbQuery('⛔️'); await ctx.answerCbQuery(); await pickDeptList(ctx); });
   bot.action('as:mgrs', async (ctx) => { if (!ctx.state.isAdmin && !ctx.state.isHr) return ctx.answerCbQuery('⛔️'); await ctx.answerCbQuery(); await managersMenu(ctx); });
+  bot.action('as:multi', async (ctx) => { if (!ctx.state.isManager) return ctx.answerCbQuery('⛔️'); await ctx.answerCbQuery(); await multiPick.show(ctx, { reset: true }); });
+  multiPick.register(bot);
   bot.action(/^as:emp:(\d+)$/, async (ctx) => { if (!ctx.state.isManager) return ctx.answerCbQuery('⛔️'); await ctx.answerCbQuery(); await pickEmployee(ctx, ctx.match[1]); });
   bot.action(/^as:due:(\d+|type)$/, async (ctx) => {
     await ctx.answerCbQuery();
     if (ctx.match[1] === 'type') return askTypedDate(ctx, 'as', { assign: session.get(ctx.from.id).assign });
-    return createAssigned(ctx, dueFromDays(ctx.match[1]));
+    return askStartTime(ctx, 'as', dueFromDays(ctx.match[1]));
   });
+  bot.action(/^as:tm:(\d{4}|-|type)$/, async (ctx) => { if (!ctx.state.isManager) return ctx.answerCbQuery('⛔️'); await ctx.answerCbQuery(); return pickStartTime(ctx, 'as', ctx.match[1]); });
   bot.action('as:cancel', async (ctx) => { session.clear(ctx.from.id); await ctx.answerCbQuery(); await render(ctx, '❌ Bekor qilindi.'); });
 
   // bajardim
@@ -810,8 +1053,9 @@ const register = (bot) => {
   bot.action('done:np', async (ctx) => {
     const s = session.get(ctx.from.id);
     const emp = ctx.state.employee;
-    const own = s.doneTaskIds ? await allBossOwn(emp, s.doneTaskIds) : tasks.isBossOwn(emp, await tasks.byId(s.doneTaskId));
-    if (s.step !== 'done_proof' || !own) return ctx.answerCbQuery('📎 Isbot majburiy: rasm, video, audio yoki fayl yuboring', { show_alert: true });
+    // bosqich avval tekshiriladi — eskirgan tugmada doneTaskId yo'q (Postgres byId(undefined) ga xato beradi)
+    const own = s.step === 'done_proof' && emp && (s.doneTaskIds ? await allBossOwn(emp, s.doneTaskIds) : s.doneTaskId && tasks.isBossOwn(emp, await tasks.byId(s.doneTaskId)));
+    if (!own) return ctx.answerCbQuery('📎 Isbot majburiy: rasm, video, audio yoki fayl yuboring', { show_alert: true });
     await ctx.answerCbQuery();
     await finishDone(ctx, null);
   });
@@ -833,10 +1077,14 @@ const register = (bot) => {
   bot.hears(ui.BTN.review, showReview);
   bot.command('tekshiruv', showReview);
   bot.action('rv:list', async (ctx) => { await ctx.answerCbQuery(); await showReview(ctx); });
+  bot.action(/^rv:hrn(?::([01]))?$/, toggleHrNotify);
+  bot.command('bajardim_xabar', showReview);
   bot.action(/^rv:view:(\d+)$/, (ctx) => viewReview(ctx, ctx.match[1]));
   bot.action(/^rv:ok:(\d+)$/, (ctx) => doAccept(ctx, ctx.match[1]));
   bot.action(/^rv:okm:([\d,]+)$/, (ctx) => doAcceptMany(ctx, ctx.match[1]));
   bot.action(/^rv:back:(\d+)$/, (ctx) => startReturn(ctx, ctx.match[1]));
+  bot.action(/^rv:rl:(\d+):([01])$/, onReturnLate);
+  bot.action(/^rv:fd:(\d+):(0|1|2|type|none)$/, onReturnDue);
 };
 
 /** Matn «eshitdim / tushundim» — tasdiqlanmagan topshiriqlar bo'lsa. true — tasdiqlandi */
@@ -852,5 +1100,5 @@ const ackByText = async (ctx) => {
 
 module.exports = {
   ackByText,
-  register, parseTitle, handleSelfTaskText, handleAssignText, handleTypedDate, handleReturnNote, handleEditTitle, showMyTasks, showReview, addTodayTask,
+  register, parseTitle, handleSelfTaskText, handleAssignText, handleSelfMediaTitle, handleAssignMediaTitle, handleTypedDate, handleTypedTime, handleReturnNote, handleEditTitle, showMyTasks, showReview, addTodayTask,
 };

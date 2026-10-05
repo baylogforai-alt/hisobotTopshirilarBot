@@ -34,6 +34,11 @@ const BTN = {
   attView: '👁 Davomat nazorati',
   journal: '📋 Barcha topshiriqlar',
   announce: "📢 E'lon",
+  chat: '💬 Savol-javob',
+  stActive: '⏳ Faol',
+  stReview: '🕓 Kutilmoqda',
+  stFix: "🔁 Ko'rib chiqish",
+  stDone: '✅ Bajarilgan',
   visit: '📍 Hududga keldim',
   cancel: '❌ Bekor qilish',
   skip: "⏭ O'tkazib yuborish",
@@ -45,11 +50,11 @@ const LINE = '━'.repeat(18);
 const mainKeyboard = ({ isAdmin = false, isHead = false, isField = false, isHr = false, isViewer = false, isBoss = false } = {}) => {
   const rows = isBoss ? [] : [[BTN.checkIn, BTN.checkOut]];
   if (isField && !isBoss) rows.push([BTN.visit]);
-  rows.push([BTN.myTasks, BTN.done], isBoss ? [BTN.selfTask] : [BTN.selfTask, BTN.dailyReport]);
+  rows.push([BTN.myTasks, BTN.done], [BTN.stActive, BTN.stFix], [BTN.stReview, BTN.stDone], isBoss ? [BTN.selfTask] : [BTN.selfTask, BTN.dailyReport]);
   if (isAdmin || isHead) rows.push([BTN.assign, BTN.review]);
-  if (isAdmin) rows.push([BTN.announce, BTN.journal], [BTN.myTeam, BTN.panel], [BTN.kpi, BTN.reports], [BTN.archive, BTN.myReport]);
-  else if (isHr) rows.push([BTN.announce, BTN.journal], [BTN.myTeam, BTN.reports], [BTN.kpi, BTN.attView], [BTN.score, BTN.myReport]);
-  else if (isHead) rows.push([BTN.myTeam, BTN.myDept], [BTN.announce, BTN.score], [BTN.myReport]);
+  if (isAdmin) rows.push([BTN.journal, BTN.announce], [BTN.myTeam, BTN.panel], [BTN.kpi, BTN.reports], [BTN.archive, BTN.myReport]);
+  else if (isHr) rows.push([BTN.journal, BTN.announce], [BTN.myTeam, BTN.reports], [BTN.kpi, BTN.attView], [BTN.score, BTN.myReport]);
+  else if (isHead) rows.push([BTN.myTeam, BTN.myDept], [BTN.score, BTN.announce], [BTN.myReport]);
   else rows.push([BTN.myReport]);
   if (isViewer && !isAdmin && !isHr) rows.push([BTN.attView]);
   // boshliq (direktor, role='admin' hodim) — hodim emas: kech qolaman / kelmayman / oylik yo'q
@@ -93,6 +98,19 @@ const dueKeyboard = (prefix) =>
     [cb(BTN.cancel, `${prefix}:cancel`)],
   ]);
 
+/** Boshlanish soati — prefix 'st' / 'as'. Bugun uchun faqat hali o'tmagan soatlar */
+const START_SLOTS = ['08:00', '09:00', '10:00', '11:00', '12:00', '14:00', '15:00', '16:00', '17:00'];
+const startTimeKeyboard = (prefix, dueDate) => {
+  const now = time.now();
+  const nowMin = now.hour * 60 + now.minute;
+  const slots = START_SLOTS.filter((t) => dueDate !== time.today() || Number(t.slice(0, 2)) * 60 + Number(t.slice(3)) > nowMin);
+  const rows = [];
+  for (let i = 0; i < slots.length; i += 3) rows.push(slots.slice(i, i + 3).map((t) => cb(`🕘 ${t}`, `${prefix}:tm:${t.replace(':', '')}`)));
+  rows.push([cb('✍️ Soatni yozish', `${prefix}:tm:type`), cb('⏭ Soatsiz', `${prefix}:tm:-`)]);
+  rows.push([cb(BTN.cancel, `${prefix}:cancel`)]);
+  return inline(rows);
+};
+
 const PRIO_ICON = { high: '🔥', normal: '', low: '' };
 const SOURCE_LABEL = { self: "o'zi", head: 'boshliq', admin: 'direktor' };
 
@@ -105,7 +123,7 @@ const ackRows = (list) => {
   if (!list.length) return [];
   if (list.length === 1) return [[cb('✅ Eshitdim, tushundim', `ak:${list[0].id}`)]];
   const rows = list.slice(0, 5).map((t) => [cb(`✅ Tushundim: ${t.title}`.slice(0, 50), `ak:${t.id}`)]);
-  rows.push([cb('✅ Hammasini tushundim', 'ak:all')]);
+  rows.push([cb('✅ Hammasini tushundim', `ak:l:${list.slice(0, 10).map((t) => t.id).join(',')}`)]);
   return rows;
 };
 
@@ -118,6 +136,7 @@ const taskLine = (t, i, { withName = false } = {}) => {
   if (overdue) marks.push(`${time.diffDays(t.due_date, today)} kun kechikdi`);
   else if (t.status === 'active' && t.due_date === today) marks.push('bugun');
   else if (t.status === 'active') marks.push(`muddat: ${time.prettyDate(t.due_date)}`);
+  if (t.status === 'active' && t.start_time) marks.push(`⏰ ${t.start_time} da boshlanadi`);
   if (t.status === 'done') marks.push('tekshiruvda');
   if (Number(t.returned_count) > 0) marks.push(`↩️ ${t.returned_count} marta qaytarilgan`);
   if (t.source !== 'self') marks.push(`bergan: ${SOURCE_LABEL[t.source] || t.source}`);
@@ -132,7 +151,8 @@ const taskList = (list, opts) => (list.length ? list.map((t, i) => taskLine(t, i
 /** "Bajardim" — ochiq topshiriqlar tugma bo'ladi */
 const doneKeyboard = (open) =>
   inline([
-    ...open.map((t, i) => [cb(`☐ ${i + 1}. ${t.due_date < time.today() ? '🔴 ' : ''}${t.title.slice(0, 40)}`, `done:${t.id}`)]),
+    // eski izohsiz media topshiriq («🎤 Ovozli topshiriq») — bir-biridan ajralsin: muddat sanasi bilan
+    ...open.map((t, i) => [cb(`☐ ${i + 1}. ${t.due_date < time.today() ? '🔴 ' : ''}${t.title.slice(0, 40)}${Object.values(MEDIA_LABEL).includes(t.title) ? ` · ${t.due_date.slice(8, 10)}.${t.due_date.slice(5, 7)}` : ''}`, `done:${t.id}`)]),
     ...(open.length > 1 ? [[cb('☑️ Bir nechtasini birdaniga belgilash', 'done:multi')]] : []),
     [cb('🔄 Yangilash', 'done:list')],
   ]);
@@ -171,15 +191,19 @@ const doneChecklist = (open, doneToday) => {
   return `${header}\n${lines.join('\n') || "<i>— bo'sh —</i>"}` + (open.length ? `\n\n👇 Bajarganingizni pastdan bosing.` : '');
 };
 
-/** Isbot so'rash: noProof — «✅ Isbotsiz bajardim» (boshliqning o'z missiyasi); optional — «⏭ Isbotsiz yuborish» (PROOF_REQUIRED=0) */
-const proofKeyboard = ({ noProof = false, optional = false } = {}) =>
+/**
+ * Isbot so'rash: noProof — «✅ Isbotsiz bajardim» (boshliqning o'z missiyasi); optional — «⏭ Isbotsiz yuborish» (PROOF_REQUIRED=0);
+ * extra — qo'shimcha qatorlar (masalan topshiriqni qayta eshitish)
+ */
+const proofKeyboard = ({ noProof = false, optional = false, extra = [] } = {}) =>
   inline([
     ...(noProof ? [[cb('✅ Isbotsiz bajardim', 'done:np')]] : optional ? [[cb('⏭ Isbotsiz yuborish', 'done:noproof')]] : []),
+    ...extra,
     [cb(BTN.cancel, 'done:cancel')],
   ]);
 
 /** Tekshiruvchi uchun: qabul / qaytarish */
-const reviewKeyboard = (taskId) => inline([[cb('✅ Qabul qilish', `rv:ok:${taskId}`), cb('↩️ Qaytarish', `rv:back:${taskId}`)]]);
+const reviewKeyboard = (taskId) => inline([[cb('✅ Qabul qilish', `rv:ok:${taskId}`)], [cb("📝 Kamchilik bor — javob qaytarish", `rv:back:${taskId}`)]]);
 
 /** Sababli kun so'rovi: tasdiqlash / rad etish */
 const excuseKeyboard = (attId) => inline([[cb('✅ Sababli', `ab:ok:${attId}`), cb('❌ Sababsiz', `ab:no:${attId}`)]]);
@@ -208,9 +232,10 @@ const taskMenuKeyboard = (t, { canDelete = true, extra = [] } = {}) => {
 const confirmKeyboard = (yesData, noData, yesLabel = '✅ Ha', noLabel = "⬅️ Yo'q") => inline([[cb(yesLabel, yesData), cb(noLabel, noData)]]);
 
 /** Admin panel */
-const panelKeyboard = ({ headCopy = true } = {}) =>
+const panelKeyboard = ({ bossAtt = false, headCopy = true, hrBoss = false, headMoney = false, gate = { minDays: 25, minTaskPct: 90 } } = {}) =>
   inline([
     [cb('👥 Hodimlar', 'emp:list'), cb("🏢 Bo'limlar", 'dp:list')],
+    [cb('💵 Oyliklar (oklad, KPI)', 'sal:list')],
     [cb("➕ Hodim qo'shish", 'ea:start'), cb("📝 So'rovlar", 'jr:list')],
     [cb('📢 E\'lon yuborish', 'an:start'), cb('📢 E\'lonlar tarixi', 'an:list')],
     [cb('📊 Bugungi holat', 'adm:today'), cb('📋 Kunlik hisobotlar', 'dr:today')],
@@ -220,9 +245,14 @@ const panelKeyboard = ({ headCopy = true } = {}) =>
     [cb('📍 Ofis joylashuvi', 'adm:office'), cb('🏙 Filiallar', 'br:list')],
     [cb('🗓 Oy boshi tasdiqlari', 'adm:months'), cb('🚶 Tashriflar (bugun)', 'adm:visits')],
     [cb('🕘 Ish vaqti', 'adm:worktime'), cb('🏷 Nomlar', 'adm:names')],
+    [cb('📅 Dam olish kuniga chaqirish', 'xc:home')],
     [cb("🧭 Yo'nalishlar", 'dn:list'), cb('👁 Davomat nazorati', 'vw:today')],
     [cb('🔔 Eslatmalar jadvali', 'rm:adm'), cb('💾 Zaxira nusxa', 'adm:backup')],
-    [cb(`📤 Rahbar topshiriq nusxasi: ${headCopy ? '✅ yoqilgan' : "🚫 o'chiq"}`, 'adm:htc')],
+    [cb(`📤 Rahbar topshiriq nusxasi: ${headCopy ? '✅ yoqilgan' : "🚫 o'chiq"}`, `adm:htc:${headCopy ? 0 : 1}`)],
+    [cb(`👁 HR boshliq topshiriqlarini: ${hrBoss ? "✅ ko'radi" : "🚫 ko'rmaydi"}`, `adm:hbt:${hrBoss ? 0 : 1}`)],
+    [cb(`👁 Boshliq keldi-ketdini: ${bossAtt ? "✅ ko'radi" : "🚫 ko'rmaydi"}`, `adm:bat:${bossAtt ? 0 : 1}`)],
+    [cb(`💵 Rahbar KPI summasini: ${headMoney ? "✅ ko'radi" : "🚫 ko'rmaydi"}`, `adm:hm:${headMoney ? 0 : 1}`)],
+    [cb(`🚦 KPI sharti: ${gate.minDays} kun · ${gate.minTaskPct}%`, 'adm:kg')],
     [cb('🩺 Tizim holati', 'adm:status')],
   ]);
 
@@ -246,7 +276,7 @@ const pctBar = (pct) => {
 const roleIcon = (role) => (role === 'admin' ? '👑' : role === 'head' ? '🎖' : '👤');
 
 module.exports = {
-  esc, BTN, LINE, mainKeyboard, kbFor, kbForEmp, urlButton, locationKeyboard, skipKeyboard, cancelKeyboard, cb, inline, dueKeyboard,
+  esc, BTN, LINE, mainKeyboard, kbFor, kbForEmp, urlButton, locationKeyboard, skipKeyboard, cancelKeyboard, cb, inline, dueKeyboard, startTimeKeyboard,
   PRIO_ICON, SOURCE_LABEL, MEDIA_ICON, MEDIA_LABEL, ackRows, taskLine, taskList, doneKeyboard, doneMultiKeyboard, doneChecklist, proofKeyboard, reviewKeyboard, reviewMultiKeyboard, excuseKeyboard,
   intentKeyboard, dailyReviewKeyboard, joinKeyboard, manageKeyboard, taskMenuKeyboard, confirmKeyboard, panelKeyboard,
   backKeyboard, scoreKeyboard, pctBar, roleIcon,

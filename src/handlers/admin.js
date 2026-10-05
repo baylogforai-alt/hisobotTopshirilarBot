@@ -24,6 +24,7 @@ const visits = require('../services/visits');
 const { mapLink } = require('./field');
 const worktime = require('../services/worktime');
 const org = require('../services/org');
+const access = require('../services/access');
 const reminders = require('../services/reminders');
 const flows = require('../services/flows');
 
@@ -43,8 +44,34 @@ const adminLossBlock = async (ctx, e, { newRole = null, deactivate = false } = {
   return null;
 };
 
+/** Panel → «🚦 KPI sharti» */
+const showGate = async (ctx) => {
+  const g = await kpi.gateSettings();
+  return render(ctx,
+    `🚦 <b>KPI SHARTI</b>\n${ui.LINE}\n` +
+      `KPI summasi to'liq beriladi, agar oy davomida:\n` +
+      `🗓 <b>${g.minDays} kun</b> vaqtida kelsa (kech kelgan kun — faqat sababli qilinsa kiradi; sababli kunlar talabni kamaytiradi; dam olish kuni kelgani ham qo'shiladi);\n` +
+      `📋 topshiriqlarning <b>${g.minTaskPct}%</b> i muddatida bajarilsa;\n` +
+      `🗓 oy boshi tasdiqlangan bo'lsa.\n\n<i>Aks holda KPI summasi 0. Ish kunlari kam oyda (fevral) talab ish kunlaridan oshmaydi.</i>`,
+    inline([
+      [cb(`🗓 Kunlar: ${g.minDays}`, 'adm:kg:days'), cb(`📋 Foiz: ${g.minTaskPct}%`, 'adm:kg:pct')],
+      [cb('⬅️ Panel', 'adm:home')],
+    ]));
+};
+
+/** kpi_gate_days / kpi_gate_pct matni */
+const handleGateText = async (ctx, kind) => {
+  const n = Number(String(ctx.message.text).trim().replace('%', ''));
+  const okRange = kind === 'days' ? Number.isInteger(n) && n >= 1 && n <= 31 : Number.isInteger(n) && n >= 0 && n <= 100;
+  if (!okRange) return ctx.reply(kind === 'days' ? '1 dan 31 gacha butun son yozing:' : '0 dan 100 gacha butun son yozing:', ui.cancelKeyboard());
+  session.clear(ctx.from.id);
+  await kpi.setGateSettings(kind === 'days' ? { minDays: n } : { minTaskPct: n });
+  await ctx.reply('✅ Saqlandi. Kutilayotgan (tasdiqlanmagan) oylar yangi shart bilan hisoblanadi.', ui.kbFor(ctx));
+  return showGate(ctx);
+};
+
 const showPanel = async (ctx) =>
-  render(ctx, `⚙️ <b>PANEL</b> · ${esc(config.companyName)}\n<i>${time.prettyDate(time.today())}</i>`, ui.panelKeyboard({ headCopy: await org.headTaskCopy() }));
+  render(ctx, `⚙️ <b>PANEL</b> · ${esc(config.companyName)}\n<i>${time.prettyDate(time.today())}</i>`, ui.panelKeyboard({ headCopy: await org.headTaskCopy(), hrBoss: await org.hrSeesBossTasks(), bossAtt: await org.bossSeesAttendance(), headMoney: await org.headSeesMoney(), gate: await kpi.gateSettings() }));
 
 // ---------------------------------------------------------------------------
 // HODIMLAR
@@ -68,7 +95,7 @@ const employeeCard = async (ctx, id) => {
   const at = await attendance.stats(e, from, to);
   const row = await attendance.get(e.id);
   const st = attendance.dayStatus(row, time.today(), time.today(), e);
-  const todayLabel = { ontime: `🟢 keldi ${time.clock(row && row.checked_in)}`, late: `🟡 kech ${time.clock(row && row.checked_in)}`, absent: '🔴 kelmagan', excused: '📄 sababli', pending: '🙋 sabab kutilmoqda', future: '⚪ hali yo\'q', off: '⚪ dam olish' }[st];
+  const todayLabel = { ontime: `🟢 keldi ${time.clock(row && row.checked_in)}`, late: `🟡 kech ${time.clock(row && row.checked_in)}`, absent: '🔴 kelmagan', excused: '📄 sababli', pending: '🙋 sabab kutilmoqda', future: '⚪ hali yo\'q', off: '⚪ dam olish', extra: `🟢 dam olish kuni keldi ${time.clock(row && row.checked_in)}` }[st];
   const text =
     `${employees.personIcon(e)} <b>${esc(e.full_name)}</b>${employees.isHr(e) ? ' · <b>HR</b>' : ''}${e.active ? '' : ' ⛔ <i>ishdan ketgan</i>'}\n` +
     `💼 ${esc(e.position || '—')} · 🏢 ${esc(e.department_name || "bo'limsiz")} · ${employees.roleLabel(e.role)}\n` +
@@ -76,23 +103,24 @@ const employeeCard = async (ctx, id) => {
     `🏙 ${esc(e.branch_name || 'Asosiy ofis')} · ${employees.modeLabel(e)} · 🎥 Keldim videosi: ${employees.needsCheckinVideo(e) ? 'majburiy' : "yo'q/ixtiyoriy"}` +
     (employees.isField(e) ? `\n🏠 Uy joylashuvi: ${employees.homeOf(e) ? mapLink(e.home_lat, e.home_lon) : '<i>belgilanmagan</i>'}` : '') + '\n' +
     `💵 Oklad: <b>${kpi.fmtMoney(e.salary)}</b> · 🏆 KPI summasi (bonus fondi): <b>${kpi.fmtMoney(e.bonus_fund)}</b>\n` +
-    `🕘 Ish boshlanishi: <b>${e.work_start || `${worktime.get()} (umumiy)`}</b>\n${ui.LINE}\n` +
+    `🕘 Ish boshlanishi: <b>${e.work_start || `${worktime.get()} (umumiy)`}</b> · 🏁 tugashi: <b>${e.work_end || `${employees.workEndOf(null)} (umumiy)`}</b>\n${ui.LINE}\n` +
     `Bugun: ${todayLabel}${(await dailyReports.get(e.id)) ? ' · 📝 hisobot topshirgan' : ''}\n` +
     `📋 Shu oy: ${ts.ontime}/${ts.total} muddatida (${ts.pct}%)${ts.overdue ? ` · 🔴 ${ts.overdue}` : ''} · ⏳ ochiq ${open.length}\n` +
     `🕘 Davomat: ${at.ontime}/${at.workDays} vaqtida (${at.pct}%)${at.late ? ` · 🟡 ${at.late}` : ''}${at.absent ? ` · 🔴 ${at.absent}` : ''}${at.excused ? ` · 📄 ${at.excused}` : ''}`;
   const rows = [
     [cb('📤 Topshiriq berish', `as:emp:${e.id}`), cb(`📋 Topshiriqlari (${open.length})`, `emp:tasks:${e.id}`)],
     [cb('✏️ Ism', `emp:name:${e.id}`), cb('💼 Lavozim', `emp:pos:${e.id}`), cb("🏢 Bo'lim", `emp:dept:${e.id}`)],
-    [cb(Number(e.is_hr) ? '🧑‍💼 HR: ha' : "🧑‍💼 HR: yo'q", `emp:hr:${e.id}`), cb('👥 Jamoasi', `tm:m:${e.id}`)],
+    [cb(Number(e.is_hr) ? '🧑‍💼 HR: ha' : "🧑‍💼 HR: yo'q", `emp:hr:${e.id}:${Number(e.is_hr) ? 0 : 1}`), cb('👥 Jamoasi', `tm:m:${e.id}`)],
     [cb("🧭 Yo'nalishlari", `ed:${e.id}`), cb(employees.isViewer(e) ? '👁 Davomat nazorati: ha' : "👁 Davomat nazorati: yo'q", `vw:grant:${e.id}`)],
-    [cb('🎖 Rol', `emp:role:${e.id}`), cb('🏙 Filial', `emp:branch:${e.id}`), cb(employees.isFlexible(e) ? '🕊 Erkin: ha' : "🕊 Erkin: yo'q", `emp:flex:${e.id}`)],
+    [cb('🎖 Rol', `emp:role:${e.id}`), cb('🏙 Filial', `emp:branch:${e.id}`), cb(employees.isFlexible(e) ? '🕊 Erkin: ha' : "🕊 Erkin: yo'q", `emp:flex:${e.id}:${employees.isFlexible(e) ? 0 : 1}`)],
     [cb('💵 Oklad', `emp:salary:${e.id}`), cb('🏆 KPI summasi', `emp:fund:${e.id}`), cb('🕘 Ish boshlanishi', `emp:start:${e.id}`)],
-    [cb(employees.isField(e) ? '🚶 Ish turi: Hudud' : '🏢 Ish turi: Ofis', `emp:mode:${e.id}`),
-      ...(employees.isField(e) ? [cb(Number(e.video_required) ? '🎥 Video: majburiy' : '🎥 Video: ixtiyoriy', `emp:video:${e.id}`)] : [])],
+    [cb('🏁 Ish tugashi', `emp:end:${e.id}`)],
+    [cb(employees.isField(e) ? '🚶 Ish turi: Hudud' : '🏢 Ish turi: Ofis', `emp:mode:${e.id}:${employees.isField(e) ? 'office' : 'field'}`),
+      ...(employees.isField(e) ? [cb(Number(e.video_required) ? '🎥 Video: majburiy' : '🎥 Video: ixtiyoriy', `emp:video:${e.id}:${Number(e.video_required) ? 0 : 1}`)] : [])],
     ...(employees.isField(e) && employees.homeOf(e) ? [[cb('🏠 Uy joyini tozalash', `emp:home:${e.id}`)]] : []),
     [cb('📄 Sababli kun belgilash', `emp:excuse:${e.id}`), cb('📊 Oylik hisobot', `rp:emp:${e.id}:${time.month()}`)],
     [cb('🗂 Kun daftari (arxiv)', `hr:emp:${e.id}`), cb('📥 Excel (davr)', `xl:emp:${e.id}`)],
-    [cb(e.active ? '⛔ Ishdan ketdi' : '✅ Qayta faollashtirish', `emp:act:${e.id}`), cb("⬅️ Ro'yxat", 'emp:list')],
+    [cb(e.active ? '⛔ Ishdan ketdi' : '✅ Qayta faollashtirish', `emp:act:${e.id}:${e.active ? 0 : 1}`), cb("⬅️ Ro'yxat", 'emp:list')],
   ];
   return render(ctx, text, inline(rows));
 };
@@ -127,6 +155,14 @@ const handleEmpText = async (ctx, field) => {
       await employees.setWorkStart(s.empId, hhmm);
     }
   }
+  if (field === 'work_end') {
+    if (/^(standart|umumiy|0|-)$/i.test(text) || text === ui.BTN.skip) await employees.setWorkEnd(s.empId, null);
+    else {
+      const hhmm = employees.parseWorkStart(text);
+      if (!hhmm) { session.set(ctx.from.id, { step: 'edit_work_end', empId: s.empId }); return ctx.reply("Vaqtni HH:mm ko'rinishida yozing (masalan 19:00). Umumiy vaqtga qaytarish — «standart».", ui.cancelKeyboard()); }
+      await employees.setWorkEnd(s.empId, hhmm);
+    }
+  }
   if (field === 'excuse_date') {
     const d = time.parseDate(text);
     if (!d) return ctx.reply('Sana tushunilmadi (masalan 15.09):', ui.cancelKeyboard());
@@ -140,16 +176,62 @@ const handleEmpText = async (ctx, field) => {
     return employeeCard(ctx, e.id);
   }
   await ctx.reply('✅ Saqlandi.', ui.kbFor(ctx));
+  if (s.back === 'sal') return showSalaries(ctx);
   return employeeCard(ctx, s.empId);
 };
 
+// ---------------------------------------------------------------------------
+// OYLIKLAR — hamma hodimning okladi va KPI summasi bir joyda (Panel → «💵 Oyliklar», /oyliklar)
+// ---------------------------------------------------------------------------
+
+const showSalaries = async (ctx) => {
+  const list = await employees.listStaff();
+  const sum = (k) => list.reduce((a, e) => a + (Number(e[k]) || 0), 0);
+  const missing = list.filter((e) => !Number(e.salary)).length;
+  const lines = list.map((e, i) => `${i + 1}. <b>${esc(e.full_name)}</b> — 💵 ${kpi.fmtMoney(e.salary)} · 🏆 ${kpi.fmtMoney(e.bonus_fund)}`);
+  const rows = list.map((e) => [
+    cb(`💵 ${e.full_name}`.slice(0, 40), `sal:s:${e.id}`),
+    cb('🏆 KPI', `sal:f:${e.id}`),
+  ]);
+  rows.push([cb('⬅️ Panel', 'adm:home')]);
+  return render(
+    ctx,
+    `💵 <b>OYLIKLAR</b> — ${list.length} hodim\n${ui.LINE}\n${lines.join('\n') || "<i>hodim yo'q</i>"}\n${ui.LINE}\n` +
+      `Jami oklad: <b>${kpi.fmtMoney(sum('salary'))}</b> · KPI summalari: <b>${kpi.fmtMoney(sum('bonus_fund'))}</b>` +
+      (missing ? `\n⚠️ ${missing} ta hodimga oklad yozilmagan.` : '') +
+      `\n\n👇 Ismni bosing — oylik (oklad) yozasiz; «🏆 KPI» — KPI summasi. Hodim «${ui.BTN.salary}» da oklad + KPI = jami ko'radi.`,
+    inline(rows),
+  );
+};
+
+const askSalary = async (ctx, empId, field) => {
+  const e = await employees.byId(empId);
+  if (!e) return ctx.answerCbQuery('Hodim topilmadi');
+  await ctx.answerCbQuery();
+  session.set(ctx.from.id, { step: field === 'fund' ? 'edit_fund' : 'edit_salary', empId: e.id, back: 'sal' });
+  const cur = field === 'fund' ? e.bonus_fund : e.salary;
+  return ctx.reply(
+    `${field === 'fund' ? '🏆 KPI summasi' : '💵 Oylik (oklad)'} — <b>${esc(e.full_name)}</b>\nHozir: <b>${kpi.fmtMoney(cur)}</b>\n\nSo'mda yozing (masalan 3000000 yoki 3 000 000). 0 — o'chirish.`,
+    { parse_mode: 'HTML', ...ui.cancelKeyboard() },
+  );
+};
+
+/** Boshliq: hodimning hamma topshiriqlari — faol, tekshiruvda, shu oy bajarilgan (kim bergan, qachon yozilgan, muddat, holat) */
 const employeeTasks = async (ctx, id) => {
   const e = await employees.byId(id);
-  const open = await tasks.openFor(e.id);
-  const awaiting = await tasks.awaitingReviewFor(e.id);
+  const by = async (kind) => tasks.listByKind(kind, { employeeIds: [e.id] });
+  const open = await by('active');
+  const awaiting = await by('review');
+  const accepted = await by('accepted');
+  const { line } = require('./status');
+  const block = (title, list) => `${title} (${list.length}):\n${list.map((t, i) => line(t, i + 1, false)).join('\n') || "<i>— yo'q —</i>"}`;
   const rows = open.map((t) => [cb(`🗑 ${t.title.slice(0, 45)}`, `emp:tdel:${t.id}`)]);
   rows.push([cb('📤 Yangi topshiriq', `as:emp:${e.id}`), cb('⬅️ Kartochka', `emp:${e.id}`)]);
-  return render(ctx, `📋 <b>${esc(e.full_name)}</b> — ochiq (${open.length}):\n${ui.taskList(open)}${awaiting.length ? `\n\n🕓 Tekshiruvda:\n${ui.taskList(awaiting)}` : ''}\n\n🗑 — bekor qilish`, inline(rows));
+  return render(
+    ctx,
+    `📋 <b>${esc(e.full_name)}</b> — topshiriqlari\n${ui.LINE}\n${block('⏳ <b>Faol</b>', open)}\n\n${block('🕓 <b>Kutilmoqda</b> (tekshiruvda)', awaiting)}\n\n${block('✅ <b>Bajarilgan</b> (shu oy)', accepted)}\n\n🗑 — faol topshiriqni bekor qilish`,
+    inline(rows),
+  );
 };
 
 // ---------------------------------------------------------------------------
@@ -384,7 +466,7 @@ const showStatus = async (ctx) => {
     `🏢 Bo'limlar: ${(await departments.listActive()).length}\n` +
     `💬 Guruh: ${groupId ? `<code>${groupId}</code>` : '❌ ulanmagan (/guruh_ulash guruh ichida)'}\n` +
     `🗄 Arxiv guruhi: ${(await notify.getArchiveId()) ? `<code>${await notify.getArchiveId()}</code>` : '❌ ulanmagan (/arxiv_ulash yopiq guruh ichida)'}\n` +
-    `🏆 KPI rejimi: ${config.kpiMode === 'gate' ? `shartli (kech ≤${config.kpiMaxLate}, kelmagan ≤${config.kpiMaxAbsent}, kech topshiriq ≤${config.kpiMaxMissedTasks})` : 'ball × summa'}\n` +
+    `🏆 KPI rejimi: ${config.kpiMode === 'gate' ? await (async () => { const g = await kpi.gateSettings(); return `shartli (${g.minDays} kun vaqtida, topshiriqlar ≥${g.minTaskPct}%)`; })() : 'ball × summa'}\n` +
     `📍 Ofis: ${off ? `${off.lat.toFixed(5)}, ${off.lon.toFixed(5)} · radius ${geo.prettyDistance(off.radius)}` : '❌ belgilanmagan'}\n` +
     `⏰ Ish vaqti: ${worktime.get()}–${config.workEndHour}:00 (alohida vaqtli: ${await worktime.individualCount()}) · kechikish ruxsati ${config.lateGraceMinutes} daq · kunlar ${config.workDays}\n` +
     `📝 Kutilayotgan so'rovlar: ${pendingReq}\n` +
@@ -406,8 +488,8 @@ const showExcuses = async (ctx) => {
 };
 
 const showOverdue = async (ctx) => {
-  if (!ctx.state.isAdmin && !(ctx.state.employee && ctx.state.employee.department_id)) return ctx.reply("Sizga bo'lim biriktirilmagan — direktorga ayting.");
-  const list = await tasks.overdue(ctx.state.isAdmin ? null : ctx.state.employee.department_id);
+  // HR — boshliq topshiriqlarisiz (sozlamaga qarab); bo'limsiz rahbar — bo'sh ro'yxat
+  const list = tasks.visibleFor(ctx.state.actor, await tasks.overdue(access.deptScope(ctx.state.actor)));
   return render(ctx, list.length ? `⚠️ <b>MUDDATI O'TGAN (${list.length})</b>\n\n${ui.taskList(list, { withName: true })}` : "✅ Muddati o'tgan topshiriq yo'q.", ui.backKeyboard('adm:home'));
 };
 
@@ -462,15 +544,56 @@ const register = (bot) => {
   });
   bot.command('erkin', async (ctx) => { if (!(await guard(ctx))) return; const e = await byArgTg(ctx); if (e) { await employees.setFlexible(e.id, !employees.isFlexible(e)); await employeeCard(ctx, e.id); } });
   bot.command('hodim_missiya', async (ctx) => { if (!(await guard(ctx))) return; const e = await byArgTg(ctx); if (e) await render(ctx, await reports.buildEmployeeTasks(e), ui.backKeyboard(`emp:${e.id}`, '👤 Kartochka')); });
-  bot.action('adm:htc', async (ctx) => {
+  bot.action(/^adm:htc(?::([01]))?$/, async (ctx) => {
     if (!(await guard(ctx))) return;
-    const on = !(await org.headTaskCopy());
+    if (!ctx.match[1]) { await ctx.answerCbQuery('Eskirgan tugma'); return showPanel(ctx); }
+    const on = ctx.match[1] === '1';
     await org.setHeadTaskCopy(on);
     await ctx.answerCbQuery(on ? "✅ Rahbar bergan topshiriq nusxasi direktor va HR ga boradi" : "🚫 Rahbar bergan topshiriq nusxasi yuborilmaydi", { show_alert: true });
     await showPanel(ctx);
   });
+  bot.action(/^adm:hbt(?::([01]))?$/, async (ctx) => {
+    if (!(await guard(ctx))) return;
+    if (!ctx.match[1]) { await ctx.answerCbQuery('Eskirgan tugma'); return showPanel(ctx); }
+    const on = ctx.match[1] === '1';
+    await org.setHrSeesBossTasks(on);
+    await ctx.answerCbQuery(on
+      ? "✅ HR endi boshliq/direktor bergan topshiriqlarni va boshliq missiyalarini ham ko'radi (jurnal, ro'yxatlar, Excel)"
+      : "🚫 HR boshliq/direktor bergan topshiriqlarni va boshliq missiyalarini ko'rmaydi", { show_alert: true });
+    await showPanel(ctx);
+  });
+  // KPI sharti (boshliq o'zgartiradi): kunlar va topshiriq foizi
+  bot.action('adm:kg', async (ctx) => { if (await guard(ctx)) { session.clear(ctx.from.id); await ctx.answerCbQuery(); await showGate(ctx); } });
+  bot.action(/^adm:kg:(days|pct)$/, async (ctx) => {
+    if (!(await guard(ctx))) return;
+    await ctx.answerCbQuery();
+    const days = ctx.match[1] === 'days';
+    session.set(ctx.from.id, { step: days ? 'kpi_gate_days' : 'kpi_gate_pct' });
+    return ctx.reply(days ? '🗓 Oyiga necha kun vaqtida kelishi kerak? (1–31, masalan 25)' : '📋 Topshiriqlarning necha foizi muddatida bo\'lishi kerak? (0–100, masalan 90)', ui.cancelKeyboard());
+  });
+  // holat callback ichida — ikki marta bosilsa qaytib ketmaydi
+  bot.action(/^adm:hm:([01])$/, async (ctx) => {
+    if (!(await guard(ctx))) return;
+    const on = ctx.match[1] === '1';
+    await org.setHeadSeesMoney(on);
+    await ctx.answerCbQuery(on ? "✅ Bo'lim rahbarlari jamoasining KPI summasini ko'radi" : "🚫 Bo'lim rahbarlari KPI summasini ko'rmaydi (faqat ball va foizlar)", { show_alert: true });
+    await showPanel(ctx);
+  });
+  bot.action(/^adm:bat(?::([01]))?$/, async (ctx) => {
+    if (!(await guard(ctx))) return;
+    if (!ctx.match[1]) { await ctx.answerCbQuery('Eskirgan tugma'); return showPanel(ctx); }
+    const on = ctx.match[1] === '1';
+    await org.setBossSeesAttendance(on);
+    await ctx.answerCbQuery(on
+      ? "✅ Boshliq endi keldi / ketdi, kech qolaman, kelmayman xabarlarini va ertalabki / kun yakuni hisobotlarini oladi"
+      : "🚫 Boshliqqa keldi-ketdi va davomat xabarlari bormaydi — faqat bo'lim rahbarlari va HR ga", { show_alert: true });
+    await showPanel(ctx);
+  });
   bot.action('adm:overdue', async (ctx) => { if (await guard(ctx)) { await ctx.answerCbQuery(); await showOverdue(ctx); } });
   bot.action('adm:excuses', async (ctx) => { if (await guard(ctx)) { await ctx.answerCbQuery(); await showExcuses(ctx); } });
+  bot.action('sal:list', async (ctx) => { if (await guard(ctx)) { session.clear(ctx.from.id); await ctx.answerCbQuery(); await showSalaries(ctx); } });
+  bot.command('oyliklar', async (ctx) => { if (await guard(ctx)) await showSalaries(ctx); });
+  bot.action(/^sal:(s|f):(\d+)$/, async (ctx) => { if (await guard(ctx)) await askSalary(ctx, ctx.match[2], ctx.match[1] === 'f' ? 'fund' : 'salary'); });
   bot.action('adm:status', async (ctx) => { if (await guard(ctx)) { await ctx.answerCbQuery(); await showStatus(ctx); } });
   bot.action('adm:backup', async (ctx) => {
     if (!(await guard(ctx))) return;
@@ -495,7 +618,7 @@ const register = (bot) => {
     session.set(ctx.from.id, { step: 'awaiting_office_location', radius: off ? off.radius : office.DEFAULT_RADIUS });
     return ctx.reply(
       `📍 <b>Ofis joylashuvi</b>${off ? `\nHozir: ${off.lat.toFixed(5)}, ${off.lon.toFixed(5)} · radius ${geo.prettyDistance(off.radius)}` : '\nHali belgilanmagan.'}\n\n` +
-        `Ofisda turib «${ui.BTN.sendLocation}» tugmasini bosing — shu nuqta ofis bo'ladi.\nRadius: <code>/ofis_radius 300</code>`,
+        `Ofisda turib «${ui.BTN.sendLocation}» tugmasini bosing — shu nuqta ofis bo'ladi.\nRadius: <code>/ofis_radius 150</code>`,
       { parse_mode: 'HTML', ...ui.locationKeyboard() },
     );
   });
@@ -508,7 +631,7 @@ const register = (bot) => {
   bot.command('ofis_radius', async (ctx) => {
     if (!(await guard(ctx))) return;
     const r = Number(args(ctx));
-    if (!Number.isFinite(r) || r < 30 || r > 5000) return ctx.reply('Radius 30–5000 metr oralig\'ida: /ofis_radius 300');
+    if (!Number.isFinite(r) || r < 30 || r > 5000) return ctx.reply('Radius 30–5000 metr oralig\'ida: /ofis_radius 150');
     const off = await office.get();
     if (!off) return ctx.reply('Avval ofis joylashuvini belgilang: /ofis');
     await office.set(off.lat, off.lon, r);
@@ -632,8 +755,8 @@ const register = (bot) => {
     const cur = await tasks.byId(ctx.match[1]);
     if (!cur) return ctx.answerCbQuery('Topilmadi');
     const t = await flows.cancelTask(botOf(ctx), cur, null, ctx.from.id);
-    await ctx.answerCbQuery('Bekor qilindi');
-    return employeeTasks(ctx, t.employee_id);
+    await ctx.answerCbQuery(t ? 'Bekor qilindi' : 'Topshiriq ochiq emas — o\'zgarmadi');
+    return employeeTasks(ctx, cur.employee_id);
   });
   bot.action(/^emp:name:(\d+)$/, async (ctx) => { if (await guard(ctx)) { await ctx.answerCbQuery(); await askText(ctx, 'edit_name', ctx.match[1], '✏️ Yangi ism-familiya:'); } });
   bot.action(/^emp:pos:(\d+)$/, async (ctx) => { if (await guard(ctx)) { await ctx.answerCbQuery(); await askText(ctx, 'edit_position', ctx.match[1], '💼 Yangi lavozim:'); } });
@@ -659,27 +782,36 @@ const register = (bot) => {
     await ctx.answerCbQuery('Saqlandi');
     return employeeCard(ctx, ctx.match[1]);
   });
-  bot.action(/^emp:mode:(\d+)$/, async (ctx) => {
+  // almashtirish tugmalari: maqsad holat callback ichida; eski (holatsiz) tugma — faqat kartochkani yangilaydi
+  const stale = async (ctx, id) => { await ctx.answerCbQuery('Eskirgan tugma — kartochka yangilandi'); return employeeCard(ctx, id); };
+  bot.action(/^emp:mode:(\d+)(?::(office|field))?$/, async (ctx) => {
     if (!(await guard(ctx))) return;
     const e = await employees.byId(ctx.match[1]);
-    await employees.setWorkMode(e.id, employees.isField(e) ? 'office' : 'field');
+    if (!e) return ctx.answerCbQuery('Topilmadi');
+    if (!ctx.match[2]) return stale(ctx, e.id);
+    if ((employees.isField(e) ? 'field' : 'office') === ctx.match[2]) return stale(ctx, e.id);
+    await employees.setWorkMode(e.id, ctx.match[2]);
     await ctx.answerCbQuery('Saqlandi');
     await flows.modeNotice(botOf(ctx), await employees.byId(e.id));
     return employeeCard(ctx, e.id);
   });
-  bot.action(/^emp:hr:(\d+)$/, async (ctx) => {
+  bot.action(/^emp:hr:(\d+)(?::([01]))?$/, async (ctx) => {
     if (!(await guard(ctx))) return;
     const e = await employees.byId(ctx.match[1]);
-    const on = !Number(e.is_hr);
+    if (!e) return ctx.answerCbQuery('Topilmadi');
+    if (!ctx.match[2] || Number(Boolean(Number(e.is_hr))) === Number(ctx.match[2])) return stale(ctx, e.id);
+    const on = ctx.match[2] === '1';
     await employees.setHr(e.id, on);
     await ctx.answerCbQuery(on ? 'HR qilindi' : 'HR olib tashlandi');
     if (on) await flows.hrNotice(botOf(ctx), await employees.byId(e.id));
     return employeeCard(ctx, e.id);
   });
-  bot.action(/^emp:video:(\d+)$/, async (ctx) => {
+  bot.action(/^emp:video:(\d+)(?::([01]))?$/, async (ctx) => {
     if (!(await guard(ctx))) return;
     const e = await employees.byId(ctx.match[1]);
-    await employees.setVideoRequired(e.id, !Number(e.video_required));
+    if (!e) return ctx.answerCbQuery('Topilmadi');
+    if (!ctx.match[2] || Number(Boolean(Number(e.video_required))) === Number(ctx.match[2])) return stale(ctx, e.id);
+    await employees.setVideoRequired(e.id, ctx.match[2] === '1');
     await ctx.answerCbQuery('Saqlandi');
     return employeeCard(ctx, e.id);
   });
@@ -694,21 +826,28 @@ const register = (bot) => {
   bot.action(/^emp:start:(\d+)$/, async (ctx) => {
     if (await guard(ctx)) { await ctx.answerCbQuery(); await askText(ctx, 'edit_work_start', ctx.match[1], `🕘 Bu hodim uchun ish boshlanish vaqti (masalan <b>10:00</b>). Kechikish shu vaqt + ${config.lateGraceMinutes} daq dan hisoblanadi.\nUmumiy vaqtga (${worktime.get()}) qaytarish — <b>standart</b> deb yozing.`); }
   });
-  bot.action(/^emp:excuse:(\d+)$/, async (ctx) => { if (await guard(ctx)) { await ctx.answerCbQuery(); await askText(ctx, 'excuse_date', ctx.match[1], '📄 Qaysi kun sababli? Sanani yozing (masalan 15.09):'); } });
-  bot.action(/^emp:flex:(\d+)$/, async (ctx) => {
-    if (!(await guard(ctx))) return;
-    const e = await employees.byId(ctx.match[1]);
-    await employees.setFlexible(e.id, !employees.isFlexible(e));
-    await ctx.answerCbQuery();
-    return employeeCard(ctx, e.id);
+  bot.action(/^emp:end:(\d+)$/, async (ctx) => {
+    if (await guard(ctx)) { await ctx.answerCbQuery(); await askText(ctx, 'edit_work_end', ctx.match[1], `🏁 Bu hodim uchun ish tugash vaqti (masalan <b>19:00</b>). Undan oldin «Ketdim» bossa — «⚠️ erta ketdi» belgisi bilan rahbar va HR ga boradi.\nUmumiy vaqtga (${employees.workEndOf(null)}) qaytarish — <b>standart</b> deb yozing.`); }
   });
-  bot.action(/^emp:act:(\d+)$/, async (ctx) => {
+  bot.action(/^emp:excuse:(\d+)$/, async (ctx) => { if (await guard(ctx)) { await ctx.answerCbQuery(); await askText(ctx, 'excuse_date', ctx.match[1], '📄 Qaysi kun sababli? Sanani yozing (masalan 15.09):'); } });
+  bot.action(/^emp:flex:(\d+)(?::([01]))?$/, async (ctx) => {
     if (!(await guard(ctx))) return;
     const e = await employees.byId(ctx.match[1]);
     if (!e) return ctx.answerCbQuery('Topilmadi');
+    if (!ctx.match[2] || Number(employees.isFlexible(e)) === Number(ctx.match[2])) return stale(ctx, e.id);
+    await employees.setFlexible(e.id, ctx.match[2] === '1');
+    await ctx.answerCbQuery();
+    return employeeCard(ctx, e.id);
+  });
+  bot.action(/^emp:act:(\d+)(?::([01]))?$/, async (ctx) => {
+    if (!(await guard(ctx))) return;
+    const e = await employees.byId(ctx.match[1]);
+    if (!e) return ctx.answerCbQuery('Topilmadi');
+    // ikkinchi bosish ishdan ketgan hodimni qayta faollashtirmasin
+    if (!ctx.match[2] || Number(Boolean(Number(e.active))) === Number(ctx.match[2])) return stale(ctx, e.id);
     const block = e.active ? await adminLossBlock(ctx, e, { deactivate: true }) : null;
     if (block) return ctx.answerCbQuery(block, { show_alert: true });
-    await flows.setActive(botOf(ctx), e, !e.active);
+    await flows.setActive(botOf(ctx), e, ctx.match[2] === '1');
     await ctx.answerCbQuery(e.active ? 'Ishdan ketdi' : 'Faollashtirildi');
     return employeeCard(ctx, e.id);
   });
@@ -792,4 +931,4 @@ const register = (bot) => {
   });
 };
 
-module.exports = { register, showPanel, employeeCard, handleEmpText, handleDeptText, handleBranchText, handleWorktimeText, handleBossName, showOverdue };
+module.exports = { register, showPanel, employeeCard, handleEmpText, handleDeptText, handleBranchText, handleWorktimeText, handleBossName, showOverdue, handleGateText };

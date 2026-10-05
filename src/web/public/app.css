@@ -189,3 +189,15 @@ textarea.input { min-height: 96px; resize: vertical; }
 .banner p { margin: 0 0 10px; }
 .status-big { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 700; }
 .status-big .dot { width: 14px; height: 14px; margin: 0; }
+
+/* Savol-javob */
+.pick-row { display: flex; align-items: center; gap: 6px; padding-right: 10px; }
+.pick-row .pick { flex: 1; min-width: 0; }
+.pick-row + .pick-row { border-top: 1px solid var(--line); }
+.msgs { display: flex; flex-direction: column; gap: 8px; margin-bottom: var(--gap); }
+.msg { background: var(--card); border-radius: var(--radius); padding: 10px 12px; max-width: 88%; align-self: flex-start; }
+.msg.mine { align-self: flex-end; background: var(--soft); }
+.msg .who { color: var(--hint); font-size: 12px; margin-bottom: 3px; }
+.msg .txt { white-space: pre-wrap; word-break: break-word; }
+.msg .btns:empty { display: none; }
+.panel .msgs .msg { border: 1px solid var(--line); }

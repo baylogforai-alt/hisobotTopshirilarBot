@@ -149,3 +149,33 @@ sessiya `done_pick` (`donePicked`) → «✅ Davom etish» (`done:go`) → `done
 Tekshiruvchiga bitta xabar (rasm bilan): har bir ishga `rv:ok:<id>` / `rv:back:<id>` + «✅ Hammasini qabul qilish» (`rv:okm:1,2,3`, ≤64 bayt bo'lsa).
 Bittasi qabul qilinsa — xabar tugmalaridan o'sha qator olib tashlanadi (`dropReviewRow`). Bitta ish bosish (`done:<id>`) avvalgidek.
 `npm test` — 142/142 + 504/504. ✅ 5-okt deploy qilindi (commit 8d69628).
+
+## 9. 6-okt-2026: BAYOMA (2–5-okt, `cfdcb77..b439a7b`, 40 commit) yangiliklari ko'chirildi
+
+Foydalanuvchi: «BAYOMA botini ko'rib chiq, olish mumkin bo'lgan yaxshi narsalarni hammasini ol, deploy qil, tizimni buzma».
+Usul avvalgidek: har fayl `git merge-file` (ours / base `cfdcb77` / BAYOMA HEAD `b439a7b`), ~90 konflikt qo'lda. Zaxira: sessiya scratchpad `src-before-port2.tgz`.
+**Keyingi ko'chirish uchun base = `b439a7b`.** Taqdimot (`taqdimot/`) ko'chirilmadi.
+
+**Ko'chirilganlar:** ⏳ Faol · 🔁 Ko'rib chiqish · 🕓 Kutilmoqda · ✅ Bajarilgan — menyuda holat tugmalari (`handlers/status.js`, `sk:*`, /faol /kutilmoqda /bajarilgan /korib_chiqish);
+topshiriqqa **boshlanish soati** (muddatdan keyin `as:tm:`/`st:tm:`, cron `task-start` har daqiqa → «hozir bajaring»); izohsiz ovoz/video topshiriqqa qisqa mazmun;
+**«🏁 Ishdan ketdim» = joylashuv + izoh** (ofisdan tashqarida / agent uyiga yaqin — rad; erkin jadval — ⚠️), ish tugashidan oldin — «erta ketdi» (hodimga alohida `work_end`, kartochka «🏁 Ish tugashi»);
+**Keldimsiz «Bajardim» yo'q** (`flows.doneBlocked`, bir nechtasini birdaniga ham); tekshiruvda «📝 Kamchilik bor» — izoh **majburiy** + **tuzatish muddati** (`rv:fd:*`; muddat berilmasa eski muddat — o'tgan bo'lsa kechikkan);
+hodimga «👌 Xo'p, tushundim» / «💬 O'z javobim» (`tr:*`, `task_replies`); «💬 Savol-javob» chati (`/chat`, `qa:*` — menyuda tugmasi yo'q, BAYOMA'dagidek);
+topshiriqni o'chirish (bekor qilish) — faol yoki tekshiruvdagi, boshliq o'z missiyasini ham; bir nechta hodimga topshiriq (`am:*`, `handlers/picker.js`);
+HR boshliq/direktor topshiriqlarini ko'rmaydi (Panel «👁 HR boshliq topshiriqlarini», `hr_boss_tasks`; Excel ham — **BayLog davr/hafta Excellari ham** `{viewer}`);
+KPI sharti (gate rejimida): 25 kun / 90% — Panel «🚦 KPI sharti» (BayLog `KPI_MODE=score` — faqat ma'lumot); **joriy oy KPI si oy tugamay tasdiqlanmaydi** (`kpi.decideBlock`);
+dam olish kuni Keldim → `'extra'` holat (kechikish yo'q) + **«📅 Dam olish kuniga chaqirish»** (Panel `xc:*`, `extra_days`, summa oylikka); kechikishni sababli qilish (`lx:*`);
+sababli kunni **bo'lim rahbari va boshliq** hal qiladi (HR faqat ko'radi); /yordam video (`/yordam_video`); agent uy joylashuvi eslatmasi (cron `home-location`);
+ikki marta bosishdan himoya (`dedupeCallbacks`, almashtirish tugmalari `…:<0|1>`), guruhda buyruqlar yopiq (`groupGuard`), menyu tugmasi bosqichni tugatadi, bosqich 30 daqiqada eskiradi;
+xaritadan tanlangan joy (venue) rad; o'ziga vazifa yozganda rahbarga xabar **bormaydi** (`b439a7b`; arxivda baribir ko'rinadi); Rahbar KPI summasi ko'rinishi (`adm:hm`).
+
+**BayLog'da boshqacha qoldirilgan (config / qaror):** ish boshlanishi `WORK_START_HOUR` (9:00, BAYOMA 08:40), ofis radiusi 250 m (150 emas), agent 1 km, «Kech qolaman» 60 daq (20 emas),
+`OFFICE_CHECKIN_VIDEO=false`, `MONTH_START_REQUIRED=false`, `KPI_MODE=score`, `PROOF_REQUIRED=0`. **Yangi: `BOSS_SEES_ATTENDANCE` (standart `true`)** — BAYOMA'da boshliq
+keldi-ketdi/hisobotlarni standart olmaydi; BayLog'da adminlar faqat bazada (role=admin) — o'chirilsa ertalabki/kun yakuni hisoboti hech kimga bormas edi. Panel «👁 Boshliq keldi-ketdini» bilan o'zgaradi.
+`notify.seeAllIds({noBoss})` — boshliqlarsiz hech kim qolmasa, boshliqlarga baribir boradi. `DAILY_REPORT_HOUR` standarti = `WORK_END_HOUR` (BAYOMA 19).
+**📢 E'lon — BayLog'niki qoldi** (jadvallar boshqacha: `text/created_by/read_at`, «👁 O'qidim» `an:r:`), BAYOMA'dan **«🏢 Bo'limlarga»** qo'shildi (`an:dl` → `an:dt:<id|0>` → `an:dok`, «Bo'limsizlar» ham).
+Web App `/api/announce*` va `flows.sendAnnouncement/resendAnnouncement` BayLog xizmatiga ulandi. Kunlik hisobot, arxiv (kun daftarida endi Ketdim joyi/izohi, dam olish kuni), davr, Excel, CRM, intent — o'z joyida.
+
+**Testlar:** `npm test` — **144/144 + 770/770**, handler xatosi 0. Ikkalasi **Postgres'da ham** o'tdi: `SMOKE_DATABASE_URL=postgres://…/bo'sh_baza node scripts/smoke.js`
+(v1-migratsiya bo'limi Postgres'da o'tkazib yuboriladi; mahalliy PG 17 — `C:\Program Files\PostgreSQL\17\bin`, `initdb -A trust` scratchpad'da, port 55432).
+Postgres'da topilib tuzatilgan: `done:np` eskirgan tugmada `byId(undefined)` → NaN xatosi. Eski (HEAD `ebe91fc`) sxemali PG baza yangi kod bilan migratsiyadan keyin yangi bazaga **aynan teng** (ustunlar/indekslar).

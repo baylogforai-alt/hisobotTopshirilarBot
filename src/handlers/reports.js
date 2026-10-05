@@ -86,7 +86,7 @@ const empMonth = async (ctx, empId, month) => {
   const e = await employees.byId(empId);
   if (!e) return render(ctx, 'Hodim topilmadi.');
   if (!employees.canManage(ctx.state.employee, ctx.state.isAdmin, e)) return ctx.answerCbQuery('⛔️');
-  const text = await reports.buildMyReport(e, month);
+  const text = await reports.buildMyReport(e, month, ctx.state.actor);
   return render(ctx, text, monthNav(`rp:emp:${e.id}`, month, [[cb('📥 Excel', `rp:xlemp:${e.id}:${month}`), cb('🗂 Arxiv', `hr:emp:${e.id}`), cb('👤 Kartochka', `emp:${e.id}`)]]));
 };
 
@@ -114,13 +114,13 @@ const register = (bot) => {
     const e = await employees.byId(ctx.match[1]);
     if (!e || !employees.canManage(ctx.state.employee, ctx.state.isAdmin, e)) return ctx.answerCbQuery('⛔️');
     await ctx.answerCbQuery('Tayyorlanmoqda…');
-    const { buffer, filename } = await excel.buildEmployeeMonth(e, ctx.match[2]);
+    const { buffer, filename } = await excel.buildEmployeeMonth(e, ctx.match[2], { viewer: ctx.state.actor });
     await notify.docToUser(botOf(ctx), ctx.from.id, buffer, filename, `📥 <b>${esc(e.full_name)}</b> — ${time.monthName(ctx.match[2])}`);
   });
   bot.action('rp:xlday', async (ctx) => {
     if (!(await guard(ctx))) return;
     await ctx.answerCbQuery('Tayyorlanmoqda…');
-    const { buffer, filename } = await excel.buildDay();
+    const { buffer, filename } = await excel.buildDay(undefined, { viewer: ctx.state.actor });
     await notify.docToUser(botOf(ctx), ctx.from.id, buffer, filename, `📥 <b>${time.prettyDate(time.today())}</b> — davomat, topshiriqlar, kunlik hisobotlar`);
   });
 };
