@@ -534,6 +534,34 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await send(msg(1000, '⚙️ Panel'));
   ok("Panelda «📢 E'lon yuborish»", Boolean(findCb(1000, /^an:start$/)));
 
+  // =========================================================================
+  console.log("\n— Bajardim: bir nechtasini birdaniga —");
+  for (const ttl of ['Ombor qoldig\'i', 'Yuk xatlarini tekshirish', 'Mijozga qo\'ng\'iroq']) await send(msg(99999, `/bugun ${ttl}`));
+  const mOpen = (await tasks.openFor(akbar.id)).filter((x) => ["Ombor qoldig'i", 'Yuk xatlarini tekshirish', "Mijozga qo'ng'iroq"].includes(x.title));
+  ok('3 ta yangi ish', mOpen.length === 3);
+  await send(msg(99999, '✔️ Bajardim'));
+  ok('«Bir nechtasini birdaniga» tugmasi', Boolean(findCb(99999, /^done:multi$/)));
+  await send(cbq(99999, 'done:multi'));
+  await send(cbq(99999, `done:t:${mOpen[0].id}`));
+  await send(cbq(99999, `done:t:${mOpen[1].id}`));
+  await send(cbq(99999, `done:t:${mOpen[2].id}`));
+  await send(cbq(99999, `done:t:${mOpen[2].id}`));
+  ok('2 tasi belgilandi (3-si qayta bosib olindi)', session.get(99999).donePicked.length === 2 && lastText(99999).includes('Tanlangan: <b>2 ta</b>'));
+  await send(cbq(99999, 'done:go'));
+  ok('isbot so\'raldi (2 ta ish)', session.get(99999).step === 'done_proof' && lastText(99999).includes('2 ta ish'));
+  mark = sent.length;
+  await send(photo(99999, 'Ikkalasi tayyor'));
+  const mt0 = await tasks.byId(mOpen[0].id); const mt1 = await tasks.byId(mOpen[1].id); const mt2 = await tasks.byId(mOpen[2].id);
+  ok('ikkalasi done + bitta isbot, 3-si ochiq', mt0.status === 'done' && mt1.status === 'done' && mt0.proof_file_id === 'BIG_FILE_ID' && mt1.proof_note === 'Ikkalasi tayyor' && mt2.status === 'active');
+  const rvMsg = sent.slice(mark).find((s) => s.method === 'sendPhoto' && Number(s.payload.chat_id) === 20001);
+  ok('boshliqqa bitta rasm + har biriga tugma + «Hammasini qabul»', Boolean(rvMsg) && JSON.stringify(rvMsg.payload.reply_markup).includes(`rv:ok:${mt0.id}`) &&
+    JSON.stringify(rvMsg.payload.reply_markup).includes(`rv:okm:${mt0.id},${mt1.id}`));
+  ok('guruhga «2 ta ish bajarildi»', allText(GROUP, mark).includes('2 ta ish bajarildi'));
+  await send(cbq(20001, `rv:ok:${mt0.id}`, { message_id: 7, chat: { id: 20001, type: 'private' }, photo: [{ file_id: 'x' }], caption: 'c', date: 0, reply_markup: rvMsg.payload.reply_markup }));
+  ok('bittasi qabul — ikkinchisi hali tekshiruvda', (await tasks.byId(mt0.id)).status === 'accepted' && (await tasks.byId(mt1.id)).status === 'done');
+  await send(cbq(20001, `rv:okm:${mt0.id},${mt1.id}`, { message_id: 7, chat: { id: 20001, type: 'private' }, photo: [{ file_id: 'x' }], caption: 'c', date: 0 }));
+  ok('«Hammasini qabul» — qolgani ham qabul', (await tasks.byId(mt1.id)).status === 'accepted');
+
   await sleep(50);
   await db.close();
   console.log(`\n${failed ? '❌' : '🎉'} ${passed} o'tdi, ${failed} yiqildi · handler xatolari: ${errors.length}`);

@@ -133,8 +133,28 @@ const taskList = (list, opts) => (list.length ? list.map((t, i) => taskLine(t, i
 const doneKeyboard = (open) =>
   inline([
     ...open.map((t, i) => [cb(`☐ ${i + 1}. ${t.due_date < time.today() ? '🔴 ' : ''}${t.title.slice(0, 40)}`, `done:${t.id}`)]),
+    ...(open.length > 1 ? [[cb('☑️ Bir nechtasini birdaniga belgilash', 'done:multi')]] : []),
     [cb('🔄 Yangilash', 'done:list')],
   ]);
+
+/** «Bir nechtasini birdaniga» — belgilash (☑️/☐) + «Davom etish» */
+const doneMultiKeyboard = (open, picked) => {
+  const set = new Set(picked.map(Number));
+  return inline([
+    ...open.map((t, i) => [cb(`${set.has(Number(t.id)) ? '☑️' : '☐'} ${i + 1}. ${t.due_date < time.today() ? '🔴 ' : ''}${t.title.slice(0, 38)}`, `done:t:${t.id}`)]),
+    [cb(set.size === open.length ? '☐ Hammasini olib tashlash' : '☑️ Hammasini belgilash', 'done:all')],
+    [cb(`✅ Davom etish (${set.size} ta)`, 'done:go')],
+    [cb('⬅️ Orqaga', 'done:list')],
+  ]);
+};
+
+/** Tekshiruvchi uchun: bir nechta ish bitta xabarda — har biriga qabul / qaytarish (+ hammasini qabul) */
+const reviewMultiKeyboard = (list) => {
+  const rows = list.map((t, i) => [cb(`✅ ${i + 1}. ${t.title.slice(0, 28)}`, `rv:ok:${t.id}`), cb(`↩️ ${i + 1}`, `rv:back:${t.id}`)]);
+  const all = `rv:okm:${list.map((t) => t.id).join(',')}`;
+  if (list.length > 1 && all.length <= 64) rows.push([cb('✅ Hammasini qabul qilish', all)]);
+  return inline(rows);
+};
 
 /**
  * "Bajardim" oynasi matni — checklist ko'rinishida: bugun bajarilganlar ✅ (chizilgan),
@@ -227,7 +247,7 @@ const roleIcon = (role) => (role === 'admin' ? '👑' : role === 'head' ? '🎖'
 
 module.exports = {
   esc, BTN, LINE, mainKeyboard, kbFor, kbForEmp, urlButton, locationKeyboard, skipKeyboard, cancelKeyboard, cb, inline, dueKeyboard,
-  PRIO_ICON, SOURCE_LABEL, MEDIA_ICON, MEDIA_LABEL, ackRows, taskLine, taskList, doneKeyboard, doneChecklist, proofKeyboard, reviewKeyboard, excuseKeyboard,
+  PRIO_ICON, SOURCE_LABEL, MEDIA_ICON, MEDIA_LABEL, ackRows, taskLine, taskList, doneKeyboard, doneMultiKeyboard, doneChecklist, proofKeyboard, reviewKeyboard, reviewMultiKeyboard, excuseKeyboard,
   intentKeyboard, dailyReviewKeyboard, joinKeyboard, manageKeyboard, taskMenuKeyboard, confirmKeyboard, panelKeyboard,
   backKeyboard, scoreKeyboard, pctBar, roleIcon,
 };

@@ -328,6 +328,7 @@ const pickDone = async (ctx, id) => {
 const finishDone = async (ctx, proof) => {
   const s = session.get(ctx.from.id);
   const emp = ctx.state.employee;
+  if (s.doneTaskIds && emp) return finishDoneMany(ctx, proof, s.doneTaskIds);
   if (!s.doneTaskId || !emp) return;
   if (tasks.isBossOwn(emp, await tasks.byId(s.doneTaskId))) {
     const own = await tasks.completeOwn(s.doneTaskId, emp, proof);
@@ -363,6 +364,118 @@ const finishDone = async (ctx, proof) => {
   );
   if (proof && proof.fileId) {
     await notify.toArchive(botOf(ctx), `✔️ <b>${esc(emp.full_name)}</b> bajardi: ${esc(t.title)} · ${time.clock(t.done_at)}${proof.note ? `\n💬 «${esc(proof.note)}»` : ''}`, proof);
+  }
+};
+
+// --- Bir nechtasini birdaniga (done:multi → done:t:<id> → done:go → bitta isbot hammasiga) ---
+
+const showDoneMulti = async (ctx, picked = []) => {
+  if (!mustEmployee(ctx)) return;
+  const open = await tasks.openFor(ctx.state.employee.id);
+  if (!open.length) return showDone(ctx);
+  const ids = new Set(open.map((t) => Number(t.id)));
+  const keep = picked.map(Number).filter((id) => ids.has(id));
+  session.set(ctx.from.id, { step: 'done_pick', donePicked: keep });
+  const chosen = open.filter((t) => keep.includes(Number(t.id)));
+  return render(
+    ctx,
+    `☑️ <b>Bajarganlaringizni belgilang</b>\n<i>Bir nechtasini tanlab, «✅ Davom etish» ni bosing — bitta isbot (rasm, video, fayl…) hammasiga biriktiriladi.</i>\n\n` +
+      `Tanlangan: <b>${chosen.length} ta</b>${chosen.length ? `\n${chosen.map((t) => `☑️ ${esc(t.title)}`).join('\n')}` : ''}`,
+    ui.doneMultiKeyboard(open, keep),
+  );
+};
+
+const toggleDonePick = async (ctx, id) => {
+  const s = session.get(ctx.from.id);
+  const picked = (s.step === 'done_pick' && s.donePicked) || [];
+  const n = Number(id);
+  await ctx.answerCbQuery();
+  return showDoneMulti(ctx, picked.includes(n) ? picked.filter((x) => x !== n) : [...picked, n]);
+};
+
+const toggleDoneAll = async (ctx) => {
+  const s = session.get(ctx.from.id);
+  const picked = (s.step === 'done_pick' && s.donePicked) || [];
+  const open = await tasks.openFor(ctx.state.employee.id);
+  await ctx.answerCbQuery();
+  return showDoneMulti(ctx, picked.length === open.length ? [] : open.map((t) => Number(t.id)));
+};
+
+const allBossOwn = async (emp, ids) => {
+  for (const id of ids) if (!tasks.isBossOwn(emp, await tasks.byId(id))) return false;
+  return true;
+};
+
+const goDoneMulti = async (ctx) => {
+  const s = session.get(ctx.from.id);
+  const emp = ctx.state.employee;
+  if (s.step !== 'done_pick' || !emp) return ctx.answerCbQuery('Eskirgan tugma');
+  const list = [];
+  for (const id of s.donePicked || []) {
+    const t = await tasks.byId(id);
+    if (t && Number(t.employee_id) === Number(emp.id) && t.status === 'active') list.push(t);
+  }
+  if (!list.length) return ctx.answerCbQuery('Avval kamida bittasini belgilang ☑️', { show_alert: true });
+  if (list.length === 1) return pickDone(ctx, list[0].id);
+  session.set(ctx.from.id, { step: 'done_proof', doneTaskIds: list.map((t) => Number(t.id)) });
+  await ctx.answerCbQuery();
+  const head = `📎 <b>${list.length} ta ish:</b>\n${list.map((t, i) => `${i + 1}. ${esc(t.title)}`).join('\n')}\n\n`;
+  if (await allBossOwn(emp, list.map((t) => t.id))) {
+    return render(ctx, `${head}Isbot <b>ixtiyoriy</b>: xohlasangiz 🖼 rasm, 🎥 video, 🎙 audio yoki 📄 fayl yuboring — yoki «✅ Isbotsiz bajardim» ni bosing.`, ui.proofKeyboard({ noProof: true }));
+  }
+  if (!config.proofRequired) {
+    return render(ctx, `${head}Bitta isbot hammasiga biriktiriladi: 🖼 rasm, 🎥 video, 🎙 audio yoki 📄 fayl yuboring — izohni ostiga yozsangiz bo'ladi.\nIsbot bo'lmasa — «⏭ Isbotsiz yuborish».`, ui.proofKeyboard({ optional: true }));
+  }
+  return render(ctx, `${head}<b>Isbot majburiy:</b> 🖼 rasm, 🎥 video, 🎙 audio yoki 📄 fayl yuboring — bitta isbot hammasiga biriktiriladi.`, ui.proofKeyboard());
+};
+
+const finishDoneMany = async (ctx, proof, ids) => {
+  const emp = ctx.state.employee;
+  session.clear(ctx.from.id);
+  const own = [];
+  const sent = [];
+  for (const id of ids) {
+    const cur = await tasks.byId(id);
+    if (!cur) continue;
+    if (tasks.isBossOwn(emp, cur)) {
+      const r = await tasks.completeOwn(id, emp, proof);
+      if (r.ok) own.push(r.task);
+    } else {
+      const r = await tasks.markDone(id, emp.id, proof);
+      if (r.ok) sent.push(r.task);
+    }
+  }
+  if (!own.length && !sent.length) return ctx.reply('Tanlangan topshiriqlar ochiq emas.', ui.kbFor(ctx));
+  const left = (await tasks.openFor(emp.id)).length;
+  const isLate = (t) => String(t.done_at).slice(0, 10) > t.due_date;
+  for (const t of sent) activity.mark(ctx, 'task_done', { title: t.title, detail: `birga ${ids.length} ta · ${left ? `yana ${left} ta qoldi` : 'barcha ishlar tugadi'}${proof ? ' · isbot bilan' : ''}` });
+  const lines = [
+    ...own.map((t) => `✅ ${esc(t.title)}`),
+    ...sent.map((t) => `🕓 ${esc(t.title)}${isLate(t) ? ' 🔴 <i>kech</i>' : ''}`),
+  ];
+  const text = `✅ <b>${own.length + sent.length} ta ish belgilandi</b>${proof ? ' (isbot bilan)' : ''}:\n${lines.join('\n')}` +
+    (sent.length ? '\n\n<i>🕓 — tekshiruvga yuborildi.</i>' : '') +
+    `\n<i>${left ? `Qolgan: ${left} ta` : '🎉 Ochiq missiya qolmadi!'}</i>`;
+  if (ctx.updateType === 'callback_query') await render(ctx, text); else await ctx.reply(text, { parse_mode: 'HTML' });
+  await ctx.reply('👌', ui.kbFor(ctx));
+  const all = [...own, ...sent];
+  if (config.announceDone && sent.length) {
+    await notify.toGroup(botOf(ctx), `✅ ${reports.mentionHtml(emp)} — ${sent.length} ta ish bajarildi:\n${sent.map((t) => `• <b>${esc(t.title)}</b>`).join('\n')}\n<i>${left ? `Qolgan missiyalar: ${left} ta` : '🎉 Barcha missiyalar bajarildi!'}</i>`);
+  }
+  if (sent.length) {
+    await notify.toReviewers(
+      botOf(ctx), emp,
+      `🕓 <b>${esc(emp.full_name)}</b> ${sent.length} ta ishni bajardi:\n` +
+        sent.map((t, i) => `${i + 1}. <b>${esc(t.title)}</b> · ⏱ ${time.prettyDate(t.due_date)}${isLate(t) ? ' 🔴 <i>kech</i>' : ' ✅'}${t.source === 'self' ? " <i>(o'zi yozgan)</i>" : ''}`).join('\n') +
+        `\n🕒 ${time.clock(sent[0].done_at)}` +
+        (proof && proof.note ? `\n💬 «${esc(proof.note)}»` : '') +
+        `\n\nQabul qilasizmi?`,
+      sent.length === 1 ? ui.reviewKeyboard(sent[0].id) : ui.reviewMultiKeyboard(sent),
+      proof && proof.fileId ? proof : null,
+    );
+  }
+  if (proof && proof.fileId) {
+    await notify.toArchive(botOf(ctx), `✔️ <b>${esc(emp.full_name)}</b> bajardi (${all.length} ta):\n${all.map((t) => `• ${esc(t.title)}`).join('\n')}\n🕒 ${time.clock(all[0].done_at)}${proof.note ? `\n💬 «${esc(proof.note)}»` : ''}`, proof);
   }
 };
 
@@ -442,6 +555,43 @@ const editAny = async (ctx, text) => {
   } catch { return ctx.reply(text, { parse_mode: 'HTML' }); }
 };
 
+/** Bir nechta ishli xabar: qabul qilingan ish qatorini tugmalardan olib tashlaydi. true — xabarda boshqa ishlar hali bor */
+const dropReviewRow = async (ctx, id, label) => {
+  const msg = ctx.callbackQuery && ctx.callbackQuery.message;
+  const kb = msg && msg.reply_markup && msg.reply_markup.inline_keyboard;
+  if (!kb) return false;
+  const others = kb.flat().filter((b) => /^rv:ok:\d+$/.test(b.callback_data || '') && b.callback_data !== `rv:ok:${id}`);
+  const rest = [];
+  for (const b of others) {
+    const t = await tasks.byId(b.callback_data.split(':')[2]);
+    if (t && t.status === 'done') rest.push(t);
+  }
+  if (!rest.length) return false;
+  try { await ctx.editMessageReplyMarkup((rest.length === 1 ? ui.reviewKeyboard(rest[0].id) : ui.reviewMultiKeyboard(rest)).reply_markup); } catch { /* eskirgan xabar */ }
+  await ctx.reply(`✅ <b>Qabul qilindi</b> — ${esc(label)}`, { parse_mode: 'HTML' }).catch(() => {});
+  return true;
+};
+
+/** «Hammasini qabul qilish» (rv:okm:1,2,3) */
+const doAcceptMany = async (ctx, idsStr) => {
+  const ids = idsStr.split(',').map(Number).filter(Boolean);
+  const done = [];
+  for (const id of ids) {
+    const t = await tasks.byId(id);
+    if (!t || t.status !== 'done') continue;
+    const emp = await employees.byId(t.employee_id);
+    if (!access.canReview(ctx.state.actor, emp)) return ctx.answerCbQuery("⛔️ Ruxsat yo'q");
+    const res = await flows.acceptTask(botOf(ctx), id, ctx.from.id);
+    if (!res.ok) continue;
+    activity.mark(ctx, 'review_ok', { title: t.title, detail: emp.full_name });
+    done.push({ t, emp, onTime: res.onTime });
+  }
+  if (!done.length) return ctx.answerCbQuery("Bu ishlar allaqachon ko'rib chiqilgan.");
+  await ctx.answerCbQuery(`Qabul qilindi ✅ (${done.length} ta)`);
+  await editAny(ctx, `✅ <b>Qabul qilindi (${done.length} ta)</b> — ${esc(done[0].emp.full_name)}:\n` +
+    done.map((d) => `• ${esc(d.t.title)}${d.onTime ? '' : ' <i>(muddatdan kech)</i>'}`).join('\n'));
+};
+
 const doAccept = async (ctx, id) => {
   const g = await reviewGuard(ctx, id);
   if (!g) return;
@@ -449,6 +599,7 @@ const doAccept = async (ctx, id) => {
   if (!res.ok) return ctx.answerCbQuery("Bu ish allaqachon ko'rib chiqilgan.");
   activity.mark(ctx, 'review_ok', { title: g.t.title, detail: g.emp.full_name });
   await ctx.answerCbQuery('Qabul qilindi ✅');
+  if (await dropReviewRow(ctx, id, `${g.emp.full_name}: ${g.t.title}`)) return;
   await editAny(ctx, `✅ <b>Qabul qilindi</b> — ${esc(g.emp.full_name)}: ${esc(g.t.title)}${res.onTime ? '' : ' <i>(muddatdan kech)</i>'}`);
 };
 
@@ -659,7 +810,8 @@ const register = (bot) => {
   bot.action('done:np', async (ctx) => {
     const s = session.get(ctx.from.id);
     const emp = ctx.state.employee;
-    if (s.step !== 'done_proof' || !tasks.isBossOwn(emp, await tasks.byId(s.doneTaskId))) return ctx.answerCbQuery('📎 Isbot majburiy: rasm, video, audio yoki fayl yuboring', { show_alert: true });
+    const own = s.doneTaskIds ? await allBossOwn(emp, s.doneTaskIds) : tasks.isBossOwn(emp, await tasks.byId(s.doneTaskId));
+    if (s.step !== 'done_proof' || !own) return ctx.answerCbQuery('📎 Isbot majburiy: rasm, video, audio yoki fayl yuboring', { show_alert: true });
     await ctx.answerCbQuery();
     await finishDone(ctx, null);
   });
@@ -671,6 +823,10 @@ const register = (bot) => {
     return finishDone(ctx, null);
   });
   bot.action('done:cancel', async (ctx) => { session.clear(ctx.from.id); await ctx.answerCbQuery(); await showDone(ctx); });
+  bot.action('done:multi', async (ctx) => { if (!ctx.state.employee) return ctx.answerCbQuery('⛔️'); await ctx.answerCbQuery(); await showDoneMulti(ctx); });
+  bot.action(/^done:t:(\d+)$/, (ctx) => (ctx.state.employee ? toggleDonePick(ctx, ctx.match[1]) : ctx.answerCbQuery('⛔️')));
+  bot.action('done:all', (ctx) => (ctx.state.employee ? toggleDoneAll(ctx) : ctx.answerCbQuery('⛔️')));
+  bot.action('done:go', goDoneMulti);
   bot.on(['photo', 'video', 'video_note', 'voice', 'audio', 'document'], onMedia);
 
   // tekshiruv
@@ -679,6 +835,7 @@ const register = (bot) => {
   bot.action('rv:list', async (ctx) => { await ctx.answerCbQuery(); await showReview(ctx); });
   bot.action(/^rv:view:(\d+)$/, (ctx) => viewReview(ctx, ctx.match[1]));
   bot.action(/^rv:ok:(\d+)$/, (ctx) => doAccept(ctx, ctx.match[1]));
+  bot.action(/^rv:okm:([\d,]+)$/, (ctx) => doAcceptMany(ctx, ctx.match[1]));
   bot.action(/^rv:back:(\d+)$/, (ctx) => startReturn(ctx, ctx.match[1]));
 };
 

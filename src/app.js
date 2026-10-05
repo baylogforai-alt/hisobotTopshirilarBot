@@ -135,7 +135,7 @@ const createBot = () => {
     }
     if (s.step === 'awaiting_checkin_video') return ctx.reply(`🎥 Video yuboring (oddiy yoki dumaloq) yoki «${ui.BTN.cancel}».`, ui.cancelKeyboard());
     if (s.step === 'visit_proof') return ctx.reply(`🎥 Video yoki 🎙 audio yuboring (izohni video ostiga yozing) yoki «${ui.BTN.cancel}».`, ui.cancelKeyboard());
-    if (s.step === 'worktime_confirm' || s.step === 'announce_confirm' || s.step === 'announce_pick') return ctx.reply('⬆️ Yuqoridagi tugmalardan tanlang.');
+    if (s.step === 'worktime_confirm' || s.step === 'announce_confirm' || s.step === 'announce_pick' || s.step === 'done_pick') return ctx.reply('⬆️ Yuqoridagi tugmalardan tanlang.');
     if (['self_task_due', 'assign_due', 'add_dept', 'add_role', 'add_confirm', 'assign_pick'].includes(s.step)) {
       return ctx.reply('⬆️ Yuqoridagi tugmalardan tanlang (yoki /menu).');
     }
