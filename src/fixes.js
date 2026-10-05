@@ -16,6 +16,9 @@ const FIXES = [
   { id: 'direktor-admin-20260923', action: 'admin', match: (e) => /direktor|director/i.test(`${e.full_name} ${e.position || ''}`) },
   // 2-okt-2026: Odilxon (asoschi) — eng katta boshliq; bazada oldin hodim bo'lib qo'shilgan bo'lsa ham admin bo'lsin, xabarlardagi boshliq ismi
   { id: 'odilxon-boss-20261002', action: 'boss', match: (e) => Number(e.tg_id) === 8726834955 },
+  // 5-okt-2026: Odilxon — BayLog boshlig'i (lavozim «Boshliq», xabarlardagi boshliq ismi qayta o'rnatiladi); Jaxongir aka — CEO
+  { id: 'odilxon-boshliq-20261005', action: 'boss', position: 'Boshliq', match: (e) => Number(e.tg_id) === 8726834955 },
+  { id: 'jaxongir-ceo-20261005', action: 'position', position: 'CEO', match: (e) => /ja[xh]ong[iy]r/i.test(e.full_name) },
 ];
 
 const run = async () => {
@@ -33,7 +36,9 @@ const run = async () => {
     if (f.action === 'boss') {
       await employees.setRole(e.id, 'admin');
       await require('./services/org').setBossName(e.full_name);
+      if (f.position) await employees.setPosition(e.id, f.position);
     }
+    if (f.action === 'position') await employees.setPosition(e.id, f.position);
     await db.setSetting(`fix:${f.id}`, `${e.id} ${e.full_name}`);
     console.log(`[fix] ${f.id}: ${e.full_name} (${e.tg_id}) → ${f.action}`);
   }

@@ -9,8 +9,8 @@
  * `npm run seed` esa hammasini ro'yxatdagi holatga majburan tenglashtiradi.
  */
 const HODIMLAR = [
-  // 2-okt-2026: Odilxon — kompaniya asoschisi, eng katta boshliq (role=admin → davomat/KPI yo'q, hamma huquq)
-  { tgId: 8726834955, fullName: 'Odilxon', position: 'Asoschi', role: 'admin' },
+  // Odilxon — kompaniya asoschisi, BayLog boshlig'i (role=admin → davomat/KPI yo'q, hamma huquq). Jaxongir aka (CEO) — bazada, fixes.js
+  { tgId: 8726834955, fullName: 'Odilxon', position: 'Boshliq', role: 'admin' },
   { tgId: 8254184544, fullName: 'Samandar', position: 'Sotuv menejeri' },
   { tgId: 5934117099, fullName: 'Akbarali', position: 'Marketolog' },
   { tgId: 7963610051, fullName: 'Durdona', position: 'Operator' },
