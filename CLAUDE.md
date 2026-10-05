@@ -148,4 +148,4 @@ Web App yoqish uchun Railway'da `WEBAPP_URL=https://missiya-bot-production.up.ra
 sessiya `done_pick` (`donePicked`) → «✅ Davom etish» (`done:go`) → `done_proof` (`doneTaskIds`) → **bitta isbot hammasiga** (`finishDoneMany`).
 Tekshiruvchiga bitta xabar (rasm bilan): har bir ishga `rv:ok:<id>` / `rv:back:<id>` + «✅ Hammasini qabul qilish» (`rv:okm:1,2,3`, ≤64 bayt bo'lsa).
 Bittasi qabul qilinsa — xabar tugmalaridan o'sha qator olib tashlanadi (`dropReviewRow`). Bitta ish bosish (`done:<id>`) avvalgidek.
-`npm test` — 142/142 + 504/504. ⬜ Commit/deploy qilinmagan.
+`npm test` — 142/142 + 504/504. ✅ 5-okt deploy qilindi (commit 8d69628).
