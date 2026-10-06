@@ -26,7 +26,7 @@ const COMMANDS = [
   { command: 'kelmayman', description: 'Bugun kelmayman (sabab)' },
   { command: 'tashrif', description: 'Hududga keldim (agentlar)' },
   { command: 'oylik', description: 'Oylik va KPI' },
-  { command: 'kalkulyator', description: 'KPI kalkulyator (agar … bo'lsa, qancha?)' },
+  { command: 'kalkulyator', description: "KPI kalkulyator (agar … bo'lsa, qancha?)" },
   { command: 'eslatma', description: 'Eslatma vaqtlari' },
   { command: 'hisobot', description: 'Mening oylik hisobotim' },
   { command: 'excel', description: 'Hisobotimni Excel qilib olish' },
