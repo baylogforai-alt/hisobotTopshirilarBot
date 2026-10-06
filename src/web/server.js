@@ -15,6 +15,7 @@ const api = require('./api');
  *   GET  /, /health      — platforma (Railway) tekshiruvi
  *   GET  /crm/snapshot   — BAYLOG CRM uchun bugungi hisobot (x-crm-secret, CRM_API_SECRET bo'lsa) — health.js
  *   GET  /crm/kpi?month= — CRM uchun oylik KPI (o'sha kalit; bazaga yozmaydi) — health.js + services/crmKpi.js
+ *   POST /crm/kpi/set    — CRM'dan KPI summasi / oklad / boshliq bahosi (o'sha kalit) — crmKpi.setFromCrm
  *   GET  /app            — ilova (index.html, app.css, app.js — faqat ro'yxatdagi fayllar, yo'l bilan o'qilmaydi)
  *   *    /api/...        — Authorization: tma <initData>  (imzo + muddat + whitelist har so'rovda)
  * Xavfsizlik: qat'iy CSP, nosniff, frame-ancestors (faqat Telegram), JSON-only body (32 KB), so'rovlar limiti,

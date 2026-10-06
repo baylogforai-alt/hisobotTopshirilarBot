@@ -211,3 +211,14 @@ Zaxira (deploy oldi): `..\missiya-bot-zaxiralar\missiya-20261006-1342-deploy-old
 ⚠️ **6-okt 13:43 — bot ~1 daqiqa yiqildi**: `src/index.js` 29-qator `setMyCommands` matnida qochirilmagan apostrof
 (`'... bo'lsa ...'` → SyntaxError, CRASHED). `npm test` buni USHLAMAYDI — smoke `index.js` ni yuklamaydi. Tuzatildi (`0a96828`).
 **Deploydan oldin DOIM:** `for f in $(git ls-files 'src/*.js' 'src/**/*.js'); do node --check "$f" || echo XATO $f; done`.
+
+## 12. 6-okt-2026: CRM'dan KPI sozlash — `POST /crm/kpi/set` (⬜ commit qilingan, PUSH/DEPLOY QILINMAGAN)
+
+Direktor qarori: KPI summasi CRM'da kiritiladi va botga yoziladi; natijada oklad + KPI = jami oylik; CRM'da AI maslahat.
+`crmKpi.setFromCrm(body)` — `{employeeId, month, bonusFund?, salary?, headScore?, customPct?, note?, by?}`: bot o'z funksiyalari
+bilan yozadi — `employees.setBonusFund/setSalary` (kartochka standarti, qulfdan qat'i nazar) + shu oy qatori
+(`kpi.compute` oklad snapshot, `kpi.setBonusFund/setHeadScore/setCustomPct` — faqat draft). Tasdiqlangan/chiqarilgan oy — `locked`.
+Xatolar: `not_found` (faol emas), `bad_amount`, `bad_score` (1–10 butun), `bad_pct`, `future_month`. Log: `[crm] KPI sozlandi: ...`.
+`health.handleCrm`: POST faqat `/crm/kpi/set` (JSON ≤ 10 KB), qolganlari GET. `/crm/kpi` javobiga `mode`, `kpi.salary`,
+`kpi.weights`, `defaults {bonusFund, salary}` qo'shildi. Ruxsat CRM'da: faqat bosh direktor (mainOwner).
+Smoke: +5 («CRM KPI set: ...», tasdiqlangan oy qulfi). `npm test` — 166/166 + 771/771. Deploydan oldin `node --check` (10-bo'lim ostidagi qoida).

@@ -488,7 +488,34 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     JSON.stringify(mkA || mk.rows[0] || null).slice(0, 300));
   const mkBad = await require('../src/services/crmKpi').monthKpi('xato');
   ok('CRM KPI: noto\'g\'ri oy → joriy oy', mkBad.month === time.month());
-  const st7 = await period.employeeStats(akbar, time.addDays(bugun, -6), bugun);
+  ok('CRM KPI: oklad, vaznlar, rejim', mk.mode && mkA.kpi.weights && mkA.kpi.weights.tasks > 0 && 'salary' in mkA.kpi && mkA.defaults);
+  // CRM'dan sozlash (/crm/kpi/set) — summa, oklad, boshliq bahosi; KPI summasi = summa × ball / 100 (score)
+  const crmKpi = require('../src/services/crmKpi');
+  const setR = await crmKpi.setFromCrm({ employeeId: akbar.id, month: time.month(), bonusFund: 1000000, salary: 5000000, headScore: 8, by: 'smoke' });
+  const akbarNow = await employees.byId(akbar.id);
+  ok('CRM KPI set: summa/oklad/baho yozildi, kartochka ham',
+    setR.ok && !setR.locked && setR.row.bonusFund === 1000000 && setR.row.salary === 5000000 && setR.row.headScore === 8
+      && Number(akbarNow.bonus_fund) === 1000000 && Number(akbarNow.salary) === 5000000,
+    JSON.stringify(setR).slice(0, 300));
+  ok('CRM KPI set: KPI summasi foizga ko\'ra',
+    require('../src/config').kpiMode !== 'score' || setR.row.bonusAmount === Math.round((1000000 * setR.row.total) / 100), JSON.stringify(setR.row));
+  ok('CRM KPI set: noto\'g\'ri baho / summa / hodim / kelajak oy — rad',
+    (await crmKpi.setFromCrm({ employeeId: akbar.id, headScore: 11 })).error === 'bad_score'
+      && (await crmKpi.setFromCrm({ employeeId: akbar.id, bonusFund: -5 })).error === 'bad_amount'
+      && (await crmKpi.setFromCrm({ employeeId: 987654, bonusFund: 1 })).error === 'not_found'
+      && (await crmKpi.setFromCrm({ employeeId: akbar.id, month: time.shiftMonth(time.month(), 1), bonusFund: 1 })).error === 'future_month');
+  const prevM = time.prevMonth();
+  await require('../src/services/kpi').compute(akbarNow, prevM);
+  await require('../src/db').query("UPDATE kpi_monthly SET status = 'confirmed' WHERE employee_id = $1 AND month = $2", [akbar.id, prevM]);
+  const before = await require('../src/services/kpi').get(akbar.id, prevM);
+  const lockR = await crmKpi.setFromCrm({ employeeId: akbar.id, month: prevM, headScore: 3, bonusFund: 777 });
+  const after = await require('../src/services/kpi').get(akbar.id, prevM);
+  ok('CRM KPI set: tasdiqlangan oy qulf (oy qatori o\'zgarmaydi, kartochka saqlanadi)',
+    lockR.ok && lockR.locked && after.head_score === before.head_score && Number(after.bonus_fund) === Number(before.bonus_fund)
+      && Number((await employees.byId(akbar.id)).bonus_fund) === 777);
+  await employees.setBonusFund(akbar.id, null);
+  await employees.setSalary(akbar.id, null);
+  const st7 =await period.employeeStats(akbar, time.addDays(bugun, -6), bugun);
   ok('period stats: reportDays=1, doneCount≥1', st7.reportDays === 1 && st7.doneCount >= 1);
   await send(msg(1000, '/holat'));
   ok('/holat', lastText(1000).includes('BUGUNGI HOLAT'));
