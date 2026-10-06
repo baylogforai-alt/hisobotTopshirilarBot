@@ -9,6 +9,7 @@ const employees = require('../services/employees');
 const kpi = require('../services/kpi');
 const months = require('../services/months');
 const extradays = require('../services/extradays');
+const kpiExtras = require('../services/kpiExtras');
 const notify = require('../services/notify');
 const { notRegistered } = require('./common');
 
@@ -83,13 +84,13 @@ const sendMonthStart = async (bot, month = time.month()) => {
 const money = kpi.fmtMoney;
 
 /** Oy uchun: oklad, KPI summasi, shart, jami (tasdiqlanmagan bo'lsa — taxminiy) */
-const payInfo = (k, extra = 0) => {
+const payInfo = (k, extra = 0, kpiExtra = 0) => {
   const salary = k.salary === null || k.salary === undefined ? null : Number(k.salary);
   const final = k.status !== 'draft';
   const bonus = k.status === 'excluded' ? 0 : k.bonus_amount === null || k.bonus_amount === undefined ? null : Number(k.bonus_amount);
-  // dam olish kuniga chaqiruv bo'yicha ishlangan kunlar (5-okt)
-  const total = (salary || 0) + (bonus || 0) + (Number(extra) || 0);
-  return { salary, bonus, extra: Number(extra) || 0, total, final };
+  // dam olish kuniga chaqiruv bo'yicha ishlangan kunlar (5-okt) + qo'shimcha KPI qatorlari (6-okt, kpiExtras)
+  const total = (salary || 0) + (bonus || 0) + (Number(extra) || 0) + (Number(kpiExtra) || 0);
+  return { salary, bonus, extra: Number(extra) || 0, kpiExtra: Number(kpiExtra) || 0, total, final };
 };
 
 const monthsOf = (emp) => {
@@ -112,11 +113,12 @@ const payHome = async (ctx) => {
   const rows = [];
   for (const m of monthsOf(emp)) {
     const k = await kpi.compute(emp, m);
-    const p = payInfo(k, await extradays.sumForMonth(emp.id, m));
+    const kx = await kpiExtras.forKpi(emp.id, m, k);
+    const p = payInfo(k, await extradays.sumForMonth(emp.id, m), kx.total);
     const gate = config.kpiMode === 'gate' ? (Number(k.kpi_eligible) === 1 ? '✅' : '❌') : `${k.total} ball`;
     lines.push(
       `🗓 <b>${time.monthName(m)}</b>${m === time.month() ? ' <i>(joriy)</i>' : ''}\n` +
-        `   💼 ${money(p.salary)} · 🏆 KPI ${gate} ${money(p.bonus)}${p.extra ? ` · 📅 +${money(p.extra)}` : ''}\n` +
+        `   💼 ${money(p.salary)} · 🏆 KPI ${gate} ${money(p.bonus)}${p.kpiExtra ? ` · ➕ ${money(p.kpiExtra)}` : ''}${p.extra ? ` · 📅 +${money(p.extra)}` : ''}\n` +
         `   💰 Jami: <b>${money(p.total)}</b> ${p.final ? kpi.statusLabel(k.status) : '<i>taxminiy</i>'}`,
     );
     rows.push([cb(`🗓 ${time.monthName(m)}`, `pay:m:${m}`)]);
@@ -133,7 +135,8 @@ const payMonth = async (ctx, month) => {
   if (!time.isValidMonth(month)) return payHome(ctx);
   const k = await kpi.compute(emp, month);
   const extraList = await extradays.workedInMonth(emp.id, month);
-  const p = payInfo(k, extraList.reduce((s, x) => s + (Number(x.amount) || 0), 0));
+  const kx = await kpiExtras.forKpi(emp.id, month, k);
+  const p = payInfo(k, extraList.reduce((s, x) => s + (Number(x.amount) || 0), 0), kx.total);
   const ms = await months.get(emp.id, month);
   const current = month === time.month();
   const lines = [`💵 <b>Oylik va KPI — ${time.monthName(month)}</b>`];
@@ -166,6 +169,7 @@ const payMonth = async (ctx, month) => {
     lines.push(`🏆 KPI ball: <b>${k.total}</b> ${ui.pctBar(k.total)}`);
   }
   if (k.status === 'excluded') lines.push(`⛔ Bu oy KPI dan chiqarilgan${k.note ? `: ${esc(k.note)}` : ''}`);
+  if (kx.list.length) lines.push('', "<b>Qo'shimcha KPI</b>", ...kx.list.map((x) => `   ${kpiExtras.lineText(x, money, esc)}`));
   if (p.extra) lines.push(`📅 Dam olish kuniga chaqiruv: <b>+${money(p.extra)}</b> (${extraList.map((x) => time.shortDate(x.work_date)).join(', ')})`);
   lines.push(ui.LINE, `💰 <b>Jami: ${money(p.total)}</b> ${p.final ? kpi.statusLabel(k.status) : '<i>(taxminiy — oy yakunida direktor tasdiqlaydi)</i>'}`);
   if (k.note && k.status !== 'excluded') lines.push(`💬 ${esc(k.note)}`);

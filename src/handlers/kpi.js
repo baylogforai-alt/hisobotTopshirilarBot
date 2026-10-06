@@ -8,6 +8,7 @@ const { render, guard, guardSee } = require('../render');
 const employees = require('../services/employees');
 const departments = require('../services/departments');
 const kpi = require('../services/kpi');
+const kpiExtras = require('../services/kpiExtras');
 const excel = require('../services/excel');
 const notify = require('../services/notify');
 const flows = require('../services/flows');
@@ -58,7 +59,8 @@ const kpiMonth = async (ctx, month) => {
   return render(ctx, text, inline(btns));
 };
 
-const kpiCardText = (k, dept) => {
+/** ex — qo'shimcha KPI qatorlari (kpiExtras.forKpi), bo'lmasa bo'sh */
+const kpiCardText = (k, dept, ex = { list: [], total: 0 }) => {
   const customName = (dept && dept.custom_name) || "Qo'shimcha mezon";
   const headPct = k.head_score === null ? null : Number(k.head_score) * 10;
   const line = (label, pct, w) => `   ${label}: ${pct === null ? '<i>kiritilmagan</i>' : `${pct}%`} × ${w}%${pct !== null && w > 0 ? ` = <b>${Math.round((pct * w) / 100)}</b>` : ''}`;
@@ -76,7 +78,8 @@ const kpiCardText = (k, dept) => {
         `${Number(k.extra_days) ? ` (shundan dam olish kuni ${k.extra_days})` : ''} · 📋 topshiriq ${k.tasks_gate_pct === null || k.tasks_gate_pct === undefined ? k.tasks_pct : k.tasks_gate_pct}%\n`
       : '') +
     `💵 KPI summasi: ${kpi.fmtMoney(k.bonus_fund)} → Beriladi: <b>${kpi.fmtMoney(k.bonus_amount)}</b>\n` +
-    `💼 Oklad: ${kpi.fmtMoney(k.salary)} · 💰 Jami: <b>${kpi.fmtMoney((Number(k.salary) || 0) + (k.status === 'excluded' ? 0 : Number(k.bonus_amount) || 0))}</b>\n` +
+    (ex.list.length ? `${ex.list.map((x) => kpiExtras.lineText(x, kpi.fmtMoney, esc)).join('\n')}\n` : '') +
+    `💼 Oklad: ${kpi.fmtMoney(k.salary)} · 💰 Jami: <b>${kpi.fmtMoney((Number(k.salary) || 0) + (k.status === 'excluded' ? 0 : Number(k.bonus_amount) || 0) + ex.total)}</b>\n` +
     `Holat: ${kpi.statusLabel(k.status)}${k.note ? `\n💬 ${esc(k.note)}` : ''}` +
     (k.status === 'draft' && ((Number(k.w_head) > 0 && k.head_score === null) || (Number(k.w_custom) > 0 && k.custom_pct === null))
       ? `\n\n<i>ℹ️ Kiritilmagan komponent hisobdan chiqarilib, qolgan vaznlar 100 ga keltiriladi.</i>` : '')
@@ -90,7 +93,7 @@ const kpiCard = async (ctx, empId, month) => {
   const dept = emp.department_id ? await departments.byId(emp.department_id) : null;
   const p = `${emp.id}:${month}`;
   if (!ctx.state.isAdmin) {
-    return render(ctx, `${kpiCardText(k, dept)}\n\n<i>👁 Faqat ko'rish — tahrirlash va tasdiqlash direktorda.</i>`, inline([
+    return render(ctx, `${kpiCardText(k, dept, await kpiExtras.forKpi(emp.id, month, k))}\n\n<i>👁 Faqat ko'rish — tahrirlash va tasdiqlash direktorda.</i>`, inline([
       [cb('📊 Batafsil hisobot', `rp:emp:${emp.id}:${month}`), cb("⬅️ Ro'yxat", `kpi:m:${month}`)],
       [cb('🧮 Kalkulyatorda', `kc:v:${kpiCalc.encode(kpiCalc.stateFromKpi(k, emp.department_id))}`)],
     ]));
@@ -103,7 +106,7 @@ const kpiCard = async (ctx, empId, month) => {
   ] : [[cb('↩️ Qaytadan ochish', `kpi:reopen:${p}`)]];
   rows.push([cb('📊 Batafsil hisobot', `rp:emp:${emp.id}:${month}`), cb("⬅️ Ro'yxat", `kpi:m:${month}`)]);
   rows.push([cb('🧮 Kalkulyatorda', `kc:v:${kpiCalc.encode(kpiCalc.stateFromKpi(k, emp.department_id))}`)]);
-  return render(ctx, kpiCardText(k, dept), inline(rows));
+  return render(ctx, kpiCardText(k, dept, await kpiExtras.forKpi(emp.id, month, k)), inline(rows));
 };
 
 const notifyDecision = (ctx, k) => flows.kpiDecisionNotice(botOf(ctx), k);

@@ -10,6 +10,7 @@ const crmKpi = require('./services/crmKpi');
  *   GET /crm/snapshot   → BAYLOG CRM uchun bugungi hisobot
  *   GET /crm/kpi?month=YYYY-MM → oylik KPI (topshiriq, davomat, kunlik hisobot, KPI ball, oklad) — bazaga yozmaydi
  *   POST /crm/kpi/set {employeeId, month, bonusFund?, salary?, headScore?, customPct?, by?} → KPI sozlash (crmKpi.setFromCrm)
+ *   POST /crm/kpi/extra {action:add|remove, ...} → qo'shimcha KPI qatori (crmKpi.extraFromCrm)
  * U `x-crm-secret` sarlavhasini talab qiladi. CRM_API_SECRET yozilmagan
  * bo'lsa manzil umuman ochilmaydi (404) — ya'ni tasodifan ochilib qolmaydi.
  */
@@ -36,17 +37,18 @@ const readJson = (req) => new Promise((resolve) => {
 
 /** /crm/snapshot, /crm/kpi, /crm/kpi/set ni ishlaydi. true — javob berildi */
 const handleCrm = async (req, res, pathname, url = null) => {
-  if (pathname !== '/crm/snapshot' && pathname !== '/crm/kpi' && pathname !== '/crm/kpi/set') return false;
+  const POSTS = ['/crm/kpi/set', '/crm/kpi/extra'];
+  if (pathname !== '/crm/snapshot' && pathname !== '/crm/kpi' && !POSTS.includes(pathname)) return false;
   const crmSecret = config.crmApiSecret;
-  const method = pathname === '/crm/kpi/set' ? 'POST' : 'GET';
+  const method = POSTS.includes(pathname) ? 'POST' : 'GET';
   // Kalit qo'yilmagan bo'lsa bu manzil umuman yo'q hisoblanadi
   if (!crmSecret || req.method !== method) { json(res, 404, '{"error":"not_found"}'); return true; }
   if (!secretOk(req.headers['x-crm-secret'], crmSecret)) { json(res, 401, '{"error":"unauthorized"}'); return true; }
-  if (pathname === '/crm/kpi/set') {
+  if (POSTS.includes(pathname)) {
     const body = await readJson(req);
     if (!body || typeof body !== 'object') { json(res, 400, '{"error":"bad_json"}'); return true; }
     try {
-      const r = await crmKpi.setFromCrm(body);
+      const r = pathname === '/crm/kpi/set' ? await crmKpi.setFromCrm(body) : await crmKpi.extraFromCrm(body);
       json(res, r.error ? (r.error === 'not_found' ? 404 : 400) : 200, r);
     } catch (err) {
       console.warn('[crm] KPI sozlab bolmadi:', err.message);

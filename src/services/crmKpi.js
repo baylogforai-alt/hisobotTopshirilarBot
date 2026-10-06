@@ -5,6 +5,8 @@ const time = require('../time');
 const employees = require('./employees');
 const period = require('./period');
 const kpi = require('./kpi');
+const kpiExtras = require('./kpiExtras');
+const extradays = require('./extradays');
 
 /**
  * CRM UCHUN OYLIK KPI (faqat o'qish) — `GET /crm/kpi?month=YYYY-MM` (health.handleCrm, x-crm-secret).
@@ -31,6 +33,8 @@ const monthKpi = async (monthRaw) => {
     const st = future ? null : await period.employeeStats(emp, from, toEff);
     const k = future ? null : await kpi.preview(emp, month);
     const ts = st ? st.ts : null;
+    const ex = k ? await kpiExtras.forKpi(emp.id, month, k) : { list: [], total: 0 };
+    const offDays = future ? [] : await extradays.workedInMonth(emp.id, month);
     rows.push({
       employeeId: String(emp.id),
       name: emp.full_name,
@@ -84,6 +88,14 @@ const monthKpi = async (monthRaw) => {
         : null,
       // Hodim kartochkasidagi standartlar (keyingi oylar ham shundan boshlanadi)
       defaults: { bonusFund: num(emp.bonus_fund), salary: num(emp.salary) },
+      // Qo'shimcha KPI qatorlari (summa × asos foizi) — kpiExtras
+      extras: ex.list.map((x) => ({
+        id: String(x.id), title: x.title, basis: x.basis, amount: num(x.amount), pct: num(x.pct),
+        recurring: !x.month, startMonth: x.start_month, basisPct: x.basisPct, earned: x.earned,
+      })),
+      extrasTotal: ex.total,
+      // Dam olish kuniga chaqiruv — ishlangan kunlar (qat'iy summa, extradays)
+      offDays: { total: offDays.reduce((s, x) => s + (Number(x.amount) || 0), 0), dates: offDays.map((x) => x.work_date) },
     });
   }
   return { month, from, to: toEff, mode: config.kpiMode, generatedAt: new Date().toISOString(), rows };
@@ -142,4 +154,31 @@ const setFromCrm = async (body = {}) => {
   return { ok: true, locked, row: { total: num(row.total), bonusFund: num(row.bonus_fund), bonusAmount: num(row.bonus_amount), salary: num(row.salary), headScore: num(row.head_score), customPct: num(row.custom_pct), status: row.status } };
 };
 
-module.exports = { monthKpi, setFromCrm };
+/**
+ * CRM'dan qo'shimcha KPI (POST /crm/kpi/extra) — faqat bosh direktor (CRM tekshiradi).
+ *   {action:'add', employeeId, month, title, basis, amount, pct?, recurring?, by?} | {action:'remove', employeeId, month, id, by?}
+ * Tasdiqlangan/chiqarilgan oy — `locked`; kelajak oy — rad.
+ */
+const extraFromCrm = async (body = {}) => {
+  const month = time.isValidMonth(body.month) ? body.month : time.month();
+  if (month > time.month()) return { error: 'future_month' };
+  const emp = await employees.byId(Number(body.employeeId));
+  if (!emp || !emp.active) return { error: 'not_found' };
+  if (!(await kpi.editable(emp.id, month))) return { error: 'locked' };
+  const by = String(body.by || '').slice(0, 60) || null;
+  let r;
+  if (body.action === 'add') {
+    r = await kpiExtras.add({
+      employeeId: emp.id, month, title: body.title, basis: body.basis, amount: body.amount, pct: body.pct, recurring: Boolean(body.recurring), by,
+    });
+  } else if (body.action === 'remove') {
+    r = await kpiExtras.remove({ id: body.id, employeeId: emp.id, month, by });
+  } else return { error: 'bad_action' };
+  if (r.error) return r;
+  console.log(`[crm] qo'shimcha KPI ${body.action}: ${emp.full_name} ${month} ${JSON.stringify({ id: r.id || body.id, title: body.title, basis: body.basis, amount: body.amount, pct: body.pct, recurring: body.recurring, by })}`);
+  const k = await kpi.preview(await employees.byId(emp.id), month);
+  const ex = await kpiExtras.forKpi(emp.id, month, k);
+  return { ok: true, id: r.id ? String(r.id) : undefined, extrasTotal: ex.total, count: ex.list.length };
+};
+
+module.exports = { monthKpi, setFromCrm, extraFromCrm };

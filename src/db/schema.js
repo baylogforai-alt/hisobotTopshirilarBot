@@ -26,6 +26,7 @@
  *  announcements  — direktor/HR/rahbar e'lonlari (hammaga yoki tanlanganlarga; matn yoki media)
  *  announcement_recipients — e'lon kimga bordi va kim «👁 O'qidim» bosdi
  *  extra_days     — dam olish kuniga chaqiruv (summa; o'sha kuni Keldim → worked_at)
+ *  kpi_extras     — qo'shimcha KPI qatorlari (summa × asos foizi; bir martalik yoki har oy) — CRM'dan kiritiladi
  *  task_replies   — qaytarilgan topshiriq bo'yicha hodim ↔ tekshiruvchi yozishmasi (matn yoki media)
  *  chats          — «💬 Savol-javob»: chat (boshlovchi, kimlar bilan, rejim) + chat_members + chat_messages
  */
@@ -327,6 +328,23 @@ CREATE TABLE IF NOT EXISTS extra_days (
   cancelled_by ${big}
 );
 CREATE INDEX IF NOT EXISTS idx_extra_days_emp_date ON extra_days(employee_id, work_date);
+
+CREATE TABLE IF NOT EXISTS kpi_extras (
+  id           ${pk},
+  employee_id  INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  title        TEXT    NOT NULL,
+  basis        TEXT    NOT NULL DEFAULT 'total',
+  amount       INTEGER NOT NULL DEFAULT 0,
+  pct          INTEGER,
+  month        TEXT,
+  start_month  TEXT    NOT NULL,
+  end_month    TEXT,
+  created_by   TEXT,
+  created_at   TEXT    NOT NULL,
+  removed_at   TEXT,
+  removed_by   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_kpi_extras_emp ON kpi_extras(employee_id);
 
 CREATE TABLE IF NOT EXISTS task_replies (
   id          ${pk},

@@ -222,3 +222,16 @@ Xatolar: `not_found` (faol emas), `bad_amount`, `bad_score` (1–10 butun), `bad
 `health.handleCrm`: POST faqat `/crm/kpi/set` (JSON ≤ 10 KB), qolganlari GET. `/crm/kpi` javobiga `mode`, `kpi.salary`,
 `kpi.weights`, `defaults {bonusFund, salary}` qo'shildi. Ruxsat CRM'da: faqat bosh direktor (mainOwner).
 Smoke: +5 («CRM KPI set: ...», tasdiqlangan oy qulfi). `npm test` — 166/166 + 771/771. Deploydan oldin `node --check` (10-bo'lim ostidagi qoida).
+
+## 13. 6-okt-2026: ➕ Qo'shimcha KPI — `kpi_extras` (⬜ commit qilingan, PUSH/DEPLOY QILINMAGAN)
+
+Direktor: «+ bosib alohida KPI qo'shish — davomatga, bajargan ishlarga, qo'shimcha vazifaga (yakshanba); faqat foizga bog'liq;
+muddat tanlanadi; bot ham, CRM ham». Jadval `kpi_extras` (schema.js tables(), IF NOT EXISTS): title, basis
+(tasks|attendance|head|custom|total|manual), amount (100% da), pct (manual), month (bir martalik) | start_month..end_month (har oy),
+removed_at. `services/kpiExtras.js`: forMonth/forKpi/withEarned (beriladi = summa × asos foizi, 0..100; excluded oy — 0), add, remove
+(bir martalik — removed_at; har oylik — end_month = oldingi oy), lineText (HTML esc bilan). CRM: `crmKpi.extraFromCrm`
+(POST /crm/kpi/extra; tasdiqlangan oy `locked`, kelajak oy rad), `/crm/kpi` → extras[], extrasTotal, offDays {total, dates}.
+Bot ko'rinishlari: `month.js payInfo(k, extra, kpiExtra)` — xodimning «Oylik va KPI» (ro'yxat + oy tafsilotida «Qo'shimcha KPI»
+bo'limi), `kpi.js kpiCardText(k, dept, ex)` — direktor kartasi, Jami ichida. Qo'shish/o'chirish hozircha FAQAT CRM'dan.
+Ko'rsatilmaydi (ataylab, keyin): flows.js (ilova) va excel.js oylik Jami — eski hisob (extra_days ham kirmas edi).
+Smoke +6 («qo'shimcha KPI: ...»). `npm test` — 172/172 + 771/771.

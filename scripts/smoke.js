@@ -515,6 +515,35 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       && Number((await employees.byId(akbar.id)).bonus_fund) === 777);
   await employees.setBonusFund(akbar.id, null);
   await employees.setSalary(akbar.id, null);
+  // Qo'shimcha KPI (/crm/kpi/extra) — summa × asos foizi; bir martalik / har oy; qulf
+  const curM = time.month();
+  const xa = await crmKpi.extraFromCrm({ action: 'add', employeeId: akbar.id, month: curM, title: 'Davomat uchun', basis: 'attendance', amount: 500000, recurring: true, by: 'smoke' });
+  const xb = await crmKpi.extraFromCrm({ action: 'add', employeeId: akbar.id, month: curM, title: 'Yakshanba <ishi>', basis: 'manual', pct: 100, amount: 200000, by: 'smoke' });
+  const mkX = (await crmKpi.monthKpi(curM)).rows.find((r) => r.employeeId === String(akbar.id));
+  const xAtt = mkX.extras.find((x) => x.basis === 'attendance');
+  const xMan = mkX.extras.find((x) => x.basis === 'manual');
+  ok('qo\'shimcha KPI: qo\'shildi, summa × foiz',
+    xa.ok && xb.ok && mkX.extras.length === 2 && xAtt.recurring && !xMan.recurring
+      && xAtt.earned === Math.round((500000 * (xAtt.basisPct || 0)) / 100) && xMan.earned === 200000
+      && mkX.extrasTotal === xAtt.earned + xMan.earned && mkX.offDays && typeof mkX.offDays.total === 'number',
+    JSON.stringify(mkX.extras));
+  ok('qo\'shimcha KPI: noto\'g\'ri asos / summa / foiz / nomsiz — rad',
+    (await crmKpi.extraFromCrm({ action: 'add', employeeId: akbar.id, title: 'x', basis: 'pul', amount: 1 })).error === 'bad_basis'
+      && (await crmKpi.extraFromCrm({ action: 'add', employeeId: akbar.id, title: 'x', basis: 'total', amount: 0 })).error === 'bad_amount'
+      && (await crmKpi.extraFromCrm({ action: 'add', employeeId: akbar.id, title: 'x', basis: 'manual', amount: 5, pct: 120 })).error === 'bad_pct'
+      && (await crmKpi.extraFromCrm({ action: 'add', employeeId: akbar.id, title: '  ', basis: 'total', amount: 5 })).error === 'title_required');
+  // bot ekranlari: xodimning «Oylik va KPI» oyi — qator HTML qochirilgan holda
+  await send(cbq(99999, `pay:m:${curM}`));
+  const payTxt = lastText(99999);
+  ok('qo\'shimcha KPI: xodim «Oylik va KPI» da ko\'rinadi (HTML qochirilgan)', payTxt.includes("Qo'shimcha KPI") && payTxt.includes('Davomat uchun') && payTxt.includes('&lt;ishi&gt;'), payTxt.slice(0, 400));
+  // har oylik — keyingi oyda ham bor, bir martalik — yo'q; o'chirish shu oydan
+  const nextM = time.shiftMonth(curM, 1);
+  const kxNext = await require('../src/services/kpiExtras').forMonth(akbar.id, nextM);
+  ok('qo\'shimcha KPI: har oylik keyingi oyda ham, bir martalik — yo\'q', kxNext.length === 1 && kxNext[0].basis === 'attendance');
+  const rm = await crmKpi.extraFromCrm({ action: 'remove', employeeId: akbar.id, month: curM, id: xAtt.id });
+  ok('qo\'shimcha KPI: o\'chirildi', rm.ok && rm.count === 1 && (await require('../src/services/kpiExtras').forMonth(akbar.id, nextM)).length === 0);
+  ok('qo\'shimcha KPI: tasdiqlangan oy — qulf', (await crmKpi.extraFromCrm({ action: 'add', employeeId: akbar.id, month: prevM, title: 'x', basis: 'total', amount: 5 })).error === 'locked');
+  await crmKpi.extraFromCrm({ action: 'remove', employeeId: akbar.id, month: curM, id: xMan.id });
   const st7 =await period.employeeStats(akbar, time.addDays(bugun, -6), bugun);
   ok('period stats: reportDays=1, doneCount≥1', st7.reportDays === 1 && st7.doneCount >= 1);
   await send(msg(1000, '/holat'));
