@@ -11,6 +11,7 @@ const kpi = require('../services/kpi');
 const excel = require('../services/excel');
 const notify = require('../services/notify');
 const flows = require('../services/flows');
+const kpiCalc = require('./kpiCalc');
 
 const { esc, cb, inline } = ui;
 const botOf = (ctx) => ({ telegram: ctx.telegram });
@@ -27,7 +28,7 @@ const monthButtons = (prefix) => {
 };
 
 const kpiHome = (ctx) =>
-  render(ctx, `💰 <b>KPI</b>\n\nQaysi oy? Odatda o'tgan oy — oyning 1-kunida avtomatik tayyor bo'ladi.`, inline([[monthButtons('kpi')[1]], [monthButtons('kpi')[2]], [monthButtons('kpi')[0]]]));
+  render(ctx, `💰 <b>KPI</b>\n\nQaysi oy? Odatda o'tgan oy — oyning 1-kunida avtomatik tayyor bo'ladi.`, inline([[monthButtons('kpi')[1]], [monthButtons('kpi')[2]], [monthButtons('kpi')[0]], [cb('🧮 KPI kalkulyator', 'kc:v:' + kpiCalc.encode(kpiCalc.stateFromKpi({ tasks_pct: 100, att_pct: 100 }, 0)))]]));
 
 const kpiMonth = async (ctx, month) => {
   if (!time.isValidMonth(month)) return kpiHome(ctx);
@@ -91,6 +92,7 @@ const kpiCard = async (ctx, empId, month) => {
   if (!ctx.state.isAdmin) {
     return render(ctx, `${kpiCardText(k, dept)}\n\n<i>👁 Faqat ko'rish — tahrirlash va tasdiqlash direktorda.</i>`, inline([
       [cb('📊 Batafsil hisobot', `rp:emp:${emp.id}:${month}`), cb("⬅️ Ro'yxat", `kpi:m:${month}`)],
+      [cb('🧮 Kalkulyatorda', `kc:v:${kpiCalc.encode(kpiCalc.stateFromKpi(k, emp.department_id))}`)],
     ]));
   }
   // tasdiqlangan/chiqarilgan oy muzlatilgan — tahrir tugmalari faqat «kutmoqda» da
@@ -100,6 +102,7 @@ const kpiCard = async (ctx, empId, month) => {
     [cb('✅ Tasdiqlash', `kpi:ok:${p}`), cb('⛔ Bonusdan chiqarish', `kpi:ex:${p}`)],
   ] : [[cb('↩️ Qaytadan ochish', `kpi:reopen:${p}`)]];
   rows.push([cb('📊 Batafsil hisobot', `rp:emp:${emp.id}:${month}`), cb("⬅️ Ro'yxat", `kpi:m:${month}`)]);
+  rows.push([cb('🧮 Kalkulyatorda', `kc:v:${kpiCalc.encode(kpiCalc.stateFromKpi(k, emp.department_id))}`)]);
   return render(ctx, kpiCardText(k, dept), inline(rows));
 };
 

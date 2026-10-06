@@ -13,6 +13,7 @@ const tasksHandler = require('./handlers/tasks');
 const dailyReportHandler = require('./handlers/dailyReport');
 const adminHandler = require('./handlers/admin');
 const kpiHandler = require('./handlers/kpi');
+const kpiCalcHandler = require('./handlers/kpiCalc');
 const reportsHandler = require('./handlers/reports');
 const hrHandler = require('./handlers/hr');
 const periodHandler = require('./handlers/period');
@@ -53,6 +54,8 @@ const STEP_HANDLERS = {
   chat_text: { run: (ctx) => chatHandler.handleText(ctx) },
   chat_reply: { run: (ctx) => chatHandler.handleText(ctx) },
   task_reply: { run: (ctx) => chatHandler.handleText(ctx) },
+  // KPI kalkulyatori — hamma ro'yxatdagi (bazaga yozmaydi)
+  kc_input: { run: (ctx) => kpiCalcHandler.handleInput(ctx) },
   // boshliq / direktor / HR
   assign_text: { mgr: true, run: (ctx) => tasksHandler.handleAssignText(ctx) },
   assign_media_title: { mgr: true, run: (ctx) => tasksHandler.handleAssignMediaTitle(ctx) },
@@ -124,6 +127,7 @@ const createBot = () => {
   extraHandler.register(bot);
   adminHandler.register(bot);
   kpiHandler.register(bot);
+  kpiCalcHandler.register(bot);
   reportsHandler.register(bot);
   hrHandler.register(bot);
   periodHandler.register(bot);

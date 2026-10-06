@@ -109,11 +109,11 @@ const payOf = (k) => {
   return { salary, bonus, total: salary + bonus };
 };
 
-/** Avto qismlarni qayta hisoblab saqlaydi. Tasdiqlangan/chiqarilgan qator (force bo'lmasa) o'zgarmaydi. */
-const compute = async (emp, month, { force = false } = {}) => {
-  const existing = await get(emp.id, month);
-  if (existing && existing.status !== 'draft' && !force) return existing;
-
+/**
+ * Oy qatorini HISOBLAYDI (bazaga yozmaydi) — compute (saqlaydi) va preview (CRM, faqat o'qish) uchun umumiy.
+ * `existing` — shu oy uchun saqlangan qator (boshliq bahosi, mezon, qo'lda KPI summasi undan olinadi).
+ */
+const buildRow = async (emp, month, existing) => {
   const { from, to } = time.monthRange(month);
   const ts = await tasks.stats(emp.id, from, to);
   const at = await attendance.stats(emp, from, to);
@@ -139,6 +139,14 @@ const compute = async (emp, month, { force = false } = {}) => {
   row.kpi_fail = gate.reasons.join('; ') || null;
   row.total = computeTotal(row);
   row.bonus_amount = bonusFor(row);
+  return { row, ts, at, gate };
+};
+
+/** Avto qismlarni qayta hisoblab saqlaydi. Tasdiqlangan/chiqarilgan qator (force bo'lmasa) o'zgarmaydi. */
+const compute = async (emp, month, { force = false } = {}) => {
+  const existing = await get(emp.id, month);
+  if (existing && existing.status !== 'draft' && !force) return existing;
+  const { row, ts, at, gate } = await buildRow(emp, month, existing);
 
   await db.query(
     `INSERT INTO kpi_monthly (employee_id, month, tasks_total, tasks_ontime, tasks_pct, work_days, ontime_days, late_days, absent_days,
@@ -161,6 +169,17 @@ const compute = async (emp, month, { force = false } = {}) => {
     ],
   );
   return get(emp.id, month);
+};
+
+/**
+ * CRM uchun — BAZAGA YOZMAYDI. Tasdiqlangan/chiqarilgan qator bo'lsa o'sha (direktor qarori), aks holda
+ * compute bilan bir xil formula bo'yicha hozirgi holat. `saved` — kpi_monthly da qator bormi.
+ */
+const preview = async (emp, month) => {
+  const existing = await get(emp.id, month);
+  if (existing && existing.status !== 'draft') return { ...existing, saved: true };
+  const { row } = await buildRow(emp, month, existing);
+  return { ...row, status: existing ? existing.status : 'draft', saved: Boolean(existing) };
 };
 
 /** Barcha faol hodimlar uchun oy hisobini yangilaydi */
@@ -259,7 +278,7 @@ const statusLabel = (s) => STATUS[s] || STATUS.draft;
 const fmtMoney = (n) => (n === null || n === undefined ? '—' : `${Math.round(Number(n)).toLocaleString('ru-RU').replace(/ /g, ' ')} so'm`);
 
 module.exports = {
-  get, byId, listMonth, computeTotal, bonusOf, checkGate, bonusFor, payOf, compute, computeAll, recalc, editable, setHeadScore, setCustomPct, setBonusFund, setNote, decide,
+  get, byId, listMonth, computeTotal, bonusOf, checkGate, bonusFor, payOf, compute, preview, computeAll, recalc, editable, setHeadScore, setCustomPct, setBonusFund, setNote, decide,
   decideBlock, isLocked, gateSettings, setGateSettings, GATE_DEFAULTS,
   statusLabel, fmtMoney,
 };

@@ -14,6 +14,7 @@ const api = require('./api');
  * HTTP SERVER: health check + Web App (Telegram Mini App) sahifasi + JSON API.
  *   GET  /, /health      — platforma (Railway) tekshiruvi
  *   GET  /crm/snapshot   — BAYLOG CRM uchun bugungi hisobot (x-crm-secret, CRM_API_SECRET bo'lsa) — health.js
+ *   GET  /crm/kpi?month= — CRM uchun oylik KPI (o'sha kalit; bazaga yozmaydi) — health.js + services/crmKpi.js
  *   GET  /app            — ilova (index.html, app.css, app.js — faqat ro'yxatdagi fayllar, yo'l bilan o'qilmaydi)
  *   *    /api/...        — Authorization: tma <initData>  (imzo + muddat + whitelist har so'rovda)
  * Xavfsizlik: qat'iy CSP, nosniff, frame-ancestors (faqat Telegram), JSON-only body (32 KB), so'rovlar limiti,
@@ -160,7 +161,7 @@ const createServer = ({ bot }) => {
     }
     try {
       if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url, bot);
-      if (await require('../health').handleCrm(req, res, url.pathname)) return null;
+      if (await require('../health').handleCrm(req, res, url.pathname, url)) return null;
 
       if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed', { Allow: 'GET' });
       if (url.pathname === '/' || url.pathname === '/health') {

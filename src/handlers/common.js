@@ -114,7 +114,7 @@ const HELP_EMPLOYEE = `
 
 📱 /ilova — xuddi shu ishlar qulay oynada (agar ulangan bo'lsa).
 
-<b>Buyruqlar:</b> /menu · /ilova · /keldim · /kech · /kelmayman · /ketdim · /missiyalarim · /bajardim · /vazifa · /bugun · /kunlik · /faol · /kutilmoqda · /bajarilgan · /korib_chiqish · /hisobot · /oylik · /eslatma · /tashrif · /excel · /id · /yordam
+<b>Buyruqlar:</b> /menu · /ilova · /keldim · /kech · /kelmayman · /ketdim · /missiyalarim · /bajardim · /vazifa · /bugun · /kunlik · /faol · /kutilmoqda · /bajarilgan · /korib_chiqish · /hisobot · /oylik · /kalkulyator · /eslatma · /tashrif · /excel · /id · /yordam
 `.trim();
 
 const HELP_MANAGER = `
@@ -138,6 +138,7 @@ const HELP_ADMIN = `
 📢 «${ui.BTN.announce}» — hammaga yoki tanlangan hodimlarga bitta e'lon (matn, rasm, video, ovoz, fayl) — kim o'qiganini ko'rasiz.
 📋 «${ui.BTN.journal}» — barcha topshiriqlar jurnali: kim kimga qachon nima bergan, holati, «tushundi», isbot; 🗑 bekor qilish.
 💰 «${ui.BTN.kpi}» — oylik KPI: hodimni tanlab ko'rish, tahrirlash, tasdiqlash, chiqarish, Excel.
+🧮 /kalkulyator — KPI kalkulyator: «topshiriq 90%, baho 8 bo'lsa — qancha?» (kartochkada «🧮 Kalkulyatorda» — hodim raqamlari bilan).
 📈 «${ui.BTN.reports}» — jamoa/bo'lim hisobotlari, davr hisoboti (istalgan sana oralig'i), Excel.
 🗂 «${ui.BTN.archive}» — hodimlar arxivi: kun daftari, harakatlar tarixi, 7/30 kunlik, Excel.
 💵 Panel → «Oyliklar» (/oyliklar) — hamma hodimning okladi va KPI summasi, bosib yoziladi.

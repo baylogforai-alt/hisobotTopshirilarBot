@@ -183,3 +183,27 @@ Postgres'da topilib tuzatilgan: `done:np` eskirgan tugmada `byId(undefined)` →
 **6-okt 09:24 — 📱 Ilova (Web App) yoqildi:** Railway'da `WEBAPP_URL=https://missiya-bot-production.up.railway.app/app` qo'yildi (avtomatik redeploy, SUCCESS).
 Logda «📱 Web App menyu tugmasi: 6 ta chat». Odilxon (8726834955) botni /start qildi va shu akkauntdan foydalanadi — «chat not found» xatolari to'xtadi.
 Ilovada kunlik hisobot, arxiv, davr hisoboti yo'q (faqat botda); «Ketdim» ilovadan bot orqali (joylashuv + izoh).
+
+## 10. 6-okt-2026: 🧮 KPI kalkulyator
+
+`handlers/kpiCalc.js` (callback **`kc:`**) — «agar … bo'lsa, qancha?»; **bazaga yozmaydi**. Holat butunlay callback ichida
+(`kc:v:<d>.<t>.<a>.<h>.<c>.<f>.<s>.<g>` — bo'lim vaznlari, topshiriq %, davomat %, baho 1–10/n, mezon %/n, KPI summasi, oklad, gate sharti),
+shuning uchun menyu sessiyani tozalasa ham karta ishlaydi; qo'lda son — sessiya `kc_input` (`kcField`, `kcState`).
+Formula `kpi.computeTotal` / `kpi.bonusOf` bilan bir xil (gate rejimida — shart 🟢 bo'lsa summa to'liq). ±1/±10 tugmalar, «🏢 Vaznlar (bo'lim)», «💯 Hammasi a'lo»,
+«+1% … ≈ N so'm» maslahatlari. Kirish: `/kalkulyator` (hodim — o'z joriy oyi), «💵 Oylik va KPI» (ro'yxat + oy tafsiloti «🧮 Kalkulyatorda»),
+KPI bo'limi bosh sahifasi, hodim KPI kartochkasi («🧮 Kalkulyatorda» — hodim raqamlari bilan). Web App'da yo'q.
+`npm test` — 159/159 + 771/771. ✅ 6-okt ~13:45 deploy qilindi (11-bo'lim bilan birga).
+
+## 11. 6-okt-2026: 📊 CRM uchun oylik KPI — `GET /crm/kpi?month=YYYY-MM`
+
+BAYLOG CRM → AI yordamchi → KPI (va Xodimlar sahifasidagi KPI bloki) endi shu botdan oladi (direktor qarori: «bot + CRM Vazifalar,
+hammasi + botdagi KPI ball»). `services/crmKpi.js` `monthKpi(month)` — har faol hodim (`listStaff`): topshiriqlar (`tasks.stats`:
+due/accepted/ontime/late/awaiting/open/overdue/returns/pct + `period.employeeStats` created/doneInMonth), davomat (workDays, workedDays,
+lateDays, lateMinutes, absentDays, excusedDays, pct, avgArrival, hours), `reportDays`, KPI (`kpi.preview`). Noto'g'ri oy → joriy oy;
+kelajak oy — null qiymatlar. Oklad (salary) CRM'ga BERILMAYDI.
+`kpi.preview(emp, month)` — **BAZAGA YOZMAYDI**: tasdiqlangan/chiqarilgan qator bo'lsa o'sha, aks holda `buildRow` (compute bilan umumiy
+hisob — `compute` endi `buildRow` + INSERT) natijasi, `saved` — kpi_monthly da qator bormi. Manzil `health.handleCrm` da
+(`/crm/snapshot` bilan bir xil kalit `x-crm-secret` = CRM_API_SECRET; server.js `handleCrm(req, res, pathname, url)`).
+Smoke: «CRM KPI: … bazaga yozmaydi» (kpi_monthly soni o'zgarmaydi), «noto'g'ri oy → joriy oy». `npm test` — 161/161 + 771/771.
+CRM tomoni: `src/lib/missiya.ts` `missiyaKpi`, `src/lib/kpi-merge.ts` (ism bo'yicha moslash: x→h, kirill, to'liq mos ustun, «Akbar»↔«Akbarali»).
+Zaxira (deploy oldi): `..\missiya-bot-zaxiralar\missiya-20261006-1342-deploy-oldi.sql` (bot papkasidan TASHQARIDA — `railway up` ga tushmasin).

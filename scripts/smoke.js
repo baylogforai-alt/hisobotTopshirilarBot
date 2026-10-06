@@ -354,6 +354,33 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await send(cbq(1000, `kpi:m:${month}`));
   await send(cbq(1000, `kpi:e:${akbar.id}:${month}`));
   ok('KPI kartochkasi', lastText(1000).includes('Boshliq bahosi: 8/10') && lastText(1000).includes('1 000 000'));
+  const kcBtn = findCb(1000, /^kc:v:/);
+  ok('KPI kartochkasida «🧮 Kalkulyatorda»', Boolean(kcBtn));
+  await send(cbq(1000, kcBtn));
+  ok('kalkulyator: hodim raqamlari bilan', lastText(1000).includes('KPI KALKULYATOR') && lastText(1000).includes('8/10') && lastText(1000).includes('1 000 000'));
+  {
+    const kc = require('../src/handlers/kpiCalc');
+    const st = kc.decode('0.80.100.8.50.1000000.3000000.1');
+    const r = kc.calc(st, { w_tasks: 40, w_attendance: 20, w_head: 20, w_custom: 20 });
+    ok('kalkulyator = computeTotal (78 ball, 780 000 KPI, jami 3 780 000)', r.total === 78 && r.bonus === 780000 && r.pay === 3780000, JSON.stringify(r));
+    const r2 = kc.calc(kc.decode('0.80.100.n.n.1000000.0.1'), { w_tasks: 40, w_attendance: 20, w_head: 20, w_custom: 20 });
+    ok('kalkulyator: kiritilmagan mezon chiqariladi (vaznlar 100 ga)', r2.total === 87, JSON.stringify(r2));
+    await send(cbq(1000, 'kc:v:0.80.100.8.50.1000000.3000000.1'));
+    ok('kalkulyator kartasi', lastText(1000).includes('78 ball') && lastText(1000).includes('780 000'));
+    await send(cbq(1000, 'kc:in:t:0.80.100.8.50.1000000.3000000.1'));
+    await send(msg(1000, '100'));
+    ok("kalkulyator: qo'lda son (topshiriq 100% → 86 ball)", lastText(1000).includes('86 ball'));
+    await send(cbq(1000, 'kc:in:f:0.80.100.8.50.1000000.3000000.1'));
+    await send(msg(1000, 'abc'));
+    ok("kalkulyator: noto'g'ri summa qayta so'raladi", lastText(1000).includes('Tushunmadim'));
+    await send(msg(1000, '2 000 000'));
+    ok('kalkulyator: summa 2 000 000 → 1 560 000', lastText(1000).includes('1 560 000'));
+    await send(cbq(1000, 'kc:dp:0.80.100.8.50.1000000.3000000.1'));
+    ok("kalkulyator: bo'lim vaznlari ro'yxati", lastText(1000).includes('Qaysi bo') && findCb(1000, /^kc:v:0\./));
+    await send(msg(99999, '/kalkulyator'));
+    ok("hodim /kalkulyator — o'z raqamlari", lastText(99999).includes('KPI KALKULYATOR'));
+    ok('kalkulyator bazaga yozmaydi', Number((await kpi.get(akbar.id, month)).head_score) === 8);
+  }
   await send(cbq(1000, `kpi:ok:${akbar.id}:${month}`));
   const lastAlert = [...sent].reverse().find((x) => x.method === 'answerCallbackQuery');
   ok('joriy oy KPI si oy tugamay tasdiqlanmaydi', (await kpi.get(akbar.id, month)).status === 'draft' && lastAlert && String(lastAlert.payload.text || '').includes('tugamagan'));
@@ -451,6 +478,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('ertalabki guruh chaqirig\'i', mc.sent === true && allText(GROUP).includes('Xayrli tong'));
   const snap = await crmFeed.snapshot();
   ok('CRM snapshot: missiyalar + davomat + hisobot', snap.missions.length >= 3 && snap.attendance.some((a) => a.dailyReport) && snap.totals.reports === 1);
+  // CRM oylik KPI (/crm/kpi) — hodim bo'yicha topshiriq/davomat/ball, kpi_monthly ga YOZMAYDI
+  const kpiRows = async () => Number((await require('../src/db').one('SELECT count(*) AS n FROM kpi_monthly')).n);
+  const kpiBefore = await kpiRows();
+  const mk = await require('../src/services/crmKpi').monthKpi(time.month());
+  const mkA = mk.rows.find((r) => r.employeeId === String(akbar.id));
+  ok('CRM KPI: oy, topshiriq/davomat/ball, bazaga yozmaydi',
+    mk.month === time.month() && mkA && mkA.tasks && mkA.attendance && mkA.kpi && typeof mkA.kpi.total === 'number' && (await kpiRows()) === kpiBefore,
+    JSON.stringify(mkA || mk.rows[0] || null).slice(0, 300));
+  const mkBad = await require('../src/services/crmKpi').monthKpi('xato');
+  ok('CRM KPI: noto\'g\'ri oy → joriy oy', mkBad.month === time.month());
   const st7 = await period.employeeStats(akbar, time.addDays(bugun, -6), bugun);
   ok('period stats: reportDays=1, doneCount≥1', st7.reportDays === 1 && st7.doneCount >= 1);
   await send(msg(1000, '/holat'));

@@ -121,6 +121,7 @@ const payHome = async (ctx) => {
     );
     rows.push([cb(`🗓 ${time.monthName(m)}`, `pay:m:${m}`)]);
   }
+  rows.push([cb('🧮 KPI kalkulyator', 'kc:open')]);
   return render(ctx, `💵 <b>OYLIK VA KPI</b> — ${esc(emp.full_name)}\n${ui.LINE}\n${lines.join('\n\n') || "<i>ma'lumot yo'q</i>"}\n\n👇 Batafsil — oyni tanlang.`, inline(rows));
 };
 
@@ -168,7 +169,10 @@ const payMonth = async (ctx, month) => {
   if (p.extra) lines.push(`📅 Dam olish kuniga chaqiruv: <b>+${money(p.extra)}</b> (${extraList.map((x) => time.shortDate(x.work_date)).join(', ')})`);
   lines.push(ui.LINE, `💰 <b>Jami: ${money(p.total)}</b> ${p.final ? kpi.statusLabel(k.status) : '<i>(taxminiy — oy yakunida direktor tasdiqlaydi)</i>'}`);
   if (k.note && k.status !== 'excluded') lines.push(`💬 ${esc(k.note)}`);
-  return render(ctx, lines.join('\n'), inline([[cb('📊 Batafsil hisobot', `rp:me:${month}`), cb('⬅️ Oylar', 'pay:home')]]));
+  return render(ctx, lines.join('\n'), inline([
+    [cb('📊 Batafsil hisobot', `rp:me:${month}`), cb('⬅️ Oylar', 'pay:home')],
+    [cb('🧮 Kalkulyatorda', `kc:v:${require('./kpiCalc').encode(require('./kpiCalc').stateFromKpi(k, emp.department_id))}`)],
+  ]));
 };
 
 const register = (bot) => {
