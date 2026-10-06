@@ -179,3 +179,7 @@ Web App `/api/announce*` va `flows.sendAnnouncement/resendAnnouncement` BayLog x
 **Testlar:** `npm test` — **144/144 + 770/770**, handler xatosi 0. Ikkalasi **Postgres'da ham** o'tdi: `SMOKE_DATABASE_URL=postgres://…/bo'sh_baza node scripts/smoke.js`
 (v1-migratsiya bo'limi Postgres'da o'tkazib yuboriladi; mahalliy PG 17 — `C:\Program Files\PostgreSQL\17\bin`, `initdb -A trust` scratchpad'da, port 55432).
 Postgres'da topilib tuzatilgan: `done:np` eskirgan tugmada `byId(undefined)` → NaN xatosi. Eski (HEAD `ebe91fc`) sxemali PG baza yangi kod bilan migratsiyadan keyin yangi bazaga **aynan teng** (ustunlar/indekslar).
+
+**6-okt 09:24 — 📱 Ilova (Web App) yoqildi:** Railway'da `WEBAPP_URL=https://missiya-bot-production.up.railway.app/app` qo'yildi (avtomatik redeploy, SUCCESS).
+Logda «📱 Web App menyu tugmasi: 6 ta chat». Odilxon (8726834955) botni /start qildi va shu akkauntdan foydalanadi — «chat not found» xatolari to'xtadi.
+Ilovada kunlik hisobot, arxiv, davr hisoboti yo'q (faqat botda); «Ketdim» ilovadan bot orqali (joylashuv + izoh).
