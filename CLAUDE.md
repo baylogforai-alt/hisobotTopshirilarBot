@@ -223,7 +223,7 @@ Xatolar: `not_found` (faol emas), `bad_amount`, `bad_score` (1–10 butun), `bad
 `kpi.weights`, `defaults {bonusFund, salary}` qo'shildi. Ruxsat CRM'da: faqat bosh direktor (mainOwner).
 Smoke: +5 («CRM KPI set: ...», tasdiqlangan oy qulfi). `npm test` — 166/166 + 771/771. Deploydan oldin `node --check` (10-bo'lim ostidagi qoida).
 
-## 13. 6-okt-2026: ➕ Qo'shimcha KPI — `kpi_extras` (⬜ commit qilingan, PUSH/DEPLOY QILINMAGAN)
+## 13. 6-okt-2026: ➕ Qo'shimcha KPI — `kpi_extras` (✅ 15:45 deploy, `37db50c`; zaxira `missiya-20261006-1545-deploy-oldi.sql`; prod'da kpi_extras yaratildi, /crm/kpi extras/offDays, /crm/kpi/extra 401/404 tekshirildi)
 
 Direktor: «+ bosib alohida KPI qo'shish — davomatga, bajargan ishlarga, qo'shimcha vazifaga (yakshanba); faqat foizga bog'liq;
 muddat tanlanadi; bot ham, CRM ham». Jadval `kpi_extras` (schema.js tables(), IF NOT EXISTS): title, basis
