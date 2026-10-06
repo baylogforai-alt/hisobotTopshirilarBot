@@ -13,7 +13,8 @@ const time = require('../time');
  * proof:   rasm/video file_id — "Bajardim"ga biriktirilgan isbot
  */
 
-const SELECT = `SELECT t.*, e.full_name, e.tg_id, e.department_id, e.username, e.role AS emp_role
+const SELECT = `SELECT t.*, e.full_name, e.tg_id, e.department_id, e.username, e.role AS emp_role,
+                (SELECT g.full_name FROM employees g WHERE g.tg_id = t.created_by ORDER BY g.id LIMIT 1) AS giver_name
                 FROM tasks t JOIN employees e ON e.id = t.employee_id`;
 
 const byId = (id) => db.one(`${SELECT} WHERE t.id = $1`, [Number(id)]);

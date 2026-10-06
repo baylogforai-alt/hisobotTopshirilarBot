@@ -46,10 +46,13 @@ const showMyTasks = async (ctx) => {
     (awaiting.length ? `\n\n🕓 <b>Tekshiruvda (${awaiting.length}):</b>\n${ui.taskList(awaiting)}` : '') +
     (open.length ? `\n\n⚙️ tugmasi — tahrirlash / muddat (faqat o'zingiz yozgan, muddati o'tmaganlar). O'chirib bo'lmaydi.` : '');
   const unacked = open.concat(awaiting).filter(tasks.needsAck);
-  const kb = ui.manageKeyboard(open);
-  if (!unacked.length) return render(ctx, text, kb);
-  return render(ctx, `${text}\n\n👂 <b>${unacked.length} ta</b> topshiriqni hali «Tushundim» qilmagansiz.`,
-    inline([...ui.ackRows(unacked), ...kb.reply_markup.inline_keyboard]));
+  // rasm / ovoz / video / fayl bilan berilgan topshiriqlar — mazmuni shu tugmalar orqali ochiladi
+  const media = [...ui.mediaRows(open, 1), ...ui.mediaRows(awaiting, open.length + 1)];
+  const mediaHint = media.length ? `\n\n🎧 Rasm, ovoz yoki video bilan berilgan topshiriqni pastdagi <b>«ko'rish / eshitish»</b> tugmasi bilan oching.` : '';
+  const kb = ui.manageKeyboard(open).reply_markup.inline_keyboard;
+  if (!unacked.length) return render(ctx, text + mediaHint, inline([...media, ...kb]));
+  return render(ctx, `${text}${mediaHint}\n\n👂 <b>${unacked.length} ta</b> topshiriqni hali «Tushundim» qilmagansiz.`,
+    inline([...ui.ackRows(unacked), ...media, ...kb]));
 };
 
 /** Topshiriq kartochkasidagi qo'shimcha tugmalar: topshiriq media'si va «Tushundim» */

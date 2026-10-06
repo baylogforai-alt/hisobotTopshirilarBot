@@ -128,6 +128,16 @@ const ackRows = (list) => {
 };
 
 /** Bitta topshiriq qatori */
+/** Topshiriq nomi izohsiz media uchun standart nom («🖼 Rasmli topshiriq» …) — mazmuni faqat faylning o'zida */
+const isGenericMediaTitle = (t) => Boolean(t && t.task_media_type && Object.values(MEDIA_LABEL).includes(String(t.title || '').trim()));
+
+/** Ro'yxatdagi media topshiriqlar uchun «ko'rish / eshitish» tugmalari (raqam — ro'yxatdagi tartib) */
+const mediaRows = (list, startAt = 1) =>
+  list
+    .map((t, i) => ({ t, n: startAt + i }))
+    .filter(({ t }) => t.task_file_id)
+    .map(({ t, n }) => [cb(`${MEDIA_ICON[t.task_media_type] || '📎'} ${n}-topshiriqni ${t.task_media_type === 'voice' || t.task_media_type === 'audio' ? 'eshitish' : "ko'rish"}${isGenericMediaTitle(t) ? '' : ` — ${t.title.slice(0, 30)}`}`, `tk:media:${t.id}`)]);
+
 const taskLine = (t, i, { withName = false } = {}) => {
   const today = time.today();
   const overdue = t.status === 'active' && t.due_date < today;
@@ -139,10 +149,13 @@ const taskLine = (t, i, { withName = false } = {}) => {
   if (t.status === 'active' && t.start_time) marks.push(`⏰ ${t.start_time} da boshlanadi`);
   if (t.status === 'done') marks.push('tekshiruvda');
   if (Number(t.returned_count) > 0) marks.push(`↩️ ${t.returned_count} marta qaytarilgan`);
-  if (t.source !== 'self') marks.push(`bergan: ${SOURCE_LABEL[t.source] || t.source}`);
+  if (t.source !== 'self') marks.push(`bergan: ${t.giver_name || SOURCE_LABEL[t.source] || t.source}`);
+  // izohsiz ovoz/rasm/video topshiriq («🎤 Ovozli topshiriq») — qachon berilgani bilan ajralsin, mazmuni tugma orqali ochiladi
+  const generic = isGenericMediaTitle(t);
+  if (generic && t.created_at) marks.push(`berilgan: ${time.prettyDate(String(t.created_at).slice(0, 10))} ${time.clock(t.created_at)}`);
   const name = withName ? `<b>${esc(t.full_name)}</b>: ` : '';
   const suffix = marks.length ? `\n   <i>${esc(marks.join(' • '))}</i>` : '';
-  const media = t.task_media_type ? `${MEDIA_ICON[t.task_media_type] || '📎'} ` : '';
+  const media = t.task_media_type && !generic ? `${MEDIA_ICON[t.task_media_type] || '📎'} ` : '';
   return `${i}. ${icon} ${name}${media}${esc(t.title)}${suffix}`;
 };
 
@@ -183,7 +196,7 @@ const reviewMultiKeyboard = (list) => {
 const doneChecklist = (open, doneToday) => {
   const lines = [];
   doneToday.forEach((t) => lines.push(`${t.status === 'accepted' ? '✅' : '🕓'} <s>${esc(t.title)}</s> <i>${time.clock(t.done_at)}</i>`));
-  open.forEach((t, i) => lines.push(`☐ <b>${i + 1}.</b> ${t.priority === 'high' ? '🔥 ' : ''}${t.task_media_type ? `${MEDIA_ICON[t.task_media_type] || '📎'} ` : ''}${esc(t.title)}${t.due_date < time.today() ? ' 🔴' : ''}`));
+  open.forEach((t, i) => lines.push(`☐ <b>${i + 1}.</b> ${t.priority === 'high' ? '🔥 ' : ''}${t.task_media_type && !isGenericMediaTitle(t) ? `${MEDIA_ICON[t.task_media_type] || '📎'} ` : ''}${esc(t.title)}${isGenericMediaTitle(t) ? ` <i>(${time.prettyDate(String(t.created_at).slice(0, 10))} ${time.clock(t.created_at)})</i>` : ''}${t.due_date < time.today() ? ' 🔴' : ''}`));
   const total = open.length + doneToday.length;
   const header = open.length
     ? `✔️ <b>Qaysi birini bajardingiz?</b>\n<i>Bugun bajarilgan: ${doneToday.length} / ${total}</i>\n`
@@ -277,7 +290,7 @@ const roleIcon = (role) => (role === 'admin' ? '👑' : role === 'head' ? '🎖'
 
 module.exports = {
   esc, BTN, LINE, mainKeyboard, kbFor, kbForEmp, urlButton, locationKeyboard, skipKeyboard, cancelKeyboard, cb, inline, dueKeyboard, startTimeKeyboard,
-  PRIO_ICON, SOURCE_LABEL, MEDIA_ICON, MEDIA_LABEL, ackRows, taskLine, taskList, doneKeyboard, doneMultiKeyboard, doneChecklist, proofKeyboard, reviewKeyboard, reviewMultiKeyboard, excuseKeyboard,
+  PRIO_ICON, SOURCE_LABEL, MEDIA_ICON, MEDIA_LABEL, isGenericMediaTitle, mediaRows, ackRows, taskLine, taskList, doneKeyboard, doneMultiKeyboard, doneChecklist, proofKeyboard, reviewKeyboard, reviewMultiKeyboard, excuseKeyboard,
   intentKeyboard, dailyReviewKeyboard, joinKeyboard, manageKeyboard, taskMenuKeyboard, confirmKeyboard, panelKeyboard,
   backKeyboard, scoreKeyboard, pctBar, roleIcon,
 };

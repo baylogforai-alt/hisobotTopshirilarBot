@@ -552,6 +552,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok("Panelda «📢 E'lon yuborish»", Boolean(findCb(1000, /^an:start$/)));
 
   // =========================================================================
+  console.log("\n— Media topshiriq Missiyalarim'da ochiladi —");
+  {
+    const voiceTask = await tasks.create({ employeeId: akbar.id, title: '🎤 Ovozli topshiriq', dueDate: bugun, createdBy: 20001, source: 'head', media: { type: 'voice', fileId: 'VOICE_T' } });
+    await send(msg(99999, '📋 Missiyalarim'));
+    const txt = lastText(99999);
+    ok("ro'yxatda beruvchi ismi va berilgan vaqti", txt.includes('bergan: Bobur') && txt.includes('berilgan:'));
+    ok('ovozli topshiriqni eshitish tugmasi', Boolean(findCb(99999, new RegExp(`^tk:media:${voiceTask.id}$`))));
+    mark = sent.length;
+    await send(cbq(99999, `tk:media:${voiceTask.id}`));
+    ok('tugma bosilsa ovoz yuboriladi', sent.slice(mark).some((x) => x.method === 'sendVoice' && Number(x.payload.chat_id) === 99999));
+    await tasks.cancel(voiceTask.id, 20001);
+  }
+
   console.log("\n— Bajardim: bir nechtasini birdaniga —");
   for (const ttl of ['Ombor qoldig\'i', 'Yuk xatlarini tekshirish', 'Mijozga qo\'ng\'iroq']) await send(msg(99999, `/bugun ${ttl}`));
   const mOpen = (await tasks.openFor(akbar.id)).filter((x) => ["Ombor qoldig'i", 'Yuk xatlarini tekshirish', "Mijozga qo'ng'iroq"].includes(x.title));
