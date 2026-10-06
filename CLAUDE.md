@@ -212,7 +212,7 @@ Zaxira (deploy oldi): `..\missiya-bot-zaxiralar\missiya-20261006-1342-deploy-old
 (`'... bo'lsa ...'` → SyntaxError, CRASHED). `npm test` buni USHLAMAYDI — smoke `index.js` ni yuklamaydi. Tuzatildi (`0a96828`).
 **Deploydan oldin DOIM:** `for f in $(git ls-files 'src/*.js' 'src/**/*.js'); do node --check "$f" || echo XATO $f; done`.
 
-## 12. 6-okt-2026: CRM'dan KPI sozlash — `POST /crm/kpi/set` (⬜ commit qilingan, PUSH/DEPLOY QILINMAGAN)
+## 12. 6-okt-2026: CRM'dan KPI sozlash — `POST /crm/kpi/set` (✅ 6-okt 14:52 deploy, `13314d6`; zaxira `..\missiya-bot-zaxiralar\missiya-20261006-1452-deploy-oldi.sql`; prod'da tekshirildi: /crm/kpi yangi maydonlar, /crm/kpi/set 404/400)
 
 Direktor qarori: KPI summasi CRM'da kiritiladi va botga yoziladi; natijada oklad + KPI = jami oylik; CRM'da AI maslahat.
 `crmKpi.setFromCrm(body)` — `{employeeId, month, bonusFund?, salary?, headScore?, customPct?, note?, by?}`: bot o'z funksiyalari
