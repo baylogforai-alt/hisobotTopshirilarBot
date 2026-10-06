@@ -207,3 +207,7 @@ hisob — `compute` endi `buildRow` + INSERT) natijasi, `saved` — kpi_monthly 
 Smoke: «CRM KPI: … bazaga yozmaydi» (kpi_monthly soni o'zgarmaydi), «noto'g'ri oy → joriy oy». `npm test` — 161/161 + 771/771.
 CRM tomoni: `src/lib/missiya.ts` `missiyaKpi`, `src/lib/kpi-merge.ts` (ism bo'yicha moslash: x→h, kirill, to'liq mos ustun, «Akbar»↔«Akbarali»).
 Zaxira (deploy oldi): `..\missiya-bot-zaxiralar\missiya-20261006-1342-deploy-oldi.sql` (bot papkasidan TASHQARIDA — `railway up` ga tushmasin).
+
+⚠️ **6-okt 13:43 — bot ~1 daqiqa yiqildi**: `src/index.js` 29-qator `setMyCommands` matnida qochirilmagan apostrof
+(`'... bo'lsa ...'` → SyntaxError, CRASHED). `npm test` buni USHLAMAYDI — smoke `index.js` ni yuklamaydi. Tuzatildi (`0a96828`).
+**Deploydan oldin DOIM:** `for f in $(git ls-files 'src/*.js' 'src/**/*.js'); do node --check "$f" || echo XATO $f; done`.
