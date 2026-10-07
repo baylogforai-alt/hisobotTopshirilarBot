@@ -466,7 +466,8 @@ route('POST', '/api/tasks/:id/done', async ({ actor, params, bot }) => {
   const t = await loadTask(params.id);
   if (Number(t.employee_id) !== Number(emp.id)) deny();
   if (t.status !== 'active') bad('Topshiriq ochiq emas');
-  if (await flows.doneBlocked(emp)) bad(`Avval «Keldim» bosing — ishga kelmasdan vazifani «Bajardim» qilib bo'lmaydi`);
+  const blocked = await flows.doneBlocked(emp);
+  if (blocked) bad(blocked === flows.DONE_NEEDS_CHECKIN ? `Avval «Keldim» bosing — ishga kelmasdan vazifani «Bajardim» qilib bo'lmaydi` : `Siz bugun «Ketdim» qilgansiz — ishdan ketgandan keyin «Bajardim» qilib bo'lmaydi`);
   if (tasks.isBossOwn(emp, t)) {
     const own = await flows.completeBossTask(bot, emp, t.id, null);
     if (!own.ok) bad('Topshiriq ochiq emas');

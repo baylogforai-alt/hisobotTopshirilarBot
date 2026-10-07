@@ -49,11 +49,11 @@ const sendDoc = (ctx, file, caption) => notify.docToUser({ telegram: ctx.telegra
 const employeeFile = (emp, r, viewer = null) => (r.key === 'today' ? excel.buildDay(r.from, { employeeId: emp.id, viewer }) : excel.buildEmployeePeriod(emp, r.from, r.to, { viewer }));
 const employeeCaption = (emp, r) =>
   `📥 <b>${esc(emp.full_name)}</b> — ${esc(r.title)}\n🗓 ${periodText(r)}\n` +
-  (r.key === 'today' ? '<i>Bugungi missiyalari, davomati va kunlik hisoboti</i>' : '<i>Varaqlar: Xulosa · Bajarilgan ishlar · Kunlar · Missiyalar · Kunlik hisobotlar · Harakatlar</i>');
+  (r.key === 'today' ? '<i>Bugungi topshiriqlari, davomati va kunlik hisoboti</i>' : '<i>Varaqlar: Xulosa · Bajarilgan ishlar · Kunlar · Topshiriqlar · Kunlik hisobotlar · Harakatlar</i>');
 const teamFile = (r, viewer = null) => (r.key === 'today' ? excel.buildDay(r.from, { viewer }) : excel.buildTeamPeriod(r.from, r.to, { viewer }));
 const teamCaption = (r) =>
   `📥 <b>${esc(config.companyName)}</b> — butun jamoa, ${esc(r.title)}\n🗓 ${periodText(r)}\n` +
-  (r.key === 'today' ? '<i>Har bir hodimning bugungi ishlari, davomati va kunlik hisobotlari</i>' : '<i>Varaqlar: Jamlanma · Kunlar · Missiyalar · Kechikkanlar · Bajarilganlar · Kunlik hisobotlar</i>');
+  (r.key === 'today' ? '<i>Har bir hodimning bugungi ishlari, davomati va kunlik hisobotlari</i>' : '<i>Varaqlar: Jamlanma · Kunlar · Topshiriqlar · Kechikkanlar · Bajarilganlar · Kunlik hisobotlar</i>');
 
 // 1) ADMIN: davrni tanlash
 const periodKeyboard = (empId = null) => {

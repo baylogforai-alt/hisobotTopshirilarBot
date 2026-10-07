@@ -65,7 +65,7 @@ const dayKeyboard = (empId, date) => {
   if (date !== t) rows.push([cb('📅 Bugunga qaytish', `hr:d:${empId}:${t}`)]);
   rows.push([cb('📜 Harakatlar tarixi', `hr:t:${empId}:${date}`), cb('🗓 Kun tanlash', `hr:pick:${empId}:${date}`)]);
   rows.push([cb('📊 7 kunlik', `hr:r:${empId}:7`), cb('📊 30 kunlik', `hr:r:${empId}:30`), cb('📊 Oylik / KPI', `rp:emp:${empId}:${time.month()}`)]);
-  rows.push([cb('🎯 Missiyalari', `hr:m:${empId}`), cb('📥 Excel (davr)', `xl:emp:${empId}`)]);
+  rows.push([cb('🎯 Topshiriqlari', `hr:m:${empId}`), cb('📥 Excel (davr)', `xl:emp:${empId}`)]);
   rows.push([cb('👤 Kartochka', `emp:${empId}`), cb('⬅️ Hodimlar', 'hr:home')]);
   return inline(rows);
 };
@@ -158,7 +158,7 @@ const sendExcel = async (ctx, empId, days) => {
   activity.mark(ctx, 'excel', { title: `${emp.full_name} — ${days} kun` });
   const { buffer, filename } = await excel.buildEmployeeHistory(emp, days);
   return notify.docToUser(botOf(ctx), ctx.from.id, buffer, filename,
-    `📥 <b>${esc(emp.full_name)}</b> — so'nggi ${days} kunlik to'liq faoliyat arxivi.\n<i>Varaqlar: Xulosa · Bajarilgan ishlar · Kunlar · Missiyalar · Kunlik hisobotlar · Harakatlar</i>`);
+    `📥 <b>${esc(emp.full_name)}</b> — so'nggi ${days} kunlik to'liq faoliyat arxivi.\n<i>Varaqlar: Xulosa · Bajarilgan ishlar · Kunlar · Topshiriqlar · Kunlik hisobotlar · Harakatlar</i>`);
 };
 
 const register = (bot) => {

@@ -212,10 +212,10 @@ const sendExcel = async (ctx) => {
     const emp = await employees.byId(sel.empId);
     if (!emp) return ctx.reply('❌ Hodim topilmadi.');
     file = await excel.buildEmployeePeriod(emp, sel.from, sel.to, { viewer: ctx.state.actor });
-    caption = `📥 <b>${esc(emp.full_name)}</b> — davr hisoboti\n🗓 <i>${time.prettyRange(sel.from, sel.to)} (${sel.days} kun)</i>\n<i>Varaqlar: Xulosa · Bajarilgan ishlar · Kunlar · Missiyalar · Kunlik hisobotlar · Harakatlar</i>`;
+    caption = `📥 <b>${esc(emp.full_name)}</b> — davr hisoboti\n🗓 <i>${time.prettyRange(sel.from, sel.to)} (${sel.days} kun)</i>\n<i>Varaqlar: Xulosa · Bajarilgan ishlar · Kunlar · Topshiriqlar · Kunlik hisobotlar · Harakatlar</i>`;
   } else {
     file = await excel.buildTeamPeriod(sel.from, sel.to, { viewer: ctx.state.actor });
-    caption = `📥 <b>${esc(config.companyName)}</b> — jamoa davr hisoboti\n🗓 <i>${time.prettyRange(sel.from, sel.to)} (${sel.days} kun)</i>\n<i>Varaqlar: Jamlanma · Kunlar · Missiyalar · Kechikkanlar · Bajarilganlar · Kunlik hisobotlar</i>`;
+    caption = `📥 <b>${esc(config.companyName)}</b> — jamoa davr hisoboti\n🗓 <i>${time.prettyRange(sel.from, sel.to)} (${sel.days} kun)</i>\n<i>Varaqlar: Jamlanma · Kunlar · Topshiriqlar · Kechikkanlar · Bajarilganlar · Kunlik hisobotlar</i>`;
   }
   return notify.docToUser(botOf(ctx), ctx.from.id, file.buffer, file.filename, caption);
 };

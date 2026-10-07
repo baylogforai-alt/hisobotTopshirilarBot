@@ -246,3 +246,17 @@ Qo'llanadi: `reviewersOf` (/bugun, ko'chirish/o'chirish, kelmayman, kunlik hisob
 Kun yakuni hisoboti (daily-report `toSeeAll {quiet}`) ham bormaydi (7-okt, 2-so'rov). Qolganlar (haftalik/oylik hisobot, E'lon, zaxira) — avvalgidek. Panel «🔕 Menga topshiriq / keldi-ketdi xabarlari» (`adm:qt:<0|1>`, bosgan admin o'zi uchun).
 Odilxon — `fixes.js` `odilxon-jim-20261007` (bir marta yoqiladi). Tekshiruvlar Jaxongir (CEO, admin) va bo'lim rahbarlariga boradi.
 `npm test` — 177/177 + 771/771.
+
+## 15. 7-okt-2026: «Ketdim» dan keyin «Bajardim» yopiq
+
+`flows.doneBlocked` — «Bajardim» faqat ishda turganda: Keldim yo'q → `DONE_NEEDS_CHECKIN`, Ketdim qilingan → `DONE_AFTER_CHECKOUT` (boshliq ozod). Bot (ro'yxat, bitta, bir nechtasi, isbot bosqichi) va ilova (`/api/tasks/:id/done`, 400) — hammasi shu funksiya orqali. Smoke ikkala faylda +.
+
+## 16. 7-okt-2026: Tugma va so'zlar BAYOMA bilan bir xil
+
+Foydalanuvchi: «BAYOMA boti qanday bo'lsa shu bilan deyarli 1 ga 1 bo'lsin, boshliq foydalanishga qiynalyapti» → tanlov: «So'z va tugmalar» (+ ilova).
+`ui.BTN`: «✅ Keldim», «🏁 Ketdim», «📋 Topshiriqlarim», «➕ O'zimga vazifa» (BAYOMA nomlari). Eski nomlar (`ui.LEGACY_BTN`: «✅ Ishga keldim» …)
+`common.legacyButtons` middleware'da yangisiga o'giriladi — hodim telefonidagi eski klaviatura ham ishlaydi. Xabarlar, Excel varaqlari («Topshiriqlar»),
+arxiv harakatlari, yordam matnida «missiya» → «topshiriq» (BAYOMA'ning o'zidagi «boshliq missiyasi», «hozir shu missiyani» iboralari qoldi).
+Buyruq `/topshiriqlarim` (eski `/missiyalarim` ham ishlaydi). Web App matnlari allaqachon BAYOMA'niki edi. `smoke-bayoma.js` `LABELS` endi bo'sh;
+15-bo'lim (Ketdimdan keyin Bajardim yopiq) tufayli BAYOMA testlarida Ketdimdan keyin `checked_out = NULL` qaytariladi.
+`npm test` — 178/178 + 773/773. Panel va BayLog qo'shimcha xabarlari (arxiv, kunlik hisobot, guruh e'lonlari) o'zgartirilmadi.

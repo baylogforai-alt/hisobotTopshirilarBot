@@ -449,7 +449,7 @@ const buildEmployeePeriod = async (emp, fromRaw, toRaw, { viewer = null } = {}) 
   total.getCell('h').numFmt = '0.00';
 
   // 4) Missiyalar (davrga tegishli barcha)
-  addTasksSheet(wb, visible(viewer, await tasks.forRange(emp.id, from, to)), `${config.companyName} — missiyalar`, `${who} · ${periodText}`, { withName: false, name: 'Missiyalar' });
+  addTasksSheet(wb, visible(viewer, await tasks.forRange(emp.id, from, to)), `${config.companyName} — topshiriqlar`, `${who} · ${periodText}`, { withName: false, name: 'Topshiriqlar' });
 
   // 5) Kunlik hisobotlar
   addReportsSheet(wb, s.reportRows, `${config.companyName} — kunlik hisobotlar`, `${who} · ${periodText}`, { withName: false });
@@ -525,15 +525,15 @@ const buildTeamPeriod = async (fromRaw, toRaw, { viewer = null } = {}) => {
   // 3) Missiyalar
   const all = [];
   for (const r of t.rows) all.push(...(await tasks.forRange(r.emp.id, from, to)));
-  addTasksSheet(wb, visible(viewer, all), `${config.companyName} — barcha missiyalar`, periodText, { name: 'Missiyalar' });
+  addTasksSheet(wb, visible(viewer, all), `${config.companyName} — barcha topshiriqlar`, periodText, { name: 'Topshiriqlar' });
 
   // 4) Kechikkanlar
   const today = time.today();
   const wsLate = wb.addWorksheet('Kechikkanlar');
   decorate(wsLate, [
-    { key: 'name', header: 'Hodim', width: 24 }, { key: 'title', header: 'Missiya', width: 52 }, { key: 'due', header: 'Muddat edi', width: 14 },
+    { key: 'name', header: 'Hodim', width: 24 }, { key: 'title', header: 'Topshiriq', width: 52 }, { key: 'due', header: 'Muddat edi', width: 14 },
     { key: 'days', header: 'Necha kun kechikdi', width: 18 }, { key: 'source', header: 'Kim berdi', width: 10 },
-  ], `${config.companyName} — kechikkan missiyalar`, `Holat: ${time.prettyDate(today)}`);
+  ], `${config.companyName} — kechikkan topshiriqlar`, `Holat: ${time.prettyDate(today)}`);
   const overdue = visible(viewer, await tasks.overdue());
   overdue.forEach((m) => { const row = wrap(wsLate.addRow({ name: m.full_name, title: m.title, due: m.due_date, days: time.diffDays(m.due_date, today), source: SOURCE[m.source] || '' })); colorCell(row.getCell('days'), RED); });
   if (!overdue.length) wsLate.addRow({ name: "— kechikkan ish yo'q 🎉 —" });

@@ -9,12 +9,20 @@ const esc = (s) =>
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
+/** Eski (BayLog) tugma nomlari — foydalanuvchi telefonidagi eski klaviatura ham ishlashi uchun yangisiga o'giriladi */
+const LEGACY_BTN = {
+  '✅ Ishga keldim': '✅ Keldim',
+  '🏁 Ishdan ketdim': '🏁 Ketdim',
+  '📋 Missiyalarim': '📋 Topshiriqlarim',
+  "➕ Missiya qo'shish": "➕ O'zimga vazifa",
+};
+
 const BTN = {
-  checkIn: '✅ Ishga keldim',
-  checkOut: '🏁 Ishdan ketdim',
-  myTasks: '📋 Missiyalarim',
+  checkIn: '✅ Keldim',
+  checkOut: '🏁 Ketdim',
+  myTasks: '📋 Topshiriqlarim',
   done: '✔️ Bajardim',
-  selfTask: "➕ Missiya qo'shish",
+  selfTask: "➕ O'zimga vazifa",
   dailyReport: '📝 Kunlik hisobot',
   myReport: '📊 Hisobotim',
   absence: '🙋 Kelmayman (sabab)',
@@ -290,7 +298,7 @@ const pctBar = (pct) => {
 const roleIcon = (role) => (role === 'admin' ? '👑' : role === 'head' ? '🎖' : '👤');
 
 module.exports = {
-  esc, BTN, LINE, mainKeyboard, kbFor, kbForEmp, urlButton, locationKeyboard, skipKeyboard, cancelKeyboard, cb, inline, dueKeyboard, startTimeKeyboard,
+  esc, BTN, LEGACY_BTN, LINE, mainKeyboard, kbFor, kbForEmp, urlButton, locationKeyboard, skipKeyboard, cancelKeyboard, cb, inline, dueKeyboard, startTimeKeyboard,
   PRIO_ICON, SOURCE_LABEL, MEDIA_ICON, MEDIA_LABEL, isGenericMediaTitle, mediaRows, ackRows, taskLine, taskList, doneKeyboard, doneMultiKeyboard, doneChecklist, proofKeyboard, reviewKeyboard, reviewMultiKeyboard, excuseKeyboard,
   intentKeyboard, dailyReviewKeyboard, joinKeyboard, manageKeyboard, taskMenuKeyboard, confirmKeyboard, panelKeyboard,
   backKeyboard, scoreKeyboard, pctBar, roleIcon,

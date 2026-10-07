@@ -95,17 +95,17 @@ const HELP_EMPLOYEE = `
 0️⃣ Har oyning 1-kuni «yangi ish oyi» xabari keladi — «✅ Tanishdim» ni bosing${config.monthStartRequired ? ' (shundan keyin «' + ui.BTN.checkIn + '» ochiladi)' : ''}.
 1️⃣ Ishga kelganingizda — <b>«${ui.BTN.checkIn}»</b> → joylashuvni yuborasiz${config.officeCheckinVideo ? ' → <b>video</b>' : ''} (ofis radiusida; hudud agenti — uyidan ${(config.fieldMinDistanceM / 1000).toLocaleString('uz')} km dan uzoqda). Kechiksangiz sabab so'raladi.
 📍 Hudud agenti borgan joyida — «${ui.BTN.visit}» → joylashuv → video yoki audio → izoh.
-2️⃣ Missiyalaringiz «${ui.BTN.myTasks}» da. Boshliq yangi topshiriq bersa (matn, 🎤 ovoz, 🎥 video yoki 📄 fayl) — xabar keladi, <b>«✅ Eshitdim, tushundim»</b> ni bosing (yoki «tushundim» deb yozing).
+2️⃣ Topshiriqlaringiz «${ui.BTN.myTasks}» da. Boshliq yangi topshiriq bersa (matn, 🎤 ovoz, 🎥 video yoki 📄 fayl) — xabar keladi, <b>«✅ Eshitdim, tushundim»</b> ni bosing (yoki «tushundim» deb yozing).
 3️⃣ Ishni tugatsangiz — <b>«${ui.BTN.done}»</b> → ro'yxatdan tanlang → isbot: rasm, video, audio yoki fayl (PDF, Excel, Word…). Boshliq tekshirib qabul qiladi yoki kamchilik yozib qaytaradi. «Bajardim» — faqat «${ui.BTN.checkIn}» dan keyin.
 4️⃣ O'zingizga reja yozish — «${ui.BTN.selfTask}» (har birini yangi qatorda; boshiga <b>!</b> — muhim). Kun ichida paydo bo'lgan ish: <code>/bugun matn</code>.
 5️⃣ Kun oxirida — <b>«${ui.BTN.dailyReport}»</b>: bugun nima qildingiz, qanday muammo bo'ldi — o'z so'zingiz bilan (rasm ham mumkin). Boshliq o'qiydi.
 6️⃣ Ketishda — «${ui.BTN.checkOut}» → <b>joylashuv</b> → <b>izoh</b> (nima qildingiz). Ish tugashidan oldin ketsangiz — «erta ketdi» deb belgilanadi.
-📌 «${ui.BTN.stActive}», «${ui.BTN.stFix}», «${ui.BTN.stReview}», «${ui.BTN.stDone}» — missiyalar holati bo'yicha (nechta va qaysilari).
+📌 «${ui.BTN.stActive}», «${ui.BTN.stFix}», «${ui.BTN.stReview}», «${ui.BTN.stDone}» — topshiriqlar holati bo'yicha (nechta va qaysilari).
 
 ⏰ Kech qolsangiz — «${ui.BTN.late}» → sababini yozing yoki video/audio yuboring. Ish boshlanishidan kamida ${config.lateNoticeMinBefore} daqiqa oldin aytsangiz — kechikish hisoblanmaydi.
 🙋 Kela olmasangiz — «${ui.BTN.absence}» → sabab (matn, video, audio yoki rasm). Rahbar yoki boshliq tasdiqlasa kun sababli hisoblanadi.
 ↩️ Ishingiz kamchilik bilan qaytarilsa — «👌 Xo'p, tushundim» yoki «💬 O'z javobim» (matn, ovoz, video, rasm, fayl) bilan javob qaytarasiz.
-⏰ Missiyaga boshlanish soati qo'yilgan bo'lsa — aynan o'sha soatda «hozir bajaring» xabari keladi.
+⏰ Topshiriqqa boshlanish soati qo'yilgan bo'lsa — aynan o'sha soatda «hozir bajaring» xabari keladi.
 🔴 Muddati o'tgan topshiriqlar qizil belgi bilan ko'rinadi va KPI ga ta'sir qiladi. Bajarilmagan ish yo'qolmaydi — ertangi ro'yxatda turadi.
 📊 «${ui.BTN.myReport}» — shu oydagi natijalaringiz va KPI. /excel — hisobotingiz Excel faylda.
 🔔 «${ui.BTN.reminders}» — topshiriq eslatmalari qachon kelsin (har N soat yoki o'z vaqtlaringiz) — direktor tasdiqlaydi.
@@ -114,7 +114,7 @@ const HELP_EMPLOYEE = `
 
 📱 /ilova — xuddi shu ishlar qulay oynada (agar ulangan bo'lsa).
 
-<b>Buyruqlar:</b> /menu · /ilova · /keldim · /kech · /kelmayman · /ketdim · /missiyalarim · /bajardim · /vazifa · /bugun · /kunlik · /faol · /kutilmoqda · /bajarilgan · /korib_chiqish · /hisobot · /oylik · /kalkulyator · /eslatma · /tashrif · /excel · /id · /yordam
+<b>Buyruqlar:</b> /menu · /ilova · /keldim · /kech · /kelmayman · /ketdim · /topshiriqlarim · /bajardim · /vazifa · /bugun · /kunlik · /faol · /kutilmoqda · /bajarilgan · /korib_chiqish · /hisobot · /oylik · /kalkulyator · /eslatma · /tashrif · /excel · /id · /yordam
 `.trim();
 
 const HELP_MANAGER = `
@@ -203,7 +203,15 @@ const dedupeCallbacks = async (ctx, next) => {
   }
 };
 
+/** Eski klaviaturadagi tugma bosilsa («✅ Ishga keldim» …) — yangi nomga o'giriladi, handlerlar bitta nomni biladi */
+const legacyButtons = (ctx, next) => {
+  const m = ctx.message;
+  if (m && typeof m.text === 'string' && ui.LEGACY_BTN[m.text.trim()]) m.text = ui.LEGACY_BTN[m.text.trim()];
+  return next();
+};
+
 const register = (bot) => {
+  bot.use(legacyButtons);
   bot.use(dedupeCallbacks);
   bot.use(attachEmployee);
   bot.use(groupGuard);

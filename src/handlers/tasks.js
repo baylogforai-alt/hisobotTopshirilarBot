@@ -41,7 +41,7 @@ const showMyTasks = async (ctx) => {
   const awaiting = await tasks.awaitingReviewFor(emp.id);
   activity.mark(ctx, 'my_tasks');
   const text =
-    `📋 <b>MISSIYALARIM</b> · ${time.prettyDate(time.today())}\n${ui.LINE}\n` +
+    `📋 <b>TOPSHIRIQLARIM</b> · ${time.prettyDate(time.today())}\n${ui.LINE}\n` +
     `⏳ <b>Ochiq (${open.length}):</b>\n${ui.taskList(open)}` +
     (awaiting.length ? `\n\n🕓 <b>Tekshiruvda (${awaiting.length}):</b>\n${ui.taskList(awaiting)}` : '') +
     (open.length ? `\n\n⚙️ tugmasi — tahrirlash / muddat (faqat o'zingiz yozgan, muddati o'tmaganlar). O'chirib bo'lmaydi.` : '');
@@ -90,7 +90,7 @@ const startSelfTask = async (ctx) => {
   if (!mustEmployee(ctx)) return;
   session.set(ctx.from.id, { step: 'self_task_text' });
   return ctx.reply(
-    `➕ <b>Missiya matnini yozing</b> — yoki 🎤 ovozli xabar, 🎥 video, 📄 fayl, 🖼 rasm yuboring.
+    `➕ <b>Topshiriq matnini yozing</b> — yoki 🎤 ovozli xabar, 🎥 video, 📄 fayl, 🖼 rasm yuboring.
 Bir nechta bo'lsa — har birini yangi qatorda.
 
 <i>Misol:</i>
@@ -106,8 +106,8 @@ const handleSelfTaskText = async (ctx) => {
   const lines = flows.splitTitles(ctx.message.text);
   if (!lines.length) return ctx.reply('Matn bo\'sh. Qaytadan yozing:', ui.cancelKeyboard());
   session.set(ctx.from.id, { step: 'self_task_due', titles: lines });
-  activity.mark(ctx, 'note', { title: lines.join(' | '), detail: 'missiya matni sifatida yozdi' });
-  await ctx.reply(`📝 ${lines.length} ta missiya. Muddatini tanlang:`, { reply_markup: { remove_keyboard: true } });
+  activity.mark(ctx, 'note', { title: lines.join(' | '), detail: 'topshiriq matni sifatida yozdi' });
+  await ctx.reply(`📝 ${lines.length} ta topshiriq. Muddatini tanlang:`, { reply_markup: { remove_keyboard: true } });
   return ctx.reply('⏱ Muddat:', ui.dueKeyboard('st'));
 };
 
@@ -201,7 +201,7 @@ const createSelfTasks = async (ctx, dueDate, startTime = null) => {
   session.clear(ctx.from.id);
   const created = await flows.addSelfTasks(botOf(ctx), emp, s.titles, dueDate, { media: s.media || null, startTime });
   ctx.state.logged = true;
-  await render(ctx, `✅ <b>${created.length} ta missiya qo'shildi</b> — muddat: ${flows.whenText(dueDate, startTime)}\n\n${ui.taskList(created)}`);
+  await render(ctx, `✅ <b>${created.length} ta topshiriq qo'shildi</b> — muddat: ${flows.whenText(dueDate, startTime)}\n\n${ui.taskList(created)}`);
   await ctx.reply('👌', ui.kbFor(ctx));
 };
 
@@ -432,7 +432,7 @@ const showDone = async (ctx) => {
   const blocked = await flows.doneBlocked(emp);
   if (blocked && open.length) return render(ctx, `${blocked}
 
-📋 Ochiq missiyalar: <b>${open.length}</b>`);
+📋 Ochiq topshiriqlar: <b>${open.length}</b>`);
   return render(ctx, ui.doneChecklist(open, doneToday), ui.doneKeyboard(open));
 };
 
@@ -496,11 +496,11 @@ const finishDone = async (ctx, proof) => {
   const overdue = String(t.done_at).slice(0, 10) > t.due_date;
   const left = (await tasks.openFor(emp.id)).length;
   activity.mark(ctx, 'task_done', { title: t.title, detail: `${left ? `yana ${left} ta qoldi` : 'barcha ishlar tugadi'}${proof ? ' · isbot bilan' : ''}` });
-  const text = `✅ <b>${esc(t.title)}</b> — tekshiruvga yuborildi${proof ? ' (isbot bilan)' : ''}.${overdue ? '\n⚠️ Muddatdan kech bajarildi.' : ''}${album ? '\n<i>ℹ️ Albomdan bitta fayl isbot sifatida saqlandi.</i>' : ''}\n<i>${left ? `Qolgan: ${left} ta` : '🎉 Ochiq missiya qolmadi!'}</i>`;
+  const text = `✅ <b>${esc(t.title)}</b> — tekshiruvga yuborildi${proof ? ' (isbot bilan)' : ''}.${overdue ? '\n⚠️ Muddatdan kech bajarildi.' : ''}${album ? '\n<i>ℹ️ Albomdan bitta fayl isbot sifatida saqlandi.</i>' : ''}\n<i>${left ? `Qolgan: ${left} ta` : '🎉 Ochiq topshiriq qolmadi!'}</i>`;
   if (ctx.updateType === 'callback_query') await render(ctx, text); else await ctx.reply(text, { parse_mode: 'HTML' });
   await ctx.reply('👌', ui.kbFor(ctx));
   if (config.announceDone) {
-    await notify.toGroup(botOf(ctx), `✅ ${reports.mentionHtml(emp)} — «<b>${esc(t.title)}</b>» bajarildi · ${time.clock(t.done_at)}\n<i>${left ? `Qolgan missiyalar: ${left} ta` : '🎉 Barcha missiyalar bajarildi!'}</i>`);
+    await notify.toGroup(botOf(ctx), `✅ ${reports.mentionHtml(emp)} — «<b>${esc(t.title)}</b>» bajarildi · ${time.clock(t.done_at)}\n<i>${left ? `Qolgan topshiriqlar: ${left} ta` : '🎉 Barcha topshiriqlar bajarildi!'}</i>`);
   }
   await notify.toDoneReviewers(
     botOf(ctx), emp, t,
@@ -609,12 +609,12 @@ const finishDoneMany = async (ctx, proof, ids) => {
   ];
   const text = `✅ <b>${own.length + sent.length} ta ish belgilandi</b>${proof ? ' (isbot bilan)' : ''}:\n${lines.join('\n')}` +
     (sent.length ? '\n\n<i>🕓 — tekshiruvga yuborildi.</i>' : '') +
-    `\n<i>${left ? `Qolgan: ${left} ta` : '🎉 Ochiq missiya qolmadi!'}</i>`;
+    `\n<i>${left ? `Qolgan: ${left} ta` : '🎉 Ochiq topshiriq qolmadi!'}</i>`;
   if (ctx.updateType === 'callback_query') await render(ctx, text); else await ctx.reply(text, { parse_mode: 'HTML' });
   await ctx.reply('👌', ui.kbFor(ctx));
   const all = [...own, ...sent];
   if (config.announceDone && sent.length) {
-    await notify.toGroup(botOf(ctx), `✅ ${reports.mentionHtml(emp)} — ${sent.length} ta ish bajarildi:\n${sent.map((t) => `• <b>${esc(t.title)}</b>`).join('\n')}\n<i>${left ? `Qolgan missiyalar: ${left} ta` : '🎉 Barcha missiyalar bajarildi!'}</i>`);
+    await notify.toGroup(botOf(ctx), `✅ ${reports.mentionHtml(emp)} — ${sent.length} ta ish bajarildi:\n${sent.map((t) => `• <b>${esc(t.title)}</b>`).join('\n')}\n<i>${left ? `Qolgan topshiriqlar: ${left} ta` : '🎉 Barcha topshiriqlar bajarildi!'}</i>`);
   }
   // tekshiruvchilar har ishda boshqacha bo'lishi mumkin (topshiriqni bergan odam) — bir xil oluvchilar to'plamiga bitta xabar
   const groups = new Map();
@@ -935,7 +935,7 @@ const addTodayTask = async (ctx) => {
 
 const register = (bot) => {
   bot.hears(ui.BTN.myTasks, showMyTasks);
-  bot.command('missiyalarim', showMyTasks);
+  bot.command(['topshiriqlarim', 'missiyalarim'], showMyTasks);
   bot.command('bugun', addTodayTask);
   bot.command('topshiriqlarim', showMyTasks);
   // ak:<id> · ak:l:<id,id,…> (xabardagi ro'yxat) · ak:all — eski xabarlar

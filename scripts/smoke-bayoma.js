@@ -100,12 +100,8 @@ const USERS = {
 let uid = 1;
 const base = (from) => ({ message_id: (mid += 1), from: USERS[from], chat: { id: from, type: 'private' }, date: Math.floor(Date.now() / 1000) });
 // BAYOMA tugma nomlari → BayLog nomlari
-const LABELS = {
-  '✅ Keldim': '✅ Ishga keldim',
-  '🏁 Ketdim': '🏁 Ishdan ketdim',
-  '📋 Topshiriqlarim': '📋 Missiyalarim',
-  "➕ O'zimga vazifa": "➕ Missiya qo'shish",
-};
+// 7-okt-2026 dan BayLog tugma nomlari BAYOMA bilan bir xil — o'girish kerak emas
+const LABELS = {};
 const label = (t) => LABELS[t] || t;
 const msg = (from, rawText) => {
   const text = label(rawText);
@@ -288,7 +284,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   open = await tasks.openFor(akbar.id);
   ok('2 ta o\'z vazifasi qo\'shildi (ertaga)', open.length === 4 && open.filter((t) => t.source === 'self').length === 2);
   await send(msg(99999, '📋 Topshiriqlarim'));
-  ok('topshiriqlarim ro\'yxati', lastText(99999).includes('MISSIYALARIM') && lastText(99999).includes('Oylik hisobot'));
+  ok('topshiriqlarim ro\'yxati', lastText(99999).includes('TOPSHIRIQLARIM') && lastText(99999).includes('Oylik hisobot'));
   const selfTask = open.find((t) => t.source === 'self');
   const headTask = open.find((t) => t.source === 'head' && t.priority === 'high');
   await send(cbq(99999, `tk:${headTask.id}`));
@@ -577,6 +573,8 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   const coRow = await attendance.get(akbar.id);
   ok('ketdim — lokatsiya va izoh saqlandi', (await attendance.isCheckedOut(akbar.id)) && lastText(99999).includes('yakunlandi') && coRow.checkout_note === 'Hisobotni topshirib ketdim' && Number(coRow.checkout_dist) < 150);
   ok('ketdi xabarida izoh va xarita, ogohlantirishsiz', sent.slice(mark).some((s) => /ketdi/.test(s.payload.text || '') && /Hisobotni topshirib/.test(s.payload.text || '') && /maps\.google/.test(s.payload.text || '') && !/ofisdan tashqarida/.test(s.payload.text || '')));
+  // 7-okt: Ketdimdan keyin «Bajardim» yopiq — keyingi bo'limlar uchun hodim yana «ishda» bo'lsin
+  await db.query('UPDATE attendance SET checked_out = NULL WHERE employee_id = $1 AND work_date = $2', [akbar.id, bugun]);
 
   // =========================================================================
   console.log('\n— 13b. Umumiy ish vaqti —');
@@ -997,6 +995,8 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   await send(loc(99999, 41.3112, 69.2798));
   await send(msg(99999, 'Ish tugadi'));
   ok('HR ga «ketdi» xabari bordi', sent.slice(mark).some((s) => Number(s.payload.chat_id) === 50001 && (s.payload.text || '').includes('ketdi')));
+  // 7-okt: Ketdimdan keyin «Bajardim» yopiq — keyingi bo'limlar uchun hodim yana «ishda» bo'lsin
+  await db.query('UPDATE attendance SET checked_out = NULL WHERE employee_id = $1 AND work_date = $2', [akbar.id, bugun]);
   await send(msg(50001, '📈 Hisobotlar'));
   ok('HR hisobotlarida videolar va tashriflar tugmasi', findCb(50001, /^vw:vids$/) && findCb(50001, /^adm:visits$/));
   await send(cbq(50001, 'vw:vids'));
@@ -1144,6 +1144,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   // davomat (hodimning o'zi)
   w = await call(99999, 'POST', '/api/att/late', { reason: 'Tirbandlik' });
   ok('kelgandan keyin «kech qolaman» — rad', w.status === 400);
+  if (!(await attendance.isCheckedOut(akbar.id))) await attendance.checkOut(akbar.id);
   w = await call(99999, 'POST', '/api/att/checkout');
   ok('ikkinchi marta «ketdim» — rad', w.status === 400);
   {
@@ -1157,6 +1158,8 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     await send(msg(99999, 'Kun yakunlandi'));
     ok('ilova: lokatsiya + izohdan keyin ketdi', await attendance.isCheckedOut(akbar.id));
   }
+  // 7-okt: Ketdimdan keyin «Bajardim» yopiq — keyingi bo'limlar uchun hodim yana «ishda» bo'lsin
+  await db.query('UPDATE attendance SET checked_out = NULL WHERE employee_id = $1 AND work_date = $2', [akbar.id, bugun]);
   await db.query('DELETE FROM attendance WHERE employee_id = $1 AND work_date = $2', [sardor.id, bugun]);
   mark = sent.length;
   w = await call(30001, 'POST', '/api/att/late', { reason: 'Shifokorga boraman' });
@@ -1750,6 +1753,8 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     await send(loc(99999, 41.3112, 69.2798));
     await send(msg(99999, 'Ish tugadi'));
     ok('Ketdim: HR ga bor, Odilxonga yo\'q', textTo(mark, 50001, /ketdi/) && countSince(mark, 70001) === 0);
+      // 7-okt: Ketdimdan keyin «Bajardim» yopiq — keyingi bo'limlar uchun hodim yana «ishda» bo'lsin
+      await db.query('UPDATE attendance SET checked_out = NULL WHERE employee_id = $1 AND work_date = $2', [akbar.id, bugun]);
     const noBoss = await notifyS.seeAllIds({ noBoss: true });
     ok('kun yakuni / ertalabki holat oluvchilari: HR bor, Odilxon yo\'q', noBoss.includes(50001) && !noBoss.includes(70001) && (await notifyS.seeAllIds()).includes(70001));
     mark = sent.length;
@@ -2511,6 +2516,14 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     await send(cbq(60021, `done:${nt.id}`));
     ok('Keldimdan keyin — isbot so\'raladi', session.get(60021).step === 'done_proof');
     session.clear(60021);
+    // 7-okt: «Ketdim» dan keyin ham «Bajardim» yopiq
+    await attendance.checkOut(ye.id);
+    mark = sent.length;
+    await send(cbq(60021, `done:${nt.id}`));
+    ok('Ketdimdan keyin — «Bajardim» yopiq', session.get(60021).step !== 'done_proof' && textTo(mark, 60021, /qilgansiz/));
+    w = await call(60021, 'POST', `/api/tasks/${nt.id}/done`);
+    ok('ilova: Ketdimdan keyin «Bajardim» — 400', w.status === 400);
+    await db.query('UPDATE attendance SET checked_out = NULL WHERE employee_id = $1 AND work_date = $2', [ye.id, bugun]);
 
     // 2. Ish tugashi: umumiy 18:00, hodimga alohida; erta ketish
     let wdx = bugun;

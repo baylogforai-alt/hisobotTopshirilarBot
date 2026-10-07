@@ -211,12 +211,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('«kelmayman» javobi saqlandi + boshliqqa xabar', (await attendance.get(sardor.id)).intent === 'no' && lastText(20001).includes('kelmasligini'));
   ok('guruhga ham e\'lon', allText(GROUP).includes('kelmasligini'));
 
-  await send(msg(99999, '✅ Ishga keldim'));
+  await send(msg(99999, '✅ Ishga keldim')); // eski klaviatura nomi — yangisiga o'giriladi
   ok("joylashuv so'raldi", lastText(99999).includes('Joylashuvni yuborish'));
   await send(loc(99999, 41.35, 69.35));
   ok('uzoqdan — rad etildi + checkin_far yozildi', lastText(99999).includes('uzoqdasiz') && (await activity.forDay(akbar.id, bugun)).some((a) => a.action === 'checkin_far'));
   mark = sent.length;
-  await send(msg(99999, '✅ Ishga keldim'));
+  await send(msg(99999, '✅ Keldim'));
   await send(loc(99999, 41.3112, 69.2798));
   ok('ofisdan — qabul qilindi', (await attendance.isCheckedIn(akbar.id)) && lastText(99999).match(/qayd etildi|kech keldingiz/));
   ok('checkin harakati yozildi', (await activity.forDay(akbar.id, bugun)).some((a) => a.action === 'checkin'));
@@ -235,7 +235,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('2 ta topshiriq yaratildi, muhim birinchi', open.length === 2 && open[0].priority === 'high' && open[0].source === 'head');
   ok('hodimga xabar bordi + assigned harakati', lastText(99999).includes('Yangi topshiriq') && (await activity.forDay(akbar.id, bugun)).some((a) => a.action === 'assigned'));
 
-  await send(msg(99999, "➕ Missiya qo'shish"));
+  await send(msg(99999, "➕ O'zimga vazifa"));
   await send(msg(99999, '1. Kassani tekshirish\n2. Hisob-fakturalar'));
   ok('muddat tugmalari (1 oy ham bor)', findCb(99999, /^st:due:30$/));
   await send(cbq(99999, 'st:due:1'));
@@ -247,8 +247,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await send(msg(99999, '/bugun Yangi mijoz bilan uchrashuv'));
   open = await tasks.openFor(akbar.id);
   ok('/bugun — bugungi topshiriq qo\'shildi', open.some((t) => t.title === 'Yangi mijoz bilan uchrashuv' && t.due_date === bugun));
-  await send(msg(99999, '📋 Missiyalarim'));
-  ok("missiyalarim ro'yxati", lastText(99999).includes('MISSIYALARIM') && lastText(99999).includes('Oylik hisobot'));
+  await send(msg(99999, '📋 Topshiriqlarim'));
+  ok("missiyalarim ro'yxati", lastText(99999).includes('TOPSHIRIQLARIM') && lastText(99999).includes('Oylik hisobot'));
 
   // =========================================================================
   console.log('\n— 5. Bajardim (rasm) → tekshiruv → guruh e\'loni —');
@@ -313,7 +313,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // Sardor keldi, hisobot topshirmay ketmoqchi → so'raladi
   await attendance.checkIn(sardor, null);
-  await send(msg(30001, '🏁 Ishdan ketdim'));
+  await send(msg(30001, '🏁 Ketdim'));
   ok("ketdim → joylashuv so'raldi", session.get(30001).step === 'awaiting_checkout_location');
   await send(loc(30001, 41.3112, 69.2798));
   ok("ketdim → izoh so'raldi", session.get(30001).step === 'checkout_note');
@@ -454,12 +454,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const p1 = await excel.buildEmployeePeriod(akbar, time.addDays(bugun, -6), bugun);
   const wb2 = new ExcelJS.Workbook();
   await wb2.xlsx.load(p1.buffer);
-  ok('hodim davr Excel: 6 varaq', ['Xulosa', 'Bajarilgan ishlar', 'Kunlar', 'Missiyalar', 'Kunlik hisobotlar', 'Harakatlar'].every((n) => wb2.getWorksheet(n)));
+  ok('hodim davr Excel: 6 varaq', ['Xulosa', 'Bajarilgan ishlar', 'Kunlar', 'Topshiriqlar', 'Kunlik hisobotlar', 'Harakatlar'].every((n) => wb2.getWorksheet(n)));
   ok('Kunlar varag\'ida kunlik hisobot matni bor', JSON.stringify(wb2.getWorksheet('Kunlar').getSheetValues()).includes('yangilangan'));
   const p2 = await excel.buildTeamPeriod(time.addDays(bugun, -6), bugun);
   const wb3 = new ExcelJS.Workbook();
   await wb3.xlsx.load(p2.buffer);
-  ok('jamoa davr Excel: 6 varaq', ['Jamlanma', 'Kunlar', 'Missiyalar', 'Kechikkanlar', 'Bajarilganlar', 'Kunlik hisobotlar'].every((n) => wb3.getWorksheet(n)));
+  ok('jamoa davr Excel: 6 varaq', ['Jamlanma', 'Kunlar', 'Topshiriqlar', 'Kechikkanlar', 'Bajarilganlar', 'Kunlik hisobotlar'].every((n) => wb3.getWorksheet(n)));
   const d0 = await excel.buildDay();
   ok('kunlik Excel', d0.buffer.length > 1000);
 
@@ -581,7 +581,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('tanilmagan matn — yordam + note yozildi', lastText(99999).includes('Tushunmadim') && (await activity.forDay(akbar.id, bugun)).some((a) => a.action === 'note' && a.title === 'ombor kaliti topilmadi'));
   await send(msg(99999, '📊 Hisobotim'));
   ok('hodim hisoboti (kunlik hisobotlar soni bilan)', lastText(99999).includes('Kunlik hisobotlar') && lastText(99999).includes('KPI'));
-  await send(msg(99999, '🏁 Ishdan ketdim'));
+  await send(msg(99999, '🏁 Ketdim'));
   await send(loc(99999, 41.3112, 69.2798));
   await send(msg(99999, 'Hisobotlar tayyor'));
   ok('ketdim (hisobot bor — so\'ralmaydi)', (await attendance.isCheckedOut(akbar.id)) && lastText(99999).includes('yakunlandi') && !session.get(99999).step);
@@ -665,7 +665,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   console.log("\n— Media topshiriq Missiyalarim'da ochiladi —");
   {
     const voiceTask = await tasks.create({ employeeId: akbar.id, title: '🎤 Ovozli topshiriq', dueDate: bugun, createdBy: 20001, source: 'head', media: { type: 'voice', fileId: 'VOICE_T' } });
-    await send(msg(99999, '📋 Missiyalarim'));
+    await send(msg(99999, '📋 Topshiriqlarim'));
     const txt = lastText(99999);
     ok("ro'yxatda beruvchi ismi va berilgan vaqti", txt.includes('bergan: Bobur') && txt.includes('berilgan:'));
     ok('ovozli topshiriqni eshitish tugmasi', Boolean(findCb(99999, new RegExp(`^tk:media:${voiceTask.id}$`))));
@@ -679,6 +679,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   for (const ttl of ['Ombor qoldig\'i', 'Yuk xatlarini tekshirish', 'Mijozga qo\'ng\'iroq']) await send(msg(99999, `/bugun ${ttl}`));
   const mOpen = (await tasks.openFor(akbar.id)).filter((x) => ["Ombor qoldig'i", 'Yuk xatlarini tekshirish', "Mijozga qo'ng'iroq"].includes(x.title));
   ok('3 ta yangi ish', mOpen.length === 3);
+  // 7-okt: Ketdimdan keyin «Bajardim» yopiq
+  await send(msg(99999, '✔️ Bajardim'));
+  ok('Ketdimdan keyin «Bajardim» yopiq', lastText(99999).includes('Ketdim» qilgansiz'));
+  // hodim hali ishda deb olamiz (Ketdim bekor)
+  await db.query('UPDATE attendance SET checked_out = NULL WHERE employee_id = $1 AND work_date = $2', [akbar.id, bugun]);
   await send(msg(99999, '✔️ Bajardim'));
   ok('«Bir nechtasini birdaniga» tugmasi', Boolean(findCb(99999, /^done:multi$/)));
   await send(cbq(99999, 'done:multi'));

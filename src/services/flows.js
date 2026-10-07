@@ -454,9 +454,14 @@ const decideKpi = async (bot, employeeId, month, status, byTgId) => {
  * Boshliq (hodim emas) — ozod. null — ruxsat; matn — rad sababi.
  */
 const DONE_NEEDS_CHECKIN = `🔒 <b>Avval «${ui.BTN.checkIn}» bosing.</b>\nIshga kelganingiz qayd etilmaguncha vazifani «${ui.BTN.done}» qilib bo'lmaydi.`;
+const DONE_AFTER_CHECKOUT = `🔒 <b>Siz bugun «${ui.BTN.checkOut}» qilgansiz.</b>
+Ishdan ketgandan keyin vazifani «${ui.BTN.done}» qilib bo'lmaydi — ertaga «${ui.BTN.checkIn}» dan keyin belgilang.`;
+/** «Bajardim» faqat ishda turganda: Keldim bor va Ketdim yo'q (boshliq ozod) */
 const doneBlocked = async (emp) => {
   if (!emp || employees.isBoss(emp)) return null;
-  return (await attendance.isCheckedIn(emp.id)) ? null : DONE_NEEDS_CHECKIN;
+  const row = await attendance.get(emp.id);
+  if (!row || !row.checked_in) return DONE_NEEDS_CHECKIN;
+  return row.checked_out ? DONE_AFTER_CHECKOUT : null;
 };
 
 const welcome = async (bot, employee) => {

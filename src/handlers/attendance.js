@@ -51,7 +51,7 @@ const doCheckIn = async (ctx) => {
     const open = await tasks.openFor(emp.id);
     activity.mark(ctx, 'checkin_repeat', { detail: `allaqachon kelgan (${time.clock(row.checked_in)})` });
     return ctx.reply(
-      `ℹ️ Siz bugun allaqachon kelgansiz (${time.clock(row.checked_in)}).\n\n<b>Ochiq missiyalar (${open.length}):</b>\n${ui.taskList(open)}`,
+      `ℹ️ Siz bugun allaqachon kelgansiz (${time.clock(row.checked_in)}).\n\n<b>Ochiq topshiriqlar (${open.length}):</b>\n${ui.taskList(open)}`,
       { parse_mode: 'HTML', ...ui.kbFor(ctx) },
     );
   }
@@ -262,7 +262,7 @@ const finishCheckIn = async (ctx, pending, proof) => {
     `✅ <b>Kelganingiz qayd etildi</b> — ${time.clock(res.row.checked_in)}${isLate ? ` ⏰ <i>${time.prettyDuration(res.late)} kech</i>` : ''}` +
       `${excusedLate ? ` ⏰ <i>${time.prettyDuration(res.late)} kech — oldindan ogohlantirgansiz, hisoblanmaydi ✅</i>` : ''}\n` +
       `<i>${time.prettyDate(time.today())}</i>${distText}${proof ? ' · 🎥 video' : ''}\n\n` +
-      (open.length ? `📋 <b>Bugungi missiyalar (${open.length}):</b>\n${ui.taskList(open)}\n\nBajargach «${ui.BTN.done}» bilan belgilang.` : `📭 Hozircha ochiq missiya yo'q. «${ui.BTN.selfTask}» bilan reja yozing.`),
+      (open.length ? `📋 <b>Bugungi topshiriqlar (${open.length}):</b>\n${ui.taskList(open)}\n\nBajargach «${ui.BTN.done}» bilan belgilang.` : `📭 Hozircha ochiq topshiriq yo'q. «${ui.BTN.selfTask}» bilan reja yozing.`),
     { parse_mode: 'HTML', ...ui.kbFor(ctx) },
   );
 
@@ -277,7 +277,7 @@ const finishCheckIn = async (ctx, pending, proof) => {
     (open.length ? `\n📋 ochiq: ${open.length}${open.some((t) => t.due_date < time.today()) ? ' (🔴 kechikkan bor)' : ''}` : '');
   await notify.toAttendanceWatchers(botOf(ctx), emp, text, {}, proof);
   await notify.toArchive(botOf(ctx), text, proof);
-  if (config.announceDone) await notify.toGroup(botOf(ctx), `${line}${distText}${open.length ? `\n🎯 Bugungi missiyalari: ${open.length} ta` : ''}`);
+  if (config.announceDone) await notify.toGroup(botOf(ctx), `${line}${distText}${open.length ? `\n🎯 Bugungi topshiriqlari: ${open.length} ta` : ''}`);
   if (offDay) {
     // 5-okt qarori: qo'shimcha haq faqat boshliq oldindan chaqirgan bo'lsa (Panel → «📅 Dam olish kuniga chaqirish»)
     const call = await extradays.forDay(emp.id, res.row.work_date);
@@ -396,7 +396,7 @@ const handleCheckoutNote = async (ctx) => {
   await ctx.reply(
     `🏁 <b>Ish kuni yakunlandi</b> — ${time.clock(row.checked_out)}${worked !== null ? ` · ⏱ ${time.prettyDuration(worked)}` : ''}${early ? ` · ⚠️ ${time.prettyDuration(early)} erta` : ''}\n\n` +
       `✅ Bugun bajardingiz: <b>${done.length}</b> ta\n` +
-      (open.length ? `⏳ Ochiq qoldi (${open.length}) — ertangi ro'yxatda turadi:\n${ui.taskList(open)}` : `🎉 Ochiq missiya qolmadi. Barakalla!`),
+      (open.length ? `⏳ Ochiq qoldi (${open.length}) — ertangi ro'yxatda turadi:\n${ui.taskList(open)}` : `🎉 Ochiq topshiriq qolmadi. Barakalla!`),
     { parse_mode: 'HTML', ...ui.kbFor(ctx) },
   );
   if (config.announceDone) {

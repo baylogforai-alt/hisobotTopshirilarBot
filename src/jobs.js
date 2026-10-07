@@ -106,7 +106,7 @@ const morningCall = async (bot, nowMin) => {
     await notify.toUser(
       bot, e.tg_id,
       `🌅 <b>Xayrli tong, ${ui.esc(e.full_name)}!</b> Ish vaqti boshlandi.\n` +
-        (open.length ? `Bugun uchun <b>${open.length} ta</b> missiya kutmoqda.\n` : "Bugunga yozilgan missiya yo'q.\n") +
+        (open.length ? `Bugun uchun <b>${open.length} ta</b> topshiriq kutmoqda.\n` : "Bugunga yozilgan topshiriq yo'q.\n") +
         `\nIsh joyiga yetib kelgach «${ui.BTN.checkIn}» tugmasini bosing.\nKechiksangiz — «${ui.BTN.late}», kela olmasangiz — «${ui.BTN.absence}».`,
     );
     n += 1;
@@ -205,9 +205,9 @@ const start = (bot) => {
       await notify.toUser(
         bot, e.tg_id,
         `🌇 <b>Ish kuni tugadi.</b>\n\n` +
-          (open.length ? `Bajarilmagan <b>${open.length} ta</b> missiya ertangi kunga o'tadi:\n${ui.taskList(open)}\n\n` : `Bugungi barcha missiyalar bajarildi ✅\n\n`) +
+          (open.length ? `Bajarilmagan <b>${open.length} ta</b> topshiriq ertangi kunga o'tadi:\n${ui.taskList(open)}\n\n` : `Bugungi barcha topshiriqlar bajarildi ✅\n\n`) +
           (config.dailyReportRequired && !rep ? `📝 <b>Kunlik hisobotingizni</b> «${ui.BTN.dailyReport}» bilan topshiring.\n` : '') +
-          `📝 Ertangi missiyalaringizni «${ui.BTN.selfTask}» bilan yozib qo'ying.\nKetishdan oldin «${ui.BTN.checkOut}» tugmasini bosing.`,
+          `📝 Ertangi topshiriqlaringizni «${ui.BTN.selfTask}» bilan yozib qo'ying.\nKetishdan oldin «${ui.BTN.checkOut}» tugmasini bosing.`,
       );
       asked += 1;
       await tg.throttle();
@@ -223,11 +223,11 @@ const start = (bot) => {
     for (const e of await employees.listStaff()) {
       if (employees.isFlexible(e)) continue;
       if (await tasks.hasCoverageFor(e.id, tomorrow)) continue;
-      await notify.toUser(bot, e.tg_id, `⏰ <b>Eslatma:</b> ertangi (${time.prettyDate(tomorrow)}) missiyalaringizni hali yozmadingiz.\n\n«${ui.BTN.selfTask}» tugmasi orqali ertangi rejani yozib qo'ying.`);
+      await notify.toUser(bot, e.tg_id, `⏰ <b>Eslatma:</b> ertangi (${time.prettyDate(tomorrow)}) topshiriqlaringizni hali yozmadingiz.\n\n«${ui.BTN.selfTask}» tugmasi orqali ertangi rejani yozib qo'ying.`);
       nudged += 1;
       await tg.throttle();
     }
-    if (nudged && config.announceDone) await notify.toGroup(bot, `⏰ <b>Diqqat!</b> ${nudged} ta hodim ertangi missiyalarini hali yozmadi. Iltimos, botga yozib qo'ying.`);
+    if (nudged && config.announceDone) await notify.toGroup(bot, `⏰ <b>Diqqat!</b> ${nudged} ta hodim ertangi topshiriqlarini hali yozmadi. Iltimos, botga yozib qo'ying.`);
     await logRun('plan-nudge', `${nudged} ta hodim`);
   });
 

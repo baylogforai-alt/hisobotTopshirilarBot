@@ -140,7 +140,7 @@ const sendMorningGroupCall = async (bot) => {
   const ok = await notify.toGroup(
     bot,
     `🌅 <b>Xayrli tong, ${esc(config.companyName)} jamoasi!</b> · ${time.prettyDate(time.today())}\n\n` +
-      `Botga kirib <b>«${ui.BTN.checkIn}»</b> tugmasini bosing — bugungi missiyalaringiz ishga tushadi.\n\n` +
+      `Botga kirib <b>«${ui.BTN.checkIn}»</b> tugmasini bosing — bugungi topshiriqlaringiz ishga tushadi.\n\n` +
       `Kutilmoqda: ${waiting.map((e) => mentionHtml(e)).join(', ')}`,
   );
   return { sent: Boolean(ok), count: waiting.length };
@@ -174,7 +174,7 @@ const sendGroupReminder = async (bot) => {
   if (!blocks.length) return false;
   return Boolean(await notify.toGroup(
     bot,
-    `🔔 <b>${COMPANY} — MISSIYA ESLATMASI</b> · ${time.now().toFormat('HH:mm')}\n<i>${time.prettyDate(time.today())}</i>\n\n${blocks.join('\n\n')}\n\n` +
+    `🔔 <b>${COMPANY} — TOPSHIRIQ ESLATMASI</b> · ${time.now().toFormat('HH:mm')}\n<i>${time.prettyDate(time.today())}</i>\n\n${blocks.join('\n\n')}\n\n` +
       `👉 Bajarganingizni botga kirib <b>«${ui.BTN.done}»</b> orqali belgilang.`,
   ));
 };
