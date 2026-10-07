@@ -58,9 +58,11 @@ const LINE = '━'.repeat(18);
 const mainKeyboard = ({ isAdmin = false, isHead = false, isField = false, isHr = false, isViewer = false, isBoss = false } = {}) => {
   const rows = isBoss ? [] : [[BTN.checkIn, BTN.checkOut]];
   if (isField && !isBoss) rows.push([BTN.visit]);
-  rows.push([BTN.myTasks, BTN.done], [BTN.stActive, BTN.stFix], [BTN.stReview, BTN.stDone], isBoss ? [BTN.selfTask] : [BTN.selfTask, BTN.dailyReport]);
+  rows.push([BTN.myTasks, BTN.done], [BTN.stActive, BTN.stFix], [BTN.stReview, BTN.stDone], isBoss ? [BTN.selfTask, BTN.myReport] : [BTN.selfTask, BTN.dailyReport]);
   if (isAdmin || isHead) rows.push([BTN.assign, BTN.review]);
-  if (isAdmin) rows.push([BTN.journal, BTN.announce], [BTN.myTeam, BTN.panel], [BTN.kpi, BTN.reports], [BTN.archive, BTN.myReport]);
+  // boshliq — BAYOMA tartibi (arxiv, davr, Excel, kunlik hisobotlar — «📈 Hisobotlar» ichida)
+  if (isAdmin && isBoss) rows.push([BTN.journal, BTN.announce], [BTN.myTeam, BTN.panel], [BTN.kpi, BTN.reports]);
+  else if (isAdmin) rows.push([BTN.journal, BTN.announce], [BTN.myTeam, BTN.panel], [BTN.kpi, BTN.reports], [BTN.archive, BTN.myReport]);
   else if (isHr) rows.push([BTN.journal, BTN.announce], [BTN.myTeam, BTN.reports], [BTN.kpi, BTN.attView], [BTN.score, BTN.myReport]);
   else if (isHead) rows.push([BTN.myTeam, BTN.myDept], [BTN.score, BTN.announce], [BTN.myReport]);
   else rows.push([BTN.myReport]);
@@ -258,21 +260,17 @@ const panelKeyboard = ({ quiet = false, bossAtt = false, headCopy = true, hrBoss
     [cb('👥 Hodimlar', 'emp:list'), cb("🏢 Bo'limlar", 'dp:list')],
     [cb('💵 Oyliklar (oklad, KPI)', 'sal:list')],
     [cb("➕ Hodim qo'shish", 'ea:start'), cb("📝 So'rovlar", 'jr:list')],
-    [cb('📢 E\'lon yuborish', 'an:start'), cb('📢 E\'lonlar tarixi', 'an:list')],
-    [cb('📊 Bugungi holat', 'adm:today'), cb('📋 Kunlik hisobotlar', 'dr:today')],
-    [cb('⚠️ Kechikkan ishlar', 'adm:overdue'), cb("🙋 Sababli kun so'rovlari", 'adm:excuses')],
-    [cb('🗂 Hodimlar arxivi', 'hr:home'), cb('📈 Davr hisoboti', 'pr:home')],
-    [cb('📥 Excel yuklab olish', 'xl:home'), cb('🔔 Eslatma yuborish', 'adm:remind')],
+    [cb('📊 Bugungi holat', 'adm:today'), cb('⚠️ Kechikkan ishlar', 'adm:overdue')],
+    [cb("🙋 Sababli kun so'rovlari", 'adm:excuses'), cb('🔔 Eslatma yuborish', 'adm:remind')],
     [cb('📍 Ofis joylashuvi', 'adm:office'), cb('🏙 Filiallar', 'br:list')],
     [cb('🗓 Oy boshi tasdiqlari', 'adm:months'), cb('🚶 Tashriflar (bugun)', 'adm:visits')],
     [cb('🕘 Ish vaqti', 'adm:worktime'), cb('🏷 Nomlar', 'adm:names')],
     [cb('📅 Dam olish kuniga chaqirish', 'xc:home')],
     [cb("🧭 Yo'nalishlar", 'dn:list'), cb('👁 Davomat nazorati', 'vw:today')],
-    [cb('🔔 Eslatmalar jadvali', 'rm:adm'), cb('💾 Zaxira nusxa', 'adm:backup')],
     [cb(`📤 Rahbar topshiriq nusxasi: ${headCopy ? '✅ yoqilgan' : "🚫 o'chiq"}`, `adm:htc:${headCopy ? 0 : 1}`)],
     [cb(`👁 HR boshliq topshiriqlarini: ${hrBoss ? "✅ ko'radi" : "🚫 ko'rmaydi"}`, `adm:hbt:${hrBoss ? 0 : 1}`)],
-    [cb(`🔕 Menga topshiriq / keldi-ketdi xabarlari: ${quiet ? '🔕 kelmaydi' : '🔔 keladi'}`, `adm:qt:${quiet ? 0 : 1}`)],
     [cb(`👁 Boshliq keldi-ketdini: ${bossAtt ? "✅ ko'radi" : "🚫 ko'rmaydi"}`, `adm:bat:${bossAtt ? 0 : 1}`)],
+    [cb(`🔕 Menga topshiriq / keldi-ketdi xabarlari: ${quiet ? '🔕 kelmaydi' : '🔔 keladi'}`, `adm:qt:${quiet ? 0 : 1}`)],
     [cb(`💵 Rahbar KPI summasini: ${headMoney ? "✅ ko'radi" : "🚫 ko'rmaydi"}`, `adm:hm:${headMoney ? 0 : 1}`)],
     [cb(`🚦 KPI sharti: ${gate.minDays} kun · ${gate.minTaskPct}%`, 'adm:kg')],
     [cb('🩺 Tizim holati', 'adm:status')],

@@ -260,3 +260,11 @@ arxiv harakatlari, yordam matnida «missiya» → «topshiriq» (BAYOMA'ning o'z
 Buyruq `/topshiriqlarim` (eski `/missiyalarim` ham ishlaydi). Web App matnlari allaqachon BAYOMA'niki edi. `smoke-bayoma.js` `LABELS` endi bo'sh;
 15-bo'lim (Ketdimdan keyin Bajardim yopiq) tufayli BAYOMA testlarida Ketdimdan keyin `checked_out = NULL` qaytariladi.
 `npm test` — 178/178 + 773/773. Panel va BayLog qo'shimcha xabarlari (arxiv, kunlik hisobot, guruh e'lonlari) o'zgartirilmadi.
+
+## 17. 7-okt-2026: Boshliq menyusi va Panel joylashuvi BAYOMA bilan bir xil
+
+Boshliq (role=admin hodim — Odilxon, Jaxongir) asosiy menyusi BAYOMA'dagi tartibda: `O'zimga vazifa · Hisobotim`, keyin Topshiriq berish/Tekshiruv,
+Barcha topshiriqlar/E'lon, Hodimlarim/Panel, KPI/Hisobotlar, Eslatmalar («🗂 Arxiv» qatori boshliqda yo'q — «📈 Hisobotlar» ichida).
+Panel BAYOMA tartibida; olib tashlangan qatorlar boshqa joyda: E'lon — menyuda, Kunlik hisobotlar / Arxiv / Davr / Excel — «📈 Hisobotlar»
+(Kunlik hisobotlar tugmasi u yerga qo'shildi), Eslatmalar jadvali — «🔔 Eslatmalar», Zaxira — «🩺 Tizim holati». Skript bilan solishtirildi —
+BAYOMA'dan farq faqat 2 ta: «📡 Agentlar qayerda» (jonli joylashuv ko'chirilmagan) va BAYOMA'dagi «Boshliqqa «Bajardim»» o'rnida bizning «🔕 Jim rejim».

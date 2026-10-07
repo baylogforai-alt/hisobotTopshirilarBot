@@ -57,6 +57,7 @@ const reportsHome = (ctx) =>
 <i>${time.prettyDate(time.today())}</i>`, inline([
     [cb('📊 Bugungi holat', 'adm:today'), cb('📋 Kun yakuni (batafsil)', 'rp:daily')],
     [cb('📈 Davr hisoboti (sana tanlab)', 'pr:home'), cb('🗂 Hodimlar arxivi', 'hr:home')],
+    [cb('📋 Kunlik hisobotlar', 'dr:today')],
     [cb('🎥 Keldim videolari', 'vw:vids'), cb('🚶 Tashriflar', 'adm:visits')],
     [cb(`👥 Jamoa — ${time.monthName(time.month())}`, `rp:team:${time.month()}`)],
     [cb(`👥 Jamoa — ${time.monthName(time.prevMonth())}`, `rp:team:${time.prevMonth()}`)],
