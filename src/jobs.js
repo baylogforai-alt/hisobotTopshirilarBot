@@ -55,15 +55,17 @@ const schedule = (name, expr, fn) => {
 };
 
 /** Rahbarlarga o'z bo'limi, direktorlar va HR ga hamma. noBoss — davomat hisobotlari boshliqqa bormaydi */
-const sendToManagers = async (bot, buildFor, { noBoss = false } = {}) => {
+const sendToManagers = async (bot, buildFor, { noBoss = false, quiet = false } = {}) => {
   let sent = 0;
-  const full = await notify.seeAllIds({ noBoss });
+  let full = await notify.seeAllIds({ noBoss });
+  const silent = quiet ? await require('./services/org').quietIds() : new Set();
+  full = full.filter((id) => !silent.has(Number(id)));
   for (const id of full) {
     const msg = await buildFor(null, id);
     if (msg) { await notify.toUser(bot, id, msg.text, msg.extra || {}); sent += 1; await tg.throttle(); }
   }
   for (const h of await employees.listHeads()) {
-    if (!h.department_id || full.includes(Number(h.tg_id)) || (noBoss && h.role === 'admin')) continue;
+    if (!h.department_id || full.includes(Number(h.tg_id)) || silent.has(Number(h.tg_id)) || (noBoss && h.role === 'admin')) continue;
     const msg = await buildFor(h.department_id);
     if (msg) { await notify.toUser(bot, h.tg_id, msg.text, msg.extra || {}); sent += 1; await tg.throttle(); }
   }
@@ -146,7 +148,7 @@ const tick = async (bot, now = time.now()) => {
   }
   await morningCall(bot, nowMin);
   if (inSlot(g + config.lateGraceMinutes + 5, nowMin)) {
-    const n = await sendToManagers(bot, async (deptId) => ({ text: (await reports.buildMorningDigest({ deptId })).text }), { noBoss: !(await require('./services/org').bossSeesAttendance()) });
+    const n = await sendToManagers(bot, async (deptId) => ({ text: (await reports.buildMorningDigest({ deptId })).text }), { noBoss: !(await require('./services/org').bossSeesAttendance()), quiet: true });
     await logRun('morning-digest', `${n} ta rahbarga`);
   }
   if (inSlot(g + 40, nowMin)) {
@@ -155,7 +157,7 @@ const tick = async (bot, now = time.now()) => {
       const list = tgId ? tasks.visibleFor(await require('./services/access').resolve(tgId), await tasks.overdue(deptId)) : await tasks.overdue(deptId);
       if (!list.length) return null;
       return { text: `⚠️ <b>MUDDATI O'TGAN TOPSHIRIQLAR (${list.length})</b>\n\n${ui.taskList(list, { withName: true })}` };
-    });
+    }, { quiet: true });
     await logRun('overdue-alert', `${n} ta rahbarga`);
   }
 };

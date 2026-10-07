@@ -84,7 +84,7 @@ const assignTasks = async (bot, giver, target, titles, dueDate, { priority = nul
   }
   // Direktor va HR bergan topshiriq — nusxasiz (jurnalda ko'rinadi); rahbar bergani — sozlamaga qarab
   if (source === 'head' && !giver.isHr && (await org.headTaskCopy())) {
-    await notify.toSeeAll(bot, `📤 <b>${esc(giver.name)}</b> → <b>${esc(target.full_name)}</b>: ${created.length} ta topshiriq (${time.prettyDate(dueDate)})\n${ui.taskList(created)}`, {}, giver.tgId);
+    await notify.toSeeAll(bot, `📤 <b>${esc(giver.name)}</b> → <b>${esc(target.full_name)}</b>: ${created.length} ta topshiriq (${time.prettyDate(dueDate)})\n${ui.taskList(created)}`, {}, giver.tgId, { quiet: true });
   }
   return { created, source };
 };

@@ -98,8 +98,9 @@ const seeAllIds = async ({ noBoss = false } = {}) => {
   return [...ids].filter(Boolean);
 };
 
-const toSeeAll = async (bot, text, extra = {}, exceptTgId = null, { noBoss = false } = {}) => {
-  const ids = (await seeAllIds({ noBoss })).filter((id) => Number(id) !== Number(exceptTgId));
+const toSeeAll = async (bot, text, extra = {}, exceptTgId = null, { noBoss = false, quiet = false } = {}) => {
+  let ids = (await seeAllIds({ noBoss })).filter((id) => Number(id) !== Number(exceptTgId));
+  if (quiet) ids = await require('./org').dropQuiet(ids);
   for (const id of ids) {
     await toUser(bot, id, text, extra);
     await tg.throttle();

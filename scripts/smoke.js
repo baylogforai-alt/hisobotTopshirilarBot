@@ -542,6 +542,23 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('qo\'shimcha KPI: har oylik keyingi oyda ham, bir martalik — yo\'q', kxNext.length === 1 && kxNext[0].basis === 'attendance');
   const rm = await crmKpi.extraFromCrm({ action: 'remove', employeeId: akbar.id, month: curM, id: xAtt.id });
   ok('qo\'shimcha KPI: o\'chirildi', rm.ok && rm.count === 1 && (await require('../src/services/kpiExtras').forMonth(akbar.id, nextM)).length === 0);
+
+  // 7-okt: 🔕 jim rejim — direktorga topshiriq/keldi-ketdi xabarlari bormaydi (o'zi bergan topshiriqdan tashqari)
+  {
+    const org = require('../src/services/org');
+    await send(cbq(1000, 'adm:qt:1'));
+    ok("jim rejim: Panel tugmasi bilan yoqildi", await org.isQuiet(1000));
+    const rv = await employees.reviewersOf(akbar);
+    const dr = await employees.doneReviewersOf(akbar, { created_by: 99999, source: 'self' });
+    const own = await employees.doneReviewersOf(akbar, { created_by: 1000, source: 'admin' });
+    const aw = await employees.attendanceWatchersOf(akbar);
+    ok("jim rejim: tekshiruvchi/keldi-ketdi ro'yxatida direktor yo'q, bo'lim rahbari bor", !rv.includes(1000) && rv.includes(20001) && !dr.includes(1000) && dr.includes(20001) && !aw.includes(1000));
+    ok("jim rejim: o'zi bergan topshiriq bajarilsa — direktorga keladi", own.includes(1000));
+    const onlyBoss = await employees.doneReviewersOf(bobur, { created_by: 20001, source: 'self' });
+    ok("jim rejim: boshqa tekshiruvchi bo'lmasa — baribir direktorga (qabul qiladigan odam qolsin)", onlyBoss.includes(1000));
+    await send(cbq(1000, 'adm:qt:0'));
+    ok("jim rejim: o'chirildi", !(await org.isQuiet(1000)) && (await employees.reviewersOf(akbar)).includes(1000));
+  }
   ok('qo\'shimcha KPI: tasdiqlangan oy — qulf', (await crmKpi.extraFromCrm({ action: 'add', employeeId: akbar.id, month: prevM, title: 'x', basis: 'total', amount: 5 })).error === 'locked');
   await crmKpi.extraFromCrm({ action: 'remove', employeeId: akbar.id, month: curM, id: xMan.id });
   const st7 =await period.employeeStats(akbar, time.addDays(bugun, -6), bugun);

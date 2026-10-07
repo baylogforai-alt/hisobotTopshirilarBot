@@ -19,6 +19,8 @@ const FIXES = [
   // 5-okt-2026: Odilxon — BayLog boshlig'i (lavozim «Boshliq», xabarlardagi boshliq ismi qayta o'rnatiladi); Jaxongir aka — CEO
   { id: 'odilxon-boshliq-20261005', action: 'boss', position: 'Boshliq', match: (e) => Number(e.tg_id) === 8726834955 },
   // 6-okt-2026: Jaxongir aka — bazada «Boshqaruvchi» (219861348, admin) bo'lib turgan; ismi «Jaxongir», lavozimi «CEO»
+  // 7-okt-2026: Odilxon — jim rejim (topshiriq berildi/qo'shildi/bajarildi, keldi-ketdi xabarlari kelmasin; Panelda o'zi qaytaradi)
+  { id: 'odilxon-jim-20261007', action: 'quiet', match: (e) => Number(e.tg_id) === 8726834955 },
   { id: 'jaxongir-ceo-20261006', action: 'position', name: 'Jaxongir', position: 'CEO', match: (e) => Number(e.tg_id) === 219861348 },
 ];
 
@@ -39,6 +41,7 @@ const run = async () => {
       await require('./services/org').setBossName(e.full_name);
       if (f.position) await employees.setPosition(e.id, f.position);
     }
+    if (f.action === 'quiet') await require('./services/org').setQuiet(e.tg_id, true);
     if (f.action === 'position') await employees.setPosition(e.id, f.position);
     if (f.name) await employees.rename(e.id, f.name);
     await db.setSetting(`fix:${f.id}`, `${e.id} ${e.full_name}`);

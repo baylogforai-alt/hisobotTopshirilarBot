@@ -235,3 +235,14 @@ Bot ko'rinishlari: `month.js payInfo(k, extra, kpiExtra)` — xodimning «Oylik 
 bo'limi), `kpi.js kpiCardText(k, dept, ex)` — direktor kartasi, Jami ichida. Qo'shish/o'chirish hozircha FAQAT CRM'dan.
 Ko'rsatilmaydi (ataylab, keyin): flows.js (ilova) va excel.js oylik Jami — eski hisob (extra_days ham kirmas edi).
 Smoke +6 («qo'shimcha KPI: ...»). `npm test` — 172/172 + 771/771.
+
+## 14. 7-okt-2026: 🔕 Jim rejim (Odilxon)
+
+Foydalanuvchi: «direktor (Odilxon) ga kimdir topshiriq bersa / olsa / bajarsa va keldi-ketdidan xabar kelmasin».
+Per-odam sozlama `settings.quiet_ids` (tg_id lar): `org.quietIds/isQuiet/setQuiet/dropQuiet(ids, {keepIfEmpty})`.
+Qo'llanadi: `reviewersOf` (/bugun, ko'chirish/o'chirish, kelmayman, kunlik hisobot), `attendanceWatchersOf` (keldi/ketdi/tashrif),
+`doneReviewersOf` (Bajardim + tekshiruvchi eslatmasi; **o'zi bergan topshiriq — keladi**; hech kim qolmasa — o'zgarishsiz),
+`approversOf` (keepIfEmpty), rahbar topshiriq nusxasi (`toSeeAll {quiet}`), ertalabki holat va muddati o'tganlar (`sendToManagers {quiet}`).
+Qolganlar (kun yakuni, haftalik/oylik hisobot, E'lon, zaxira) — avvalgidek. Panel «🔕 Menga topshiriq / keldi-ketdi xabarlari» (`adm:qt:<0|1>`, bosgan admin o'zi uchun).
+Odilxon — `fixes.js` `odilxon-jim-20261007` (bir marta yoqiladi). Tekshiruvlar Jaxongir (CEO, admin) va bo'lim rahbarlariga boradi.
+`npm test` — 177/177 + 771/771.

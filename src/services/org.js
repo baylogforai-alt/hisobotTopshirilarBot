@@ -45,6 +45,26 @@ const bossSeesAttendance = async () => {
 };
 const setBossSeesAttendance = (on) => db.setSetting(BOSS_ATT_KEY, on ? '1' : '0');
 
+/**
+ * 🔕 JIM REJIM (7-okt) — shu odamlarga (tg_id) topshiriq berildi/qo'shildi/bajarildi va keldi/ketdi xabarlari bormaydi
+ * (arxiv, jurnal, hisobotlarda baribir ko'rinadi). Har kim Panel → «🔕 Menga xabarlar» bilan o'zi yoqadi; Odilxon — fixes.js.
+ */
+const QUIET_KEY = 'quiet_ids';
+const quietIds = async () => new Set(String((await db.getSetting(QUIET_KEY)) || '').split(',').map(Number).filter(Boolean));
+const isQuiet = async (tgId) => (await quietIds()).has(Number(tgId));
+const setQuiet = async (tgId, on) => {
+  const q = await quietIds();
+  if (on) q.add(Number(tgId)); else q.delete(Number(tgId));
+  await db.setSetting(QUIET_KEY, [...q].join(','));
+};
+/** Jim rejimdagilarni chiqaradi. keepIfEmpty — hech kim qolmasa o'zgarishsiz (qaror kerak bo'lgan xabar yo'qolmasin) */
+const dropQuiet = async (ids, { keepIfEmpty = false } = {}) => {
+  const q = await quietIds();
+  if (!q.size) return ids;
+  const rest = ids.filter((id) => !q.has(Number(id)));
+  return rest.length || !keepIfEmpty ? rest : ids;
+};
+
 /** Sozlama o'chiq bo'lsa — boshliq(lar)ni chiqarib tashlaydi; hech kim qolmasa — o'zgarishsiz (xabar yo'qolmasin) */
 const withoutHiddenBoss = async (ids) => {
   if (await bossSeesAttendance()) return ids;
@@ -72,7 +92,7 @@ const approversOf = async (emp) => {
   const heads = (await employees.deptHeadIdsOf(emp)).map(Number).filter((id) => !hr.has(id));
   const ids = new Set([...heads, ...(await employees.bossTgIds()).map(Number)]);
   ids.delete(Number(emp.tg_id));
-  return withoutHiddenBoss([...ids]);
+  return dropQuiet(await withoutHiddenBoss([...ids]), { keepIfEmpty: true });
 };
 
 /** Texnik direktorlar (ADMIN_IDS, rahbariyatda yo'q) — faqat ma'lumot oladi, tasdiqlash tugmalarisiz */
@@ -106,4 +126,4 @@ const actorName = (ctx) => {
   return [f.first_name, f.last_name].filter(Boolean).join(' ').trim() || 'Direktor';
 };
 
-module.exports = { infoOnlyIds, actorName, bossName, setBossName, headTaskCopy, setHeadTaskCopy, hrSeesBossTasks, setHrSeesBossTasks, bossSeesAttendance, setBossSeesAttendance, headSeesMoney, setHeadSeesMoney, absenceRecipientsOf, approversOf, recipientsLabel };
+module.exports = { quietIds, isQuiet, setQuiet, dropQuiet, infoOnlyIds, actorName, bossName, setBossName, headTaskCopy, setHeadTaskCopy, hrSeesBossTasks, setHrSeesBossTasks, bossSeesAttendance, setBossSeesAttendance, headSeesMoney, setHeadSeesMoney, absenceRecipientsOf, approversOf, recipientsLabel };

@@ -71,7 +71,7 @@ const handleGateText = async (ctx, kind) => {
 };
 
 const showPanel = async (ctx) =>
-  render(ctx, `⚙️ <b>PANEL</b> · ${esc(config.companyName)}\n<i>${time.prettyDate(time.today())}</i>`, ui.panelKeyboard({ headCopy: await org.headTaskCopy(), hrBoss: await org.hrSeesBossTasks(), bossAtt: await org.bossSeesAttendance(), headMoney: await org.headSeesMoney(), gate: await kpi.gateSettings() }));
+  render(ctx, `⚙️ <b>PANEL</b> · ${esc(config.companyName)}\n<i>${time.prettyDate(time.today())}</i>`, ui.panelKeyboard({ quiet: await org.isQuiet(ctx.from.id), headCopy: await org.headTaskCopy(), hrBoss: await org.hrSeesBossTasks(), bossAtt: await org.bossSeesAttendance(), headMoney: await org.headSeesMoney(), gate: await kpi.gateSettings() }));
 
 // ---------------------------------------------------------------------------
 // HODIMLAR
@@ -577,6 +577,15 @@ const register = (bot) => {
     const on = ctx.match[1] === '1';
     await org.setHeadSeesMoney(on);
     await ctx.answerCbQuery(on ? "✅ Bo'lim rahbarlari jamoasining KPI summasini ko'radi" : "🚫 Bo'lim rahbarlari KPI summasini ko'rmaydi (faqat ball va foizlar)", { show_alert: true });
+    await showPanel(ctx);
+  });
+  bot.action(/^adm:qt:([01])$/, async (ctx) => {
+    if (!(await guard(ctx))) return;
+    const on = ctx.match[1] === '1';
+    await org.setQuiet(ctx.from.id, on);
+    await ctx.answerCbQuery(on
+      ? "🔕 Jim rejim: sizga topshiriq berildi / qo'shildi / bajarildi va keldi-ketdi xabarlari kelmaydi (o'zingiz bergan topshiriq bajarilsa — keladi). Hammasi arxiv va hisobotlarda ko'rinadi."
+      : '🔔 Xabarlar yana keladi', { show_alert: true });
     await showPanel(ctx);
   });
   bot.action(/^adm:bat(?::([01]))?$/, async (ctx) => {

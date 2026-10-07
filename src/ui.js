@@ -245,7 +245,7 @@ const taskMenuKeyboard = (t, { canDelete = true, extra = [] } = {}) => {
 const confirmKeyboard = (yesData, noData, yesLabel = '✅ Ha', noLabel = "⬅️ Yo'q") => inline([[cb(yesLabel, yesData), cb(noLabel, noData)]]);
 
 /** Admin panel */
-const panelKeyboard = ({ bossAtt = false, headCopy = true, hrBoss = false, headMoney = false, gate = { minDays: 25, minTaskPct: 90 } } = {}) =>
+const panelKeyboard = ({ quiet = false, bossAtt = false, headCopy = true, hrBoss = false, headMoney = false, gate = { minDays: 25, minTaskPct: 90 } } = {}) =>
   inline([
     [cb('👥 Hodimlar', 'emp:list'), cb("🏢 Bo'limlar", 'dp:list')],
     [cb('💵 Oyliklar (oklad, KPI)', 'sal:list')],
@@ -263,6 +263,7 @@ const panelKeyboard = ({ bossAtt = false, headCopy = true, hrBoss = false, headM
     [cb('🔔 Eslatmalar jadvali', 'rm:adm'), cb('💾 Zaxira nusxa', 'adm:backup')],
     [cb(`📤 Rahbar topshiriq nusxasi: ${headCopy ? '✅ yoqilgan' : "🚫 o'chiq"}`, `adm:htc:${headCopy ? 0 : 1}`)],
     [cb(`👁 HR boshliq topshiriqlarini: ${hrBoss ? "✅ ko'radi" : "🚫 ko'rmaydi"}`, `adm:hbt:${hrBoss ? 0 : 1}`)],
+    [cb(`🔕 Menga topshiriq / keldi-ketdi xabarlari: ${quiet ? '🔕 kelmaydi' : '🔔 keladi'}`, `adm:qt:${quiet ? 0 : 1}`)],
     [cb(`👁 Boshliq keldi-ketdini: ${bossAtt ? "✅ ko'radi" : "🚫 ko'rmaydi"}`, `adm:bat:${bossAtt ? 0 : 1}`)],
     [cb(`💵 Rahbar KPI summasini: ${headMoney ? "✅ ko'radi" : "🚫 ko'rmaydi"}`, `adm:hm:${headMoney ? 0 : 1}`)],
     [cb(`🚦 KPI sharti: ${gate.minDays} kun · ${gate.minTaskPct}%`, 'adm:kg')],
