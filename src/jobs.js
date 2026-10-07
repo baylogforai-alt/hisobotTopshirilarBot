@@ -195,7 +195,7 @@ const start = (bot) => {
     const { text } = await reports.buildToday({ title: 'KUN YAKUNI' });
     // boshliqqa — faqat Panelda «Boshliq keldi-ketdini: ko'radi» yoqilgan bo'lsa
     await notify.toSeeAll(bot, text, ui.inline([[ui.cb('📋 Kunlik hisobotlar', 'dr:today'), ui.cb('📥 Excel (bugun)', 'rp:xlday')]]), null,
-      { noBoss: !(await require('./services/org').bossSeesAttendance()) });
+      { noBoss: !(await require('./services/org').bossSeesAttendance()), quiet: true });
     // hodimlarga: ertangi rejani yozish
     let asked = 0;
     for (const e of await employees.listStaff()) {

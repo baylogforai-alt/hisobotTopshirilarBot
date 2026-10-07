@@ -243,6 +243,6 @@ Per-odam sozlama `settings.quiet_ids` (tg_id lar): `org.quietIds/isQuiet/setQuie
 Qo'llanadi: `reviewersOf` (/bugun, ko'chirish/o'chirish, kelmayman, kunlik hisobot), `attendanceWatchersOf` (keldi/ketdi/tashrif),
 `doneReviewersOf` (Bajardim + tekshiruvchi eslatmasi; **o'zi bergan topshiriq — keladi**; hech kim qolmasa — o'zgarishsiz),
 `approversOf` (keepIfEmpty), rahbar topshiriq nusxasi (`toSeeAll {quiet}`), ertalabki holat va muddati o'tganlar (`sendToManagers {quiet}`).
-Qolganlar (kun yakuni, haftalik/oylik hisobot, E'lon, zaxira) — avvalgidek. Panel «🔕 Menga topshiriq / keldi-ketdi xabarlari» (`adm:qt:<0|1>`, bosgan admin o'zi uchun).
+Kun yakuni hisoboti (daily-report `toSeeAll {quiet}`) ham bormaydi (7-okt, 2-so'rov). Qolganlar (haftalik/oylik hisobot, E'lon, zaxira) — avvalgidek. Panel «🔕 Menga topshiriq / keldi-ketdi xabarlari» (`adm:qt:<0|1>`, bosgan admin o'zi uchun).
 Odilxon — `fixes.js` `odilxon-jim-20261007` (bir marta yoqiladi). Tekshiruvlar Jaxongir (CEO, admin) va bo'lim rahbarlariga boradi.
 `npm test` — 177/177 + 771/771.
