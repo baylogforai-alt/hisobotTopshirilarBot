@@ -2,6 +2,7 @@
 
 const db = require('../db');
 const time = require('../time');
+const { partPct } = require('./kpi');
 
 /**
  * QO'SHIMCHA KPI (6-okt, direktor qarori) — asosiy KPI summasidan tashqari alohida KPI qatorlari:
@@ -31,11 +32,13 @@ const byId = (id) => db.one('SELECT * FROM kpi_extras WHERE id = $1', [Number(id
 /** Asos foizi (0..100) yoki null (kiritilmagan — masalan boshliq bahosi qo'yilmagan) */
 const basisPct = (k, x) => {
   const n = (v) => (v === null || v === undefined || v === '' ? null : Number(v));
+  // yo'nalish asoslari — 80% dan kam bo'lsa 0 (asosiy KPI bilan bir qoida)
+  const part = partPct;
   switch (x.basis) {
-    case 'tasks': return n(k && k.tasks_pct);
-    case 'attendance': return n(k && k.att_pct);
-    case 'head': return k && k.head_score !== null && k.head_score !== undefined ? Number(k.head_score) * 10 : null;
-    case 'custom': return n(k && k.custom_pct);
+    case 'tasks': return part(n(k && k.tasks_pct));
+    case 'attendance': return part(n(k && k.att_pct));
+    case 'head': return part(k && k.head_score !== null && k.head_score !== undefined ? Number(k.head_score) * 10 : null);
+    case 'custom': return part(n(k && k.custom_pct));
     case 'total': return n(k && k.total);
     case 'manual': return n(x.pct);
     default: return null;

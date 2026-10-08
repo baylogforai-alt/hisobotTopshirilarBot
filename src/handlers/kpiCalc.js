@@ -62,10 +62,10 @@ const calc = (st, w) => {
   const total = kpi.computeTotal(row);
   const bonus = config.kpiMode === 'gate' ? (st.g ? st.f : 0) : kpi.bonusOf(st.f, total) || 0;
   const parts = [
-    { key: 't', pct: st.t, w: Number(w.w_tasks) },
-    { key: 'a', pct: st.a, w: Number(w.w_attendance) },
-    { key: 'h', pct: st.h === null ? null : st.h * 10, w: Number(w.w_head) },
-    { key: 'c', pct: st.c, w: Number(w.w_custom) },
+    { key: 't', pct: kpi.partPct(st.t), w: Number(w.w_tasks) },
+    { key: 'a', pct: kpi.partPct(st.a), w: Number(w.w_attendance) },
+    { key: 'h', pct: st.h === null ? null : kpi.partPct(st.h * 10), w: Number(w.w_head) },
+    { key: 'c', pct: kpi.partPct(st.c), w: Number(w.w_custom) },
   ];
   const wsum = parts.filter((p) => p.w > 0 && p.pct !== null).reduce((s, p) => s + p.w, 0);
   for (const p of parts) p.eff = p.w > 0 && p.pct !== null && wsum ? (p.w * 100) / wsum : 0; // qayta 100 ga keltirilgan vazn
@@ -83,7 +83,8 @@ const cardText = (st, w, dept) => {
   const line = (icon, label, value, p) => {
     if (!(p.w > 0)) return `${icon} ${label}: <i>bu bo'limda hisobga olinmaydi</i>`;
     if (p.pct === null) return `${icon} ${label}: <i>kiritilmagan — hisobdan chiqariladi</i>`;
-    return `${icon} ${label}: <b>${value}</b> × ${fmtW(p.eff)}% = <b>${ballOf(p)}</b> ball`;
+    const low = p.pct === 0 && value !== '0%' ? ` → <b>0</b> (${kpi.MIN_PART_PCT}% dan kam)` : '';
+    return `${icon} ${label}: <b>${value}</b>${low} × ${fmtW(p.eff)}% = <b>${ballOf(p)}</b> ball`;
   };
   const lines = [
     `🧮 <b>KPI KALKULYATOR</b>`,
@@ -107,14 +108,17 @@ const cardText = (st, w, dept) => {
   if (config.kpiMode !== 'gate' && st.f > 0) {
     const per = (p, k = 1) => Math.round((st.f * p.eff * k) / 10000);
     const hints = [];
-    if (P.t.eff) hints.push(`+1% topshiriq ≈ ${money(per(P.t))}`);
-    if (P.a.eff) hints.push(`+1% davomat ≈ ${money(per(P.a))}`);
-    if (P.h.eff) hints.push(`+1 baho ≈ ${money(per(P.h, 10))}`);
-    if (P.c.eff) hints.push(`+1% mezon ≈ ${money(per(P.c))}`);
+    // chegaradan past (0 bo'lgan) yo'nalish: +1% emas, chegaraga yetsa qancha qo'shilishi
+    const min = kpi.MIN_PART_PCT;
+    const hint = (p, one, reach) => (p.pct === 0 ? `${reach} ≈ +${money(per(p, min))}` : one);
+    if (P.t.eff) hints.push(hint(P.t, `+1% topshiriq ≈ ${money(per(P.t))}`, `topshiriq ${min}% bo'lsa`));
+    if (P.a.eff) hints.push(hint(P.a, `+1% davomat ≈ ${money(per(P.a))}`, `davomat ${min}% bo'lsa`));
+    if (P.h.eff) hints.push(hint(P.h, `+1 baho ≈ ${money(per(P.h, 10))}`, `baho ${min / 10}/10 bo'lsa`));
+    if (P.c.eff) hints.push(hint(P.c, `+1% mezon ≈ ${money(per(P.c))}`, `mezon ${min}% bo'lsa`));
     if (hints.length) lines.push('', `💡 ${hints.join(' · ')}`);
     if (r.total < 100) lines.push(`🎯 100 ball bo'lsa: KPI ${money(st.f)} → jami ${money(st.s + st.f)}`);
   }
-  lines.push('', `<i>Formula: ball = har mezon % × vazni; kiritilmagan mezon chiqarilib, qolgan vaznlar 100 ga keltiriladi.${config.kpiMode === 'gate' ? ' KPI sharti bajarilsa summa to\'liq, aks holda 0.' : ' Beriladi = KPI summasi × ball / 100.'} Bazaga hech narsa yozilmaydi.</i>`);
+  lines.push('', `<i>Formula: ball = har mezon % × vazni; ${kpi.MIN_PART_PCT}% dan kam mezon 0 deb olinadi (vazni qoladi); kiritilmagan mezon chiqarilib, qolgan vaznlar 100 ga keltiriladi.${config.kpiMode === 'gate' ? ' KPI sharti bajarilsa summa to\'liq, aks holda 0.' : ' Beriladi = KPI summasi × ball / 100.'} Bazaga hech narsa yozilmaydi.</i>`);
   return lines.join('\n');
 };
 

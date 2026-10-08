@@ -913,7 +913,9 @@
     const d = await api('GET', `/api/kpi/${month}/${empId}`);
     const k = d.kpi;
     setTitle(`💰 ${k.name}`, d.monthName);
-    const line = (label, pct, w) => [h('div', { class: 'k' }, `${label} × ${w}%`), h('div', { class: 'v' }, pct === null ? '—' : `${pct}%`)];
+    // 80% dan kam yo'nalish KPI'ga 0 bo'lib kiradi (services/kpi.js MIN_PART_PCT)
+    const line = (label, pct, w) => [h('div', { class: 'k' }, `${label} × ${w}%`),
+      h('div', { class: 'v' }, pct === null ? '—' : pct < 80 ? `${pct}% → 0 (80% dan kam)` : `${pct}%`)];
     const editable = d.canEdit && k.status === 'draft';
     const out = [
       h('div', { class: 'card' },

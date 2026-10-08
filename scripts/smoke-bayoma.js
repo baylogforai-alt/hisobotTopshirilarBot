@@ -379,8 +379,8 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
 
   ok('parseWeights ok', JSON.stringify(departments.parseWeights('50 20 30 0')) === JSON.stringify({ w_tasks: 50, w_attendance: 20, w_head: 30, w_custom: 0 }));
   ok('parseWeights yig\'indi 100 emas → null', departments.parseWeights('50 20 30 10') === null);
-  ok('computeTotal: hammasi bor', kpi.computeTotal({ tasks_pct: 80, att_pct: 100, head_score: 8, custom_pct: 50, w_tasks: 40, w_attendance: 20, w_head: 20, w_custom: 20 }) === 78);
-  ok('computeTotal: boshliq bahosi yo\'q → qayta normallashtirish', kpi.computeTotal({ tasks_pct: 80, att_pct: 100, head_score: null, custom_pct: 50, w_tasks: 40, w_attendance: 20, w_head: 20, w_custom: 20 }) === Math.round((80 * 40 + 100 * 20 + 50 * 20) / 80));
+  ok('computeTotal: hammasi bor (mezon 50% < 80% → 0)', kpi.computeTotal({ tasks_pct: 80, att_pct: 100, head_score: 8, custom_pct: 50, w_tasks: 40, w_attendance: 20, w_head: 20, w_custom: 20 }) === 68);
+  ok('computeTotal: boshliq bahosi yo\'q → qayta normallashtirish', kpi.computeTotal({ tasks_pct: 80, att_pct: 100, head_score: null, custom_pct: 50, w_tasks: 40, w_attendance: 20, w_head: 20, w_custom: 20 }) === Math.round((80 * 40 + 100 * 20 + 0 * 20) / 80));
   ok('computeTotal: custom vazni 0 → e\'tiborsiz', kpi.computeTotal({ tasks_pct: 100, att_pct: 100, head_score: 10, custom_pct: null, w_tasks: 50, w_attendance: 20, w_head: 30, w_custom: 0 }) === 100);
   ok('bonusOf', kpi.bonusOf(1000000, 78) === 780000 && kpi.bonusOf(null, 78) === null);
   ok('KPI sharti: hammasi joyida (sababli kun zarar qilmaydi)', kpi.checkGate({ missed: 0 }, { late: 0, absent: 0, excused: 2 }).eligible === true);

@@ -15,7 +15,7 @@ const months = require('./months');
  *   att_pct    — davomat % (avto)
  *   head_score — bo'lim boshlig'i bahosi 1–10 (qo'lda) → ×10 = %
  *   custom_pct — bo'limga xos mezon % (admin qo'lda)
- *   total      — vaznli o'rtacha. Kiritilmagan komponent (boshliq bahosi / mezon) hisobdan chiqariladi,
+ *   total      — vaznli o'rtacha; 80% dan kam yo'nalish 0 deb olinadi (MIN_PART_PCT). Kiritilmagan komponent (boshliq bahosi / mezon) hisobdan chiqariladi,
  *                qolgan vaznlar qayta 100 ga keltiriladi — hodim boshliq baho qo'ymagani uchun jabr ko'rmasin.
  *   bonus_amount = bonus_fund × total / 100
  * status: draft → confirmed | excluded (direktor qarori). confirmed/excluded qator avto qayta hisoblanmaydi.
@@ -37,13 +37,21 @@ const byId = (id) => db.one(`${SELECT} WHERE k.id = $1`, [Number(id)]);
 const listMonth = (month) =>
   db.query(`${SELECT} WHERE k.month = $1 AND e.active = 1 ORDER BY lower(d.name), lower(e.full_name)`, [month]);
 
+/**
+ * YO'NALISH CHEGARASI (8-okt, direktor qarori): har yo'nalish (topshiriq, davomat, boshliq bahosi ×10, mezon)
+ * kamida MIN_PART_PCT (80%, qat'iy) bo'lishi kerak — kam bo'lsa o'sha yo'nalish 0 deb olinadi, VAZNI QOLADI.
+ * Kiritilmagan (null) — avvalgidek hisobdan chiqadi. CRM kpi-merge.ts `kpiPartPct` bilan BIR XIL.
+ */
+const MIN_PART_PCT = 80;
+const partPct = (pct) => (pct === null || pct === undefined ? null : Number(pct) < MIN_PART_PCT ? 0 : Number(pct));
+
 /** Yakuniy ball (0–100) */
 const computeTotal = (row) => {
   const parts = [
-    { pct: Number(row.tasks_pct), w: Number(row.w_tasks) },
-    { pct: Number(row.att_pct), w: Number(row.w_attendance) },
-    { pct: row.head_score === null || row.head_score === undefined ? null : Number(row.head_score) * 10, w: Number(row.w_head) },
-    { pct: row.custom_pct === null || row.custom_pct === undefined ? null : Number(row.custom_pct), w: Number(row.w_custom) },
+    { pct: partPct(Number(row.tasks_pct)), w: Number(row.w_tasks) },
+    { pct: partPct(Number(row.att_pct)), w: Number(row.w_attendance) },
+    { pct: row.head_score === null || row.head_score === undefined ? null : partPct(Number(row.head_score) * 10), w: Number(row.w_head) },
+    { pct: row.custom_pct === null || row.custom_pct === undefined ? null : partPct(Number(row.custom_pct)), w: Number(row.w_custom) },
   ].filter((p) => p.w > 0 && p.pct !== null);
   const wsum = parts.reduce((a, p) => a + p.w, 0);
   if (!wsum) return 0;
@@ -278,7 +286,7 @@ const statusLabel = (s) => STATUS[s] || STATUS.draft;
 const fmtMoney = (n) => (n === null || n === undefined ? '—' : `${Math.round(Number(n)).toLocaleString('ru-RU').replace(/ /g, ' ')} so'm`);
 
 module.exports = {
-  get, byId, listMonth, computeTotal, bonusOf, checkGate, bonusFor, payOf, compute, preview, computeAll, recalc, editable, setHeadScore, setCustomPct, setBonusFund, setNote, decide,
+  MIN_PART_PCT, partPct, get, byId, listMonth, computeTotal, bonusOf, checkGate, bonusFor, payOf, compute, preview, computeAll, recalc, editable, setHeadScore, setCustomPct, setBonusFund, setNote, decide,
   decideBlock, isLocked, gateSettings, setGateSettings, GATE_DEFAULTS,
   statusLabel, fmtMoney,
 };
