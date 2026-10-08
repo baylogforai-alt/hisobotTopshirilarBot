@@ -269,7 +269,7 @@ Panel BAYOMA tartibida; olib tashlangan qatorlar boshqa joyda: E'lon — menyuda
 (Kunlik hisobotlar tugmasi u yerga qo'shildi), Eslatmalar jadvali — «🔔 Eslatmalar», Zaxira — «🩺 Tizim holati». Skript bilan solishtirildi —
 BAYOMA'dan farq faqat 2 ta: «📡 Agentlar qayerda» (jonli joylashuv ko'chirilmagan) va BAYOMA'dagi «Boshliqqa «Bajardim»» o'rnida bizning «🔕 Jim rejim».
 
-## 18. 8-okt-2026: KPI yo'nalish chegarasi 80% (hali deploy qilinmagan)
+## 18. 8-okt-2026: KPI yo'nalish chegarasi 80% (✅ 17:07 deploy, `a0010a8`; zaxira `missiya-20261008-1706-deploy-oldi.sql`; CRM 1.12.0 17:08)
 - Direktor: har yo'nalish (topshiriq, davomat, boshliq bahosi ×10, mezon) kamida 80% — kam bo'lsa o'sha yo'nalish 0, VAZNI QOLADI.
   Kiritilmagan — avvalgidek hisobdan chiqadi. Qat'iy: `MIN_PART_PCT = 80`, `partPct()` (services/kpi.js) → `computeTotal`,
   `kpiExtras.basisPct` (tasks/attendance/head/custom; total/manual — chegarasiz), kalkulyator (`kpiCalc.calc`, "→ 0 (80% dan kam)",
