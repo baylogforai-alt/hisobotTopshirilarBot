@@ -276,7 +276,7 @@ BAYOMA'dan farq faqat 2 ta: «📡 Agentlar qayerda» (jonli joylashuv ko'chiril
   maslahat "topshiriq 80% bo'lsa ≈ +..."), veb-panel KPI kartasi. CRM `kpi-merge.ts` `kpiPartPct` bilan BIR XIL — birga deploy.
   Tasdiqlangan/chiqarilgan oylar o'zgarmaydi; draft qatorlar keyingi compute/preview'da yangi formula bilan. Smoke testlar yangilandi (78→68 va h.k.).
 
-## 19. 23-okt-2026: Odilxon — kunlik zaxira kelmaydi, faqat o'zi bergan topshiriqlar ko'rinadi
+## 19. 23-okt-2026: Odilxon — kunlik zaxira kelmaydi, faqat o'zi bergan topshiriqlar ko'rinadi (✅ 13:20 deploy, `6e09523`; zaxira `missiya-20261023-deploy-oldi.sql`; prod logda fix qo'llandi)
 Foydalanuvchi: «kunlik zaxira boshliqqa (Odilxon) bormasligi shart; Odilxonga faqat o'zi bergan topshiriqlar ko'rinsin, boshqalar bergani ko'rinmasin».
 - **Zaxira:** `notify.docToAdmins` (23:50 `backup-export`) — `org.dropQuiet(adminIds, {keepIfEmpty: true})`: jim rejimdagilarga (Odilxon) bormaydi,
   Jaxongir (CEO) oladi; boshqa admin qolmasa — baribir yuboriladi (zaxira yo'qolmasin). Panel «💾 Zaxira nusxa» — bosgan odamga, avvalgidek.
@@ -287,3 +287,6 @@ Foydalanuvchi: «kunlik zaxira boshliqqa (Odilxon) bormasligi shart; Odilxonga f
   **Filtrlanmaydi (ataylab):** raqamlar — KPI, «BUGUNGI HOLAT» sanoqlari, davr statistikasi; «📜 Harakatlar tarixi» (activity_log matni).
   Odilxon — `fixes.js` `odilxon-oz-topshiriqlari-20261023` (bir marta yoqiladi; Panel tugmasi yo'q — o'chirish faqat bazadan `own_tasks_ids`).
 - Smoke +10 («kunlik zaxira: ...», «o'z topshiriqlari: ...»). `npm test` — 189/189 + 773/773.
+- Deploy (23-okt): asosiy papkada boshqa sessiyaning commit qilinmagan IaC ishi bor (`railway.json` o'chirilgan, `.railway/`, CLAUDE.md) — lokal `master` ga tegilmadi,
+  worktree'dan `git push origin HEAD:main` + `railway up --detach -p 1f7a7f70-a8f5-427d-a874-2b50bc60baf4 -e production -s missiya-bot` (asosiy papka endi `railway link` qilinmagan).
+  Prod zaxirani (`railway ssh … pg_dump`) auto-mode rad etadi — foydalanuvchi o'zi oladi. ⚠️ Lokal `master` GitHub `main` dan orqada (6e09523 + shu commit yo'q).
