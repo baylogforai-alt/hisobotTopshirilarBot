@@ -42,12 +42,13 @@ const statusLine = async (emp, date = time.today()) => {
 /**
  * BIR KUNLIK TO'LIQ KARTOCHKA — direktor ko'radigan asosiy ko'rinish.
  */
-const dayCard = async (emp, date) => {
+const dayCard = async (emp, date, viewer = null) => {
+  const vis = (list) => (viewer ? tasks.visibleFor(viewer, list) : list);
   const att = await attendance.get(emp.id, date);
-  const done = await tasks.doneOn(emp.id, date);
-  const created = await tasks.createdOn(emp.id, date);
-  const cancelled = await tasks.cancelledOn(emp.id, date);
-  const onDuty = await tasks.dueOn(emp.id, date);
+  const done = vis(await tasks.doneOn(emp.id, date));
+  const created = vis(await tasks.createdOn(emp.id, date));
+  const cancelled = vis(await tasks.cancelledOn(emp.id, date));
+  const onDuty = vis(await tasks.dueOn(emp.id, date));
   const acts = await activity.forDay(emp.id, date);
   const report = await dailyReports.get(emp.id, date);
 

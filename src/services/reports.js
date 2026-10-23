@@ -64,9 +64,10 @@ const buildToday = async ({ deptId = null, date = time.today(), title = 'BUGUNGI
 
 /**
  * Guruhga kun oxiri hisoboti — itemli: har bir hodim aynan QAYSI ishlarni bajargani (✅)
- * va qaysilari qolgani (⏳). KPI / pul chiqmaydi.
+ * va qaysilari qolgani (⏳). KPI / pul chiqmaydi. viewer — ko'rmaydigan topshiriqlari chiqmaydi (tasks.visibleTo)
  */
-const buildDailyGroupText = async (date = time.today()) => {
+const buildDailyGroupText = async (date = time.today(), viewer = null) => {
+  const vis = (list) => (viewer ? tasks.visibleFor(viewer, list) : list);
   const list = await employees.listStaff();
   const blocks = [];
   let totalDone = 0, totalOpen = 0;
@@ -74,8 +75,8 @@ const buildDailyGroupText = async (date = time.today()) => {
   for (const e of list) {
     const row = await attendance.get(e.id, date);
     const st = attendance.dayStatus(row, date, time.today(), e);
-    const done = await tasks.doneOn(e.id, date);
-    const open = await tasks.openFor(e.id);
+    const done = vis(await tasks.doneOn(e.id, date));
+    const open = vis(await tasks.openFor(e.id));
     totalDone += done.length; totalOpen += open.length;
     const att = st === 'ontime' || st === 'extra' ? `🟢 ${time.clock(row.checked_in)}`
       : st === 'late' ? (employees.isFlexible(e) ? `🟢 ${time.clock(row.checked_in)}` : `🟡 ${time.clock(row.checked_in)} (${time.prettyDuration(Number(row.late_minutes))} kech)`)
@@ -271,12 +272,13 @@ const buildMonthTable = async ({ month = time.month(), deptId = null } = {}) => 
   return `${title} — ${time.monthName(month)}\n<i>📋 topshiriq muddatida/jami · 🕘 vaqtida/ish kuni · 📝 kunlik hisobotlar</i>\n${LINE}\n${lines.join('\n') || "<i>hodim yo'q</i>"}`;
 };
 
-/** Bitta hodimning to'liq topshiriq holati (arxiv uchun) */
-const buildEmployeeTasks = async (emp) => {
+/** Bitta hodimning to'liq topshiriq holati (arxiv uchun). viewer — ko'rmaydigan topshiriqlari chiqmaydi */
+const buildEmployeeTasks = async (emp, viewer = null) => {
   const date = time.today();
-  const open = await tasks.openFor(emp.id);
-  const awaiting = await tasks.awaitingReviewFor(emp.id);
-  const doneToday = await tasks.doneOn(emp.id, date);
+  const vis = (list) => (viewer ? tasks.visibleFor(viewer, list) : list);
+  const open = vis(await tasks.openFor(emp.id));
+  const awaiting = vis(await tasks.awaitingReviewFor(emp.id));
+  const doneToday = vis(await tasks.doneOn(emp.id, date));
   const row = await attendance.get(emp.id, date);
   const st = attendance.dayStatus(row, date, date, emp);
   const status = row && row.checked_out ? `🏁 ketdi (${time.clock(row.checked_out)})`

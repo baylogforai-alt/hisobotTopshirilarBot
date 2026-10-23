@@ -65,6 +65,19 @@ const dropQuiet = async (ids, { keepIfEmpty = false } = {}) => {
   return rest.length || !keepIfEmpty ? rest : ids;
 };
 
+/**
+ * 👁 FAQAT O'Z TOPSHIRIQLARI (23-okt) — shu odamlar (tg_id) botda faqat o'zlari bergan (va o'zlariga berilgan) topshiriqlarni
+ * ko'radi: holat ro'yxatlari, Tekshiruv, jurnal, hodim kartochkasi, Excel (tasks.visibleTo). Odilxon — fixes.js.
+ */
+const OWN_TASKS_KEY = 'own_tasks_ids';
+const ownTasksIds = async () => new Set(String((await db.getSetting(OWN_TASKS_KEY)) || '').split(',').map(Number).filter(Boolean));
+const isOwnTasksOnly = async (tgId) => (await ownTasksIds()).has(Number(tgId));
+const setOwnTasksOnly = async (tgId, on) => {
+  const q = await ownTasksIds();
+  if (on) q.add(Number(tgId)); else q.delete(Number(tgId));
+  await db.setSetting(OWN_TASKS_KEY, [...q].join(','));
+};
+
 /** Sozlama o'chiq bo'lsa — boshliq(lar)ni chiqarib tashlaydi; hech kim qolmasa — o'zgarishsiz (xabar yo'qolmasin) */
 const withoutHiddenBoss = async (ids) => {
   if (await bossSeesAttendance()) return ids;
@@ -126,4 +139,4 @@ const actorName = (ctx) => {
   return [f.first_name, f.last_name].filter(Boolean).join(' ').trim() || 'Direktor';
 };
 
-module.exports = { quietIds, isQuiet, setQuiet, dropQuiet, infoOnlyIds, actorName, bossName, setBossName, headTaskCopy, setHeadTaskCopy, hrSeesBossTasks, setHrSeesBossTasks, bossSeesAttendance, setBossSeesAttendance, headSeesMoney, setHeadSeesMoney, absenceRecipientsOf, approversOf, recipientsLabel };
+module.exports = { quietIds, isQuiet, setQuiet, dropQuiet, isOwnTasksOnly, setOwnTasksOnly, infoOnlyIds, actorName, bossName, setBossName, headTaskCopy, setHeadTaskCopy, hrSeesBossTasks, setHrSeesBossTasks, bossSeesAttendance, setBossSeesAttendance, headSeesMoney, setHeadSeesMoney, absenceRecipientsOf, approversOf, recipientsLabel };

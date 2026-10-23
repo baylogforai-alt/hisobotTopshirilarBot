@@ -197,7 +197,7 @@ const showReport = async (ctx) => {
   if (sel.empId) {
     const emp = await employees.byId(sel.empId);
     if (!emp) { setSel(ctx, { pEmp: null }); return render(ctx, '❌ Hodim topilmadi.', homeKeyboard()); }
-    return render(ctx, await period.employeeReport(emp, sel.from, sel.to), reportKeyboard(sel));
+    return render(ctx, await period.employeeReport(emp, sel.from, sel.to, { viewer: ctx.state.actor }), reportKeyboard(sel));
   }
   return render(ctx, await period.teamReport(sel.from, sel.to), reportKeyboard(sel));
 };

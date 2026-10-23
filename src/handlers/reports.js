@@ -105,7 +105,7 @@ const register = (bot) => {
   bot.hears(ui.BTN.reports, async (ctx) => { if (await guard(ctx)) await reportsHome(ctx); });
   bot.command('hisobotlar', async (ctx) => { if (await guard(ctx)) await reportsHome(ctx); });
   bot.action('rp:home', async (ctx) => { if (await guard(ctx)) { await ctx.answerCbQuery(); await reportsHome(ctx); } });
-  bot.action('rp:daily', async (ctx) => { if (await guard(ctx)) { await ctx.answerCbQuery(); await render(ctx, await reports.buildDailyGroupText(), inline([[cb('📥 Excel (bugun)', 'rp:xlday'), cb('⬅️ Hisobotlar', 'rp:home')]])); } });
+  bot.action('rp:daily', async (ctx) => { if (await guard(ctx)) { await ctx.answerCbQuery(); await render(ctx, await reports.buildDailyGroupText(undefined, ctx.state.actor), inline([[cb('📥 Excel (bugun)', 'rp:xlday'), cb('⬅️ Hisobotlar', 'rp:home')]])); } });
   bot.action(/^rp:team:(\d{4}-\d{2})$/, async (ctx) => { if (await guard(ctx)) { await ctx.answerCbQuery(); await teamMonth(ctx, ctx.match[1]); } });
   bot.action('rp:depts', async (ctx) => { if (await guard(ctx)) { await ctx.answerCbQuery(); await deptPick(ctx); } });
   bot.action(/^rp:d:(\d+):(\d{4}-\d{2})$/, async (ctx) => { if (await guard(ctx)) { await ctx.answerCbQuery(); await deptMonth(ctx, Number(ctx.match[1]), ctx.match[2]); } });

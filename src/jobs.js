@@ -242,7 +242,8 @@ const start = (bot) => {
     let hrFile = null; // HR ga — boshliq sozlamasiga qarab boshliq/direktor topshiriqlarisiz
     for (const id of await notify.seeAllIds()) {
       const viewer = await require('./services/access').resolve(id);
-      const file = viewer.hrSeesBoss ? full : hrFile || (hrFile = await excel.buildTeamPeriod(from, to, { viewer }));
+      let file = viewer.hrSeesBoss ? full : hrFile || (hrFile = await excel.buildTeamPeriod(from, to, { viewer }));
+      if (viewer.ownTasksOnly) file = await excel.buildTeamPeriod(from, to, { viewer });
       await notify.docToUser(bot, id, file.buffer, file.filename, `📥 <b>O'tgan hafta</b> — ${time.prettyRange(from, to)} (Excel)`);
       await tg.throttle();
     }
@@ -278,6 +279,7 @@ const start = (bot) => {
       const viewer = await require('./services/access').resolve(id);
       let file = full;
       if (!viewer.hrSeesBoss) file = hrFile || (hrFile = await excel.buildMonthly(m, { viewer }));
+      if (viewer.ownTasksOnly) file = await excel.buildMonthly(m, { viewer });
       await notify.docToUser(bot, id, file.buffer, file.filename, `📥 <b>${time.monthName(m)}</b> — oylik hisobot (KPI, topshiriqlar, davomat, kunlik hisobotlar)`);
       await notify.toUser(
         bot, id,
@@ -302,7 +304,7 @@ const start = (bot) => {
       await logRun('backup', res.skipped ? 'skipped' : res.file);
     });
   } else {
-    // Postgres: konteyner diski vaqtinchalik — zaxira direktorga Telegram fayli sifatida boradi
+    // Postgres: konteyner diski vaqtinchalik — zaxira direktorga Telegram fayli sifatida boradi (jim rejimdagilarga — Odilxon — yo'q)
     schedule('backup-export', '50 23 * * *', async () => {
       const { buffer, filename, rows } = await backup.exportJson();
       const n = await notify.docToAdmins(bot, buffer, filename, `💾 <b>Kunlik zaxira</b> — ${time.prettyDate(time.today())} · ${rows} ta yozuv\n<i>Faylni saqlab qo'ying: baza yo'qolsa shundan tiklanadi.</i>`);

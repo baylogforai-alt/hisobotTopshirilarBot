@@ -275,3 +275,15 @@ BAYOMA'dan farq faqat 2 ta: «📡 Agentlar qayerda» (jonli joylashuv ko'chiril
   `kpiExtras.basisPct` (tasks/attendance/head/custom; total/manual — chegarasiz), kalkulyator (`kpiCalc.calc`, "→ 0 (80% dan kam)",
   maslahat "topshiriq 80% bo'lsa ≈ +..."), veb-panel KPI kartasi. CRM `kpi-merge.ts` `kpiPartPct` bilan BIR XIL — birga deploy.
   Tasdiqlangan/chiqarilgan oylar o'zgarmaydi; draft qatorlar keyingi compute/preview'da yangi formula bilan. Smoke testlar yangilandi (78→68 va h.k.).
+
+## 19. 23-okt-2026: Odilxon — kunlik zaxira kelmaydi, faqat o'zi bergan topshiriqlar ko'rinadi
+Foydalanuvchi: «kunlik zaxira boshliqqa (Odilxon) bormasligi shart; Odilxonga faqat o'zi bergan topshiriqlar ko'rinsin, boshqalar bergani ko'rinmasin».
+- **Zaxira:** `notify.docToAdmins` (23:50 `backup-export`) — `org.dropQuiet(adminIds, {keepIfEmpty: true})`: jim rejimdagilarga (Odilxon) bormaydi,
+  Jaxongir (CEO) oladi; boshqa admin qolmasa — baribir yuboriladi (zaxira yo'qolmasin). Panel «💾 Zaxira nusxa» — bosgan odamga, avvalgidek.
+- **Faqat o'z topshiriqlari:** per-odam sozlama `settings.own_tasks_ids` — `org.isOwnTasksOnly/setOwnTasksOnly`, `access.resolve` → `actor.ownTasksOnly`.
+  `tasks.visibleTo`: ownTasksOnly bo'lsa faqat `created_by = actor.tgId` yoki o'ziga berilgan. Shu filtr orqali: ⏳/🔁/🕓/✅ holat ro'yxatlari, Tekshiruv,
+  📋 jurnal, muddati o'tganlar, hodim kartochkasi va «📋 Topshiriqlari», `/hodim_missiya`, arxiv (kun daftari, 7/30 kun, «Topshiriqlari»), davr hisoboti,
+  Kun yakuni (`/kun_hisobot`, rp:daily), barcha Excellar (viewer, haftalik/oylik avtomatik fayl ham alohida), Web App (`access.resolve`).
+  **Filtrlanmaydi (ataylab):** raqamlar — KPI, «BUGUNGI HOLAT» sanoqlari, davr statistikasi; «📜 Harakatlar tarixi» (activity_log matni).
+  Odilxon — `fixes.js` `odilxon-oz-topshiriqlari-20261023` (bir marta yoqiladi; Panel tugmasi yo'q — o'chirish faqat bazadan `own_tasks_ids`).
+- Smoke +10 («kunlik zaxira: ...», «o'z topshiriqlari: ...»). `npm test` — 189/189 + 773/773.

@@ -74,7 +74,7 @@ const showDay = async (ctx, empId, date) => {
   if (!(await guard(ctx))) return null;
   const emp = await employees.byId(empId);
   if (!emp) return render(ctx, '❌ Hodim topilmadi.', await homeKeyboard());
-  return render(ctx, await history.dayCard(emp, date), dayKeyboard(emp.id, date));
+  return render(ctx, await history.dayCard(emp, date, ctx.state.actor), dayKeyboard(emp.id, date));
 };
 
 // 3) Kun tanlash — oxirgi 14 kun
@@ -115,7 +115,7 @@ const showRange = async (ctx, empId, days) => {
   if (!emp) return render(ctx, '❌ Hodim topilmadi.', await homeKeyboard());
   const to = time.today();
   const from = time.addDays(to, -(days - 1));
-  return render(ctx, await period.employeeReport(emp, from, to, { maxItems: 12 }), inline([
+  return render(ctx, await period.employeeReport(emp, from, to, { maxItems: 12, viewer: ctx.state.actor }), inline([
     [cb(days === 7 ? '• 7 kun •' : '7 kun', `hr:r:${empId}:7`), cb(days === 30 ? '• 30 kun •' : '30 kun', `hr:r:${empId}:30`)],
     [cb(`📥 Excel (${days} kun)`, `hr:x:${empId}:${days}`)],
     [cb('🗂 Kun daftari', `hr:d:${empId}:${to}`), cb('⬅️ Hodimlar', 'hr:home')],
@@ -127,7 +127,7 @@ const showTasks = async (ctx, empId) => {
   if (!(await guard(ctx))) return null;
   const emp = await employees.byId(empId);
   if (!emp) return render(ctx, '❌ Hodim topilmadi.', await homeKeyboard());
-  return render(ctx, await reports.buildEmployeeTasks(emp), inline([
+  return render(ctx, await reports.buildEmployeeTasks(emp, ctx.state.actor), inline([
     [cb('📤 Topshiriq berish', `as:emp:${empId}`), cb('📋 Boshqarish', `emp:tasks:${empId}`)],
     [cb('🗂 Kun daftari', `hr:d:${empId}:${time.today()}`), cb('⬅️ Hodimlar', 'hr:home')],
   ]));

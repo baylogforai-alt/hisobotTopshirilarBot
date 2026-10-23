@@ -215,8 +215,10 @@ const dayTable = (stats, limit = 31) => {
 };
 
 /** Bitta hodimning davr hisoboti — direktor ekranda ko'radigan matn */
-const employeeReport = async (emp, from, to, { maxItems = 20 } = {}) => {
+const employeeReport = async (emp, from, to, { maxItems = 20, viewer = null } = {}) => {
   const s = await employeeStats(emp, from, to);
+  // viewer ko'rmaydigan topshiriqlar ro'yxatlarda chiqmaydi (raqamlar — umumiy)
+  if (viewer) Object.assign(s, { doneRows: tasks.visibleFor(viewer, s.doneRows), open: tasks.visibleFor(viewer, s.open) });
   const out = [];
   out.push(header('DAVR HISOBOTI', s.from, s.to));
   out.push(`👤 <b>${esc(emp.full_name)}</b>${emp.position ? ` · <i>${esc(emp.position)}</i>` : ''}${emp.department_name ? ` · ${esc(emp.department_name)}` : ''}${employees.isFlexible(emp) ? ' 🕊' : ''}`);
@@ -235,13 +237,13 @@ const employeeReport = async (emp, from, to, { maxItems = 20 } = {}) => {
   out.push(dayTable(s));
   out.push('');
 
-  out.push(`✅ <b>BAJARGAN ISHLARI (${s.doneCount})</b>`);
-  if (s.doneCount) {
+  out.push(`✅ <b>BAJARGAN ISHLARI (${s.doneRows.length})</b>`);
+  if (s.doneRows.length) {
     s.doneRows.slice(0, maxItems).forEach((t) => {
       const d = String(t.done_at).slice(0, 10);
       out.push(`   <code>${time.shortDate(d)}</code> ${t.status === 'accepted' ? '✅' : '🕓'} ${esc(t.title)}${d > t.due_date ? ' <i>(kech)</i>' : ''}`);
     });
-    if (s.doneCount > maxItems) out.push(`   <i>…yana ${s.doneCount - maxItems} ta (Excel faylda to'liq)</i>`);
+    if (s.doneRows.length > maxItems) out.push(`   <i>…yana ${s.doneRows.length - maxItems} ta (Excel faylda to'liq)</i>`);
   } else out.push("   <i>— bu davrda bajarilgan ish yo'q —</i>");
   out.push('');
 

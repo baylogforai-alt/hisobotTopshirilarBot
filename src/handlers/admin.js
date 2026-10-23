@@ -89,7 +89,7 @@ const listEmployees = async (ctx, deptId = null) => {
 const employeeCard = async (ctx, id) => {
   const e = await employees.byId(id);
   if (!e) return render(ctx, 'Hodim topilmadi.', ui.backKeyboard('emp:list'));
-  const open = await tasks.openFor(e.id);
+  const open = tasks.visibleFor(ctx.state.actor, await tasks.openFor(e.id));
   const { from, to } = time.monthRange(time.month());
   const ts = await tasks.stats(e.id, from, to);
   const at = await attendance.stats(e, from, to);
@@ -219,7 +219,7 @@ const askSalary = async (ctx, empId, field) => {
 /** Boshliq: hodimning hamma topshiriqlari — faol, tekshiruvda, shu oy bajarilgan (kim bergan, qachon yozilgan, muddat, holat) */
 const employeeTasks = async (ctx, id) => {
   const e = await employees.byId(id);
-  const by = async (kind) => tasks.listByKind(kind, { employeeIds: [e.id] });
+  const by = async (kind) => tasks.visibleFor(ctx.state.actor, await tasks.listByKind(kind, { employeeIds: [e.id] }));
   const open = await by('active');
   const awaiting = await by('review');
   const accepted = await by('accepted');
@@ -505,7 +505,7 @@ const register = (bot) => {
     return render(ctx, text, inline([[cb('📥 Excel (bugun)', 'rp:xlday'), cb('⬅️ Panel', 'adm:home')]]));
   });
   bot.command(['holat', 'umumiy_hisobot'], async (ctx) => { if (await guard(ctx)) await render(ctx, (await reports.buildToday()).text, inline([[cb('📥 Excel (bugun)', 'rp:xlday')]])); });
-  bot.command('kun_hisobot', async (ctx) => { if (await guard(ctx)) await render(ctx, await reports.buildDailyGroupText()); });
+  bot.command('kun_hisobot', async (ctx) => { if (await guard(ctx)) await render(ctx, await reports.buildDailyGroupText(undefined, ctx.state.actor)); });
   bot.command('kechikkanlar', async (ctx) => { if (await guard(ctx)) await showOverdue(ctx); });
   bot.command('eslat', async (ctx) => {
     if (!(await guard(ctx))) return;
@@ -543,7 +543,7 @@ const register = (bot) => {
     await employeeCard(ctx, e.id);
   });
   bot.command('erkin', async (ctx) => { if (!(await guard(ctx))) return; const e = await byArgTg(ctx); if (e) { await employees.setFlexible(e.id, !employees.isFlexible(e)); await employeeCard(ctx, e.id); } });
-  bot.command('hodim_missiya', async (ctx) => { if (!(await guard(ctx))) return; const e = await byArgTg(ctx); if (e) await render(ctx, await reports.buildEmployeeTasks(e), ui.backKeyboard(`emp:${e.id}`, '👤 Kartochka')); });
+  bot.command('hodim_missiya', async (ctx) => { if (!(await guard(ctx))) return; const e = await byArgTg(ctx); if (e) await render(ctx, await reports.buildEmployeeTasks(e, ctx.state.actor), ui.backKeyboard(`emp:${e.id}`, '👤 Kartochka')); });
   bot.action(/^adm:htc(?::([01]))?$/, async (ctx) => {
     if (!(await guard(ctx))) return;
     if (!ctx.match[1]) { await ctx.answerCbQuery('Eskirgan tugma'); return showPanel(ctx); }

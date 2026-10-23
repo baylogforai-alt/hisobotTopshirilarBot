@@ -121,8 +121,9 @@ const toAdmins = async (bot, text, extra = {}, exceptTgId = null) => {
   return ids.length;
 };
 
+/** Kunlik zaxira — adminlarga, jim rejimdagilarsiz (Odilxon); hech kim qolmasa — baribir (zaxira yo'qolmasin) */
 const docToAdmins = async (bot, buffer, filename, caption = '') => {
-  const ids = await adminIds();
+  const ids = await require('./org').dropQuiet(await adminIds(), { keepIfEmpty: true });
   for (const id of ids) {
     await docToUser(bot, id, buffer, filename, caption);
     await tg.throttle();

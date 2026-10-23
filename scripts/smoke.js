@@ -562,6 +562,49 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await send(cbq(1000, 'adm:qt:0'));
     ok("jim rejim: o'chirildi", !(await org.isQuiet(1000)) && (await employees.reviewersOf(akbar)).includes(1000));
   }
+
+  // 23-okt: kunlik zaxira jim rejimdagi boshliqqa (Odilxon) bormaydi; «faqat o'z topshiriqlari» — boshqalar bergani ko'rinmaydi
+  {
+    const org = require('../src/services/org');
+    const access = require('../src/services/access');
+    await employees.setRole(sardor.id, 'admin');
+    await org.setQuiet(1000, true);
+    const zMark = sent.length;
+    await notify.docToAdmins(bot, Buffer.from('x'), 'zaxira.json.gz', 'zaxira');
+    const docs = sent.slice(zMark).filter((s) => s.method === 'sendDocument').map((s) => Number(s.payload.chat_id));
+    ok("kunlik zaxira: jim rejimdagi boshliqqa bormaydi, boshqa adminga boradi", !docs.includes(1000) && docs.includes(30001), JSON.stringify(docs));
+    await org.setQuiet(1000, false);
+    await employees.setRole(sardor.id, 'employee');
+
+    const tMine = await tasks.create({ employeeId: akbar.id, title: 'Direktor bergan ish OWN', dueDate: bugun, createdBy: 1000, source: 'admin' });
+    const tOther = await tasks.create({ employeeId: akbar.id, title: 'Boshliq bergan ish OTHER', dueDate: bugun, createdBy: 20001, source: 'head' });
+    await org.setOwnTasksOnly(1000, true);
+    const me = await access.resolve(1000);
+    const has = (list, t) => list.some((x) => Number(x.id) === Number(t.id));
+    const vis = tasks.visibleFor(me, await tasks.openFor(akbar.id));
+    ok("o'z topshiriqlari: boshliq faqat o'zi berganini ko'radi", me.ownTasksOnly && has(vis, tMine) && !has(vis, tOther));
+    const act = await access.tasksByKind(me, 'active');
+    ok("o'z topshiriqlari: ⏳ Faol ro'yxatida boshqalar bergani yo'q", has(act, tMine) && !has(act, tOther));
+    const headAct = await access.tasksByKind(await access.resolve(20001), 'active');
+    ok("o'z topshiriqlari: boshqa rahbar hammasini ko'radi", has(headAct, tMine) && has(headAct, tOther));
+    await send(cbq(1000, `emp:tasks:${akbar.id}`));
+    ok("o'z topshiriqlari: hodim topshiriqlari ekranida faqat o'zi bergani", lastText(1000).includes('OWN') && !lastText(1000).includes('OTHER'));
+    await send(msg(1000, '/kun_hisobot'));
+    ok("o'z topshiriqlari: kun yakunida faqat o'zi bergani", lastText(1000).includes('OWN') && !lastText(1000).includes('OTHER'));
+    await send(cbq(1000, `hr:d:${akbar.id}:${bugun}`));
+    ok("o'z topshiriqlari: kun daftarida faqat o'zi bergani", lastText(1000).includes('OWN') && !lastText(1000).includes('OTHER'));
+    await send(msg(1000, '/hodim_missiya 99999'));
+    ok("o'z topshiriqlari: /hodim_missiya da faqat o'zi bergani", lastText(1000).includes('OWN') && !lastText(1000).includes('OTHER'));
+    const xl = await excel.buildTeamPeriod(bugun, bugun, { viewer: me });
+    const wbx = new ExcelJS.Workbook();
+    await wbx.xlsx.load(xl.buffer);
+    const cells = [];
+    wbx.eachSheet((ws) => ws.eachRow((r) => cells.push(String(r.values.join(' ')))));
+    ok("o'z topshiriqlari: Excelda boshqalar bergani yo'q", cells.some((c) => c.includes('OWN')) && !cells.some((c) => c.includes('OTHER')));
+    await org.setOwnTasksOnly(1000, false);
+    ok("o'z topshiriqlari: o'chirilsa — hammasi ko'rinadi", has(await access.tasksByKind(await access.resolve(1000), 'active'), tOther));
+    await db.query('DELETE FROM tasks WHERE id IN ($1, $2)', [tMine.id, tOther.id]);
+  }
   ok('qo\'shimcha KPI: tasdiqlangan oy — qulf', (await crmKpi.extraFromCrm({ action: 'add', employeeId: akbar.id, month: prevM, title: 'x', basis: 'total', amount: 5 })).error === 'locked');
   await crmKpi.extraFromCrm({ action: 'remove', employeeId: akbar.id, month: curM, id: xMan.id });
   const st7 =await period.employeeStats(akbar, time.addDays(bugun, -6), bugun);

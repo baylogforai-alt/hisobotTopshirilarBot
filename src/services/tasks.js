@@ -62,11 +62,16 @@ const markStartNotified = (id) => db.query('UPDATE tasks SET start_notified_at =
  * HR o'zi bergan yoki o'ziga berilgan topshiriq — ko'rinadi. Boshliq Panelda yoqsa (actor.hrSeesBoss) — HR hammasini ko'radi.
  */
 const hiddenFromHr = (t) => t.source === 'admin' || (t.source === 'self' && (t.emp_role || t.role) === 'admin');
-/** actor (access.resolve) bu topshiriqni ko'ra oladimi — faqat HR cheklovi (qolgan huquqlar chaqiruvchida) */
+/**
+ * actor (access.resolve) bu topshiriqni ko'ra oladimi — HR cheklovi va «faqat o'z topshiriqlari» (actor.ownTasksOnly);
+ * qolgan huquqlar chaqiruvchida
+ */
 const visibleTo = (actor, t) => {
-  if (!t || !actor || actor.isAdmin || !actor.isHr || actor.hrSeesBoss) return true;
-  if (actor.employee && Number(t.employee_id) === Number(actor.employee.id)) return true;
-  if (t.created_by && Number(t.created_by) === Number(actor.tgId)) return true;
+  if (!t || !actor) return true;
+  const mine = (actor.employee && Number(t.employee_id) === Number(actor.employee.id)) || (t.created_by && Number(t.created_by) === Number(actor.tgId));
+  if (actor.ownTasksOnly) return Boolean(mine);
+  if (actor.isAdmin || !actor.isHr || actor.hrSeesBoss) return true;
+  if (mine) return true;
   return !hiddenFromHr(t);
 };
 const visibleFor = (actor, list) => list.filter((t) => visibleTo(actor, t));

@@ -26,6 +26,8 @@ const resolve = async (tgId, from = null) => {
     seeAll: isAdmin || isHr,
     // HR boshliq/direktor topshiriqlarini ko'radimi — boshliq sozlamasi (tasks.visibleTo)
     hrSeesBoss: isHr && !isAdmin ? await require('./org').hrSeesBossTasks() : true,
+    // faqat o'zi bergan / o'ziga berilgan topshiriqlarni ko'radi (org.isOwnTasksOnly — Odilxon)
+    ownTasksOnly: await require('./org').isOwnTasksOnly(tgId),
     registered: Boolean(employee) || isAdmin,
     name: employee ? employee.full_name : [f.first_name, f.last_name].filter(Boolean).join(' ').trim() || 'Direktor',
   };
