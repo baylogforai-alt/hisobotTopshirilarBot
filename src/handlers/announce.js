@@ -233,7 +233,7 @@ const viewStats = async (ctx, id) => {
   const unread = st.rows.filter((r) => !r.read_at);
   const what = ann.text ? esc(ann.text.length > 160 ? `${ann.text.slice(0, 160)}…` : ann.text) : ui.MEDIA_LABEL[ann.media_type] || '📎';
   const text =
-    `📊 <b>E'lon #${ann.id}</b> · ${time.prettyDate(String(ann.created_at).slice(0, 10))} ${time.clock(ann.created_at)}\n` +
+    `📊 <b>${ann.recurring_id ? 'Davriy eslatma' : "E'lon"} #${ann.id}</b> · ${time.prettyDate(String(ann.created_at).slice(0, 10))} ${time.clock(ann.created_at)}\n` +
     `<i>${esc(ann.sender_name || '')}</i>${ann.media_type ? ` · ${ui.MEDIA_ICON[ann.media_type] || '📎'}` : ''}\n«${what}»\n${ui.LINE}\n` +
     `👁 O'qidi: <b>${st.read} / ${st.total}</b> · 📬 yetkazildi: ${st.delivered}\n` +
     (read.length ? `\n✅ <b>O'qiganlar:</b>\n${read.map((r) => `   ✅ ${esc(r.full_name)} — ${time.clock(r.read_at)}${String(r.read_at).slice(0, 10) !== String(ann.created_at).slice(0, 10) ? ` (${time.prettyDate(String(r.read_at).slice(0, 10))})` : ''}`).join('\n')}\n` : '') +

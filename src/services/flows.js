@@ -1,6 +1,7 @@
 'use strict';
 
 const config = require('../config');
+const db = require('../db');
 const ui = require('../ui');
 const time = require('../time');
 const tasks = require('./tasks');
@@ -13,6 +14,7 @@ const kpi = require('./kpi');
 const webapp = require('./webapp');
 const activity = require('./activity');
 const announcements = require('./announcements');
+const meetings = require('./meetings');
 const chats = require('./chats');
 const tg = require('../telegram');
 
@@ -35,11 +37,11 @@ const parseTitle = (raw) => {
 const splitTitles = (text) =>
   String(text || '').split('\n').map((l) => l.replace(/^\s*(\d+[.)]|[-•*])\s*/, '').trim()).filter(Boolean).slice(0, 20);
 
-const makeTasks = async ({ employeeId, titles, dueDate, createdBy, source, priority = null, media = null, startTime = null }) => {
+const makeTasks = async ({ employeeId, titles, dueDate, createdBy, source, priority = null, media = null, startTime = null, recurringId = null }) => {
   const created = [];
   for (const raw of titles) {
     const p = parseTitle(raw);
-    if (p.title) created.push(await tasks.create({ employeeId, title: p.title, dueDate, createdBy, source, priority: priority || p.priority, media, startTime }));
+    if (p.title) created.push(await tasks.create({ employeeId, title: p.title, dueDate, createdBy, source, priority: priority || p.priority, media, startTime, recurringId }));
   }
   return created;
 };
@@ -64,15 +66,20 @@ const sendTaskMedia = (bot, chatId, t, extra = {}) =>
 // TOPSHIRIQLAR
 // ---------------------------------------------------------------------------
 
+/** 8-okt: topshiriq matni qalin (bold) va ajratilgan blokda — vazifaligi darhol ko'rinsin */
+const assignedBlock = (created) =>
+  created.map((t, i) =>
+    `<blockquote>📌 <b>${created.length > 1 ? `${i + 1}. ` : ''}${t.priority === 'high' ? '🔥 ' : ''}${t.task_media_type ? `${ui.MEDIA_ICON[t.task_media_type] || '📎'} ` : ''}${esc(String(t.title).toUpperCase())}</b></blockquote>`).join('\n');
+
 /** Rahbar / HR / direktor topshiriq beradi. giver — access actor */
-const assignTasks = async (bot, giver, target, titles, dueDate, { priority = null, media = null, startTime = null } = {}) => {
+const assignTasks = async (bot, giver, target, titles, dueDate, { priority = null, media = null, startTime = null, recurringId = null } = {}) => {
   const source = giver.isAdmin ? 'admin' : 'head';
-  const created = await makeTasks({ employeeId: target.id, titles, dueDate, createdBy: giver.tgId, source, priority, media, startTime });
+  const created = await makeTasks({ employeeId: target.id, titles, dueDate, createdBy: giver.tgId, source, priority, media, startTime, recurringId });
   if (!created.length) return { created, source };
   const ackKb = ui.inline(ui.ackRows(created));
   await notify.toUser(
     bot, target.tg_id,
-    `📥 <b>Yangi topshiriq!</b> — <i>${esc(giver.name)}</i>\n⏱ Muddat: <b>${whenText(dueDate, startTime)}</b>\n\n${ui.taskList(created)}\n\n` +
+    `📥 <b>Yangi topshiriq!</b> — <i>${esc(giver.name)}</i>\n⏱ Muddat: <b>${whenText(dueDate, startTime)}</b>\n\n${assignedBlock(created)}\n\n` +
       `${media ? '👇 Topshiriqni eshiting / ko\'ring va ' : ''}«✅ Tushundim» tugmasini bosing (yoki «tushundim» deb yozing). Bajargach «${ui.BTN.done}» bilan belgilang.`,
     media ? {} : ackKb,
   );
@@ -162,14 +169,285 @@ const completeBossTask = async (bot, emp, taskId, proof = null) => {
  * E'lon (Web App uchun) — BayLog'ning o'z E'lon xizmati (services/announcements: «👁 O'qidim», tarix, guruhga ham) orqali.
  * sender — access actor; targets — hodimlar; target — «Hammaga», «Bo'limlar: …» kabi yorliq. Huquq — chaqiruvchida.
  */
-const sendAnnouncement = async (bot, sender, targets, { body = null, media = null, target = 'all' } = {}) => {
-  const res = await announcements.send(bot, sender, targets, { text: body, media }, { target });
+const sendAnnouncement = async (bot, sender, targets, { body = null, media = null, target = 'all', recurringId = null } = {}) => {
+  const res = await announcements.send(bot, sender, targets, { text: body, media }, { target, recurringId });
   if (res.ann) await notify.toArchive(bot, `${announcements.bodyOf(res.ann)}\n\n<i>→ ${esc(target)} · ${targets.length} kishi</i>`, res.ann.file_id ? { type: res.ann.media_type, fileId: res.ann.file_id } : null);
   return { announcement: res.ann, total: targets.length, delivered: res.delivered };
 };
 
 /** Hali o'qimaganlarga qayta yuborish. Nechta kishiga */
 const resendAnnouncement = (bot, a) => announcements.resendUnread(bot, a.id);
+
+// ---------------------------------------------------------------------------
+// «📆 DAVRIY ESLATMA» — har oy / har hafta: eslatma (e'lon) yoki topshiriq (cron recurring-run, har daqiqa)
+// ---------------------------------------------------------------------------
+
+/**
+ * Vaqti kelgan davriy eslatmalarni yuboradi. Bot o'chiq turib o'tib ketgan kun — o'tkazib yuboriladi (keyingisiga suriladi).
+ * Yozgan odam endi boshliq/direktor yoki HR bo'lmasa — to'xtatiladi. Nechta davriy eslatma yuborildi
+ */
+const runRecurring = async (bot, now = time.now()) => {
+  const recurring = require('./recurring');
+  const access = require('./access');
+  let n = 0;
+  for (const r of await recurring.due(now)) {
+    const sameDay = String(r.next_run_at).slice(0, 10) === now.toFormat('yyyy-MM-dd');
+    if (!(await recurring.claim(r, now, { count: sameDay }))) continue;
+    if (!sameDay) continue;
+    const giver = await access.resolve(r.created_by);
+    if (!giver.isAdmin && !giver.isHr) { await recurring.setActive(r.id, false); continue; }
+    if (r.creator_name && !giver.employee) giver.name = r.creator_name;
+    const targets = (await recurring.members(r.id)).filter((e) => Number(e.active));
+    if (!targets.length) continue;
+    const media = r.file_id ? { type: r.media_type, fileId: r.file_id, fileName: r.file_name } : null;
+    const when = recurring.scheduleText(r);
+    if (r.kind === 'remind') {
+      const res = await sendAnnouncement(bot, giver, targets, { body: r.body, media, target: r.target || '', recurringId: r.id });
+      await notify.toUser(bot, giver.tgId, `📆 <b>Davriy eslatma yuborildi</b> (${esc(when)}) — ${res.delivered}/${res.total} kishiga${r.body ? `
+«${esc(r.body.slice(0, 100))}»` : ''}`,
+        ui.inline([[ui.cb("👁 Kim o'qidi", `an:v:${res.announcement.id}`)]]));
+    } else {
+      const dueDate = time.addDays(now.toFormat('yyyy-MM-dd'), Number(r.due_offset) || 0);
+      const titles = media ? [r.body || mediaTitles(media, null)[0]] : splitTitles(r.body);
+      let given = 0;
+      const misses = [];
+      for (const e of targets) {
+        // oldingisi hali «Bajardim» qilinmagan — bajarmadi (yangisidan oldin baholanadi)
+        const missed = await recurring.evaluate(r.id, e.id, now);
+        if (missed.length) misses.push({ emp: e, tasks: missed, streak: await recurring.streak(r.id, e.id) });
+        const res = await assignTasks(bot, giver, e, titles, dueDate, { media, recurringId: r.id });
+        if (res.created.length) given += 1;
+        await tg.throttle();
+      }
+      await notify.toUser(bot, giver.tgId, `📆 <b>Davriy topshiriq berildi</b> (${esc(when)}) — ${given} kishiga, muddat: ${time.prettyDate(dueDate)}
+📌 ${esc(titles.join('; ').slice(0, 150))}`);
+      if (misses.length) await reportRecurringMisses(bot, giver, r, misses);
+    }
+    n += 1;
+  }
+  return n;
+};
+
+const recSvc = () => require('./recurring');
+
+/** «🔴 Olimjon — ketma-ket 2-marta · javobi: ❌ Yo'q» */
+const missLine = (m) => {
+  const ans = m.tasks.find((t) => t.rec_answer);
+  const reply = ans ? `javobi: ${recSvc().ANSWER_LABEL[ans.rec_answer]}` : m.tasks.some((t) => t.rec_ask_at) ? "so'rovga javob bermadi" : null;
+  return `${'🔴'.repeat(Math.min(m.streak, 5))} <b>${esc(m.emp.full_name)}</b> — ${m.streak > 1 ? `ketma-ket <b>${m.streak}</b>-marta` : '1-marta'}` +
+    `${reply ? ` · ${reply}` : ''}${m.tasks.length > 1 ? `\n   ${m.tasks.map((t) => `• ${esc(t.title)}`).join('\n   ')}` : ''}`;
+};
+
+/**
+ * Davriy topshiriq bajarilmadi — yozgan odamga (hammasi bitta xabarda); ketma-ket 2+ marta — hodimning bo'lim rahbariga ham.
+ * misses — [{ emp, tasks, streak }]
+ */
+const reportRecurringMisses = async (bot, giver, r, misses) => {
+  const title = esc(String(misses[0].tasks[0].title).slice(0, 150));
+  const when = esc(recSvc().scheduleText(r));
+  await notify.toUser(
+    bot, giver.tgId,
+    `⚠️ <b>Davriy topshiriq bajarilmadi</b> (${when})\n📌 «${title}»\n\n${misses.map(missLine).join('\n')}\n\n` +
+      "<i>«Bajardim» deb, siz qabul qilmaguningizcha unga har 2 soatda eslatma boradi.</i>",
+  );
+  const byHead = new Map();
+  for (const m of misses.filter((x) => x.streak >= 2 && x.emp.department_id)) {
+    for (const h of await departments.headsOf(m.emp.department_id)) {
+      if (Number(h.tg_id) === Number(giver.tgId) || Number(h.id) === Number(m.emp.id)) continue;
+      if (!byHead.has(Number(h.tg_id))) byHead.set(Number(h.tg_id), []);
+      byHead.get(Number(h.tg_id)).push(m);
+    }
+  }
+  for (const [tgId, list] of byHead) {
+    await notify.toUser(
+      bot, tgId,
+      `⚠️ <b>Jamoangizda davriy topshiriq qayta-qayta bajarilmayapti</b>\n📌 «${title}» (${when}) — <i>${esc(giver.name)}</i>\n\n${list.map(missLine).join('\n')}`,
+    );
+    await tg.throttle();
+  }
+};
+
+/** Keyingisidan 1 kun oldin (ASK_HOUR) — hali «Bajardim» qilinmagan davriy topshiriq egasiga savol. Nechta savol */
+const askRecurringTasks = async (bot, now = time.now()) => {
+  const rec = recSvc();
+  let n = 0;
+  for (const r of await rec.askDue(now)) {
+    for (const t of await rec.askable(r.id)) {
+      if (!(await rec.markAsked(t.id, now))) continue;
+      await notify.toUser(
+        bot, t.tg_id,
+        `❓ <b>Davriy topshiriq hali bajarilmagan</b>\n📌 <b>${esc(t.title)}</b>\n<i>berildi: ${time.prettyDate(String(t.created_at).slice(0, 10))} · muddat: ${time.prettyDate(t.due_date)}</i>\n\n` +
+          "Keyingi yuborishda yangisi keladi — shungacha «Bajardim» qilinmasa, <b>bajarilmadi</b> deb hisoblanadi.\n\n<b>Bajardingizmi yoki bajarasizmi?</b>",
+        ui.inline([[ui.cb('✔️ Bajardim', `done:${t.id}`)], rec.ANSWERS.map((a) => ui.cb(rec.ANSWER_LABEL[a], `rq:${a}:${t.id}`))]),
+      );
+      n += 1;
+      await tg.throttle();
+    }
+  }
+  return n;
+};
+
+/** Hodim savolga javob berdi (will | no) — yozgan odamga xabar. Yangilangan topshiriq yoki null */
+const answerRecurringTask = async (bot, emp, taskId, ans) => {
+  const rec = recSvc();
+  const t = await rec.answer(taskId, emp.id, ans);
+  if (!t) return null;
+  if (t.created_by && Number(t.created_by) !== Number(emp.tg_id)) {
+    await notify.toUser(
+      bot, t.created_by,
+      `📆 <b>${esc(emp.full_name)}</b> — davriy topshiriq bo'yicha: <b>${rec.ANSWER_LABEL[ans]}</b>\n📌 ${esc(t.title)} (muddat: ${time.prettyDate(t.due_date)})`,
+    );
+  }
+  return t;
+};
+
+/**
+ * Har 2 soatda (ish kunlari, NAG_HOURS): bajarilmagan davriy topshiriqlar yopilguncha —
+ * hali «Bajardim» qilinmagan — hodimga; tekshiruvda — yozgan odamga «qabul qiling». Nechta xabar
+ */
+const nagRecurringMissed = async (bot) => {
+  const group = (list, key) => list.reduce((m, t) => m.set(Number(t[key]), [...(m.get(Number(t[key])) || []), t]), new Map());
+  const all = await recSvc().unresolvedMissed();
+  let n = 0;
+  for (const [tgId, list] of group(all.filter((t) => t.status === 'active'), 'tg_id')) {
+    await notify.toUser(
+      bot, tgId,
+      `🔴 <b>Bajarilmagan davriy topshiriq${list.length > 1 ? `lar (${list.length})` : ''}</b>\n\n${list.map((t) => `📌 <b>${esc(t.title)}</b> — muddat: ${time.prettyDate(t.due_date)}`).join('\n')}\n\n` +
+        `Bajarib, «${ui.BTN.done}» bosing (isbot bilan). Rahbar qabul qilmaguncha eslatma har 2 soatda keladi.`,
+      ui.inline(list.slice(0, 10).map((t) => [ui.cb(`✔️ Bajardim: ${t.title.slice(0, 35)}`, `done:${t.id}`)])),
+    );
+    n += 1;
+    await tg.throttle();
+  }
+  for (const [tgId, list] of group(all.filter((t) => t.status === 'done' && t.created_by), 'created_by')) {
+    await notify.toUser(
+      bot, tgId,
+      `🕓 <b>Bajarilmagan davriy topshiriq — tekshiruvingizni kutmoqda</b>\n\n${list.map((t) => `📌 <b>${esc(t.full_name)}</b>: ${esc(t.title)}`).join('\n')}\n\n` +
+        "Hodim «Bajardim» qildi — qabul qiling yoki kamchilik bilan qaytaring. Shungacha eslatma har 2 soatda keladi.",
+      ui.inline(list.slice(0, 10).map((t) => [ui.cb(`🕓 ${t.full_name.split(' ')[0]}: ${t.title.slice(0, 35)}`, `rv:view:${t.id}`)])),
+    );
+    n += 1;
+    await tg.throttle();
+  }
+  return n;
+};
+
+// ---------------------------------------------------------------------------
+// «🗓 MAJLIS» — boshliq/direktor va HR yozadi; 30 daqiqa oldin eslatma; kech qolaman / kelmayman — sabab bilan
+// ---------------------------------------------------------------------------
+
+/** «bugun, 15:00» / «ertaga, 09:30» / «14-oktabr, Seshanba, 10:00» */
+const meetingWhen = (m) => {
+  const day = m.meet_date === time.today() ? 'bugun' : m.meet_date === time.addDays(time.today(), 1) ? 'ertaga' : time.prettyDate(m.meet_date);
+  return `${day}, <b>${m.meet_time}</b>`;
+};
+const meetingText = (m, head = '🗓 <b>MAJLIS</b>') =>
+  `${head} — ${meetingWhen(m)}\n<i>${esc(m.sender_name || 'Rahbariyat')}</i>${m.body ? `\n\n${esc(m.body)}` : ''}`;
+/** Javob tugmalari; joriy javob «•» bilan belgilanadi */
+const meetingKb = (m, cur = null) => ui.inline([
+  meetings.ANSWERS.map((a) => ui.cb(`${cur === a ? '• ' : ''}${meetings.ANSWER_LABEL[a]}`, `mr:${m.id}:${a}`)),
+]);
+/** «✅ 3 · ⏰ 1 · 🙋 1 · ❔ 2» */
+const meetingSummary = (c) => `✅ ${c.yes} keladi · ⏰ ${c.late} kech · 🙋 ${c.no} kelmaydi · ❔ ${c.none} javob bermadi`;
+
+const deliverMeeting = async (bot, m, e, { head, cur = null } = {}) => {
+  const text = meetingText(m, head);
+  if (m.file_id) return Boolean(await notify.sendProof(bot, e.tg_id, { type: m.media_type, fileId: m.file_id }, text, meetingKb(m, cur)));
+  return Boolean(await notify.toUser(bot, e.tg_id, text, meetingKb(m, cur)));
+};
+
+/** Majlis yozish va yuborish. sender — access actor; targets — hodimlar. Huquq — chaqiruvchida */
+const sendMeeting = async (bot, sender, targets, { body = null, media = null, date, hhmm, target = '' }) => {
+  const m = await meetings.create({ senderTg: sender.tgId, senderName: sender.name, body, media, date, hhmm, target });
+  let delivered = 0;
+  for (const e of targets) {
+    const ok = await deliverMeeting(bot, m, e);
+    await meetings.addMember(m.id, e.id, ok);
+    if (ok) delivered += 1;
+    await tg.throttle();
+  }
+  await notify.toArchive(bot, `${meetingText(m)}\n\n<i>→ ${esc(target)} · ${targets.length} kishi</i>`, m.file_id ? { type: m.media_type, fileId: m.file_id } : null);
+  return { meeting: m, total: targets.length, delivered };
+};
+
+/** Javob bermaganlarga qayta yuborish. Nechta kishiga */
+const resendMeeting = async (bot, m) => {
+  let n = 0;
+  for (const r of await meetings.members(m.id)) {
+    if (r.answer) continue;
+    const ok = await deliverMeeting(bot, m, r, { head: '🔔 <b>MAJLIS — javob bering</b>' });
+    if (ok) { n += 1; if (!Number(r.delivered)) await meetings.addMember(m.id, r.employee_id, true); }
+    await tg.throttle();
+  }
+  return n;
+};
+
+/** Sabab kimga: majlisni yozgan odam + boshliq + HR (javob bergan odamning o'zidan tashqari) */
+const meetingWatchers = async (m, emp) => {
+  const ids = new Set([Number(m.sender_tg), ...(await employees.bossTgIds()).map(Number), ...(await employees.listHr()).map((e) => Number(e.tg_id))]);
+  ids.delete(Number(emp.tg_id));
+  return [...ids];
+};
+
+/**
+ * Hodim javobi: yes / late / no (late va no — sabab majburiy, chaqiruvchi tekshiradi).
+ * Kech qolaman / kelmayman → yozgan odam, boshliq va HR ga (media bilan) + arxiv; avval kech/kelmayman degan, endi «Boraman» — ularga qisqa xabar.
+ * { ok, error?, row }
+ */
+const answerMeeting = async (bot, emp, m, ans, { reason = null, proof = null } = {}) => {
+  if (!m || m.cancelled_at) return { ok: false, error: '🚫 Majlis bekor qilingan' };
+  if (meetings.isOver(m)) return { ok: false, error: "Majlis kuni o'tib ketgan" };
+  const prev = await meetings.member(m.id, emp.id);
+  if (!prev) return { ok: false, error: "Siz bu majlisga chaqirilmagansiz" };
+  if (ans !== 'yes' && !String(reason || '').trim()) return { ok: false, error: 'Sabab yozilishi shart' };
+  const row = await meetings.answer(m.id, emp.id, ans, { reason, proof });
+  const who = `${employees.contactHtml(emp)}${emp.position ? ` (${esc(emp.position)})` : ''}`;
+  let text = null;
+  if (ans === 'late') text = `⏰ <b>Majlisga kech qoladi</b> — ${who}\n🗓 ${meetingWhen(m)}${m.body ? ` · ${esc(m.body.slice(0, 80))}` : ''}\nSabab: «${esc(reason)}»`;
+  else if (ans === 'no') text = `🙋 <b>Majlisga kelmaydi</b> — ${who}\n🗓 ${meetingWhen(m)}${m.body ? ` · ${esc(m.body.slice(0, 80))}` : ''}\nSabab: «${esc(reason)}»`;
+  else if (prev.answer === 'late' || prev.answer === 'no') text = `✅ <b>Majlisga keladi</b> (avval: ${meetings.ANSWER_LABEL[prev.answer]}) — ${who}\n🗓 ${meetingWhen(m)}`;
+  if (text) {
+    for (const id of await meetingWatchers(m, emp)) {
+      if (proof && proof.fileId) await notify.sendProof(bot, id, proof, text);
+      else await notify.toUser(bot, id, text);
+    }
+    if (ans !== 'yes') await notify.toArchive(bot, text, proof);
+  }
+  return { ok: true, row };
+};
+
+/** 30 daqiqa oldin: «Kelmayman» deganlardan boshqa hammaga eslatma, yozgan odamga — holat. Nechta majlis */
+const remindMeetings = async (bot, now = time.now()) => {
+  let n = 0;
+  for (const m of await meetings.dueReminders(now)) {
+    if (!(await meetings.markReminded(m.id))) continue;
+    const left = meetings.minutesLeft(m, now);
+    const list = await meetings.members(m.id);
+    for (const r of list) {
+      if (r.answer === 'no') continue;
+      await deliverMeeting(bot, m, r, { head: `⏰ <b>${left} daqiqadan keyin MAJLIS</b>`, cur: r.answer || null });
+      await tg.throttle();
+    }
+    const c = await meetings.counts(m.id);
+    await notify.toUser(bot, m.sender_tg, `⏰ <b>${left} daqiqadan keyin majlis</b> — ${meetingWhen(m)}${m.body ? `\n${esc(m.body.slice(0, 120))}` : ''}\n\n${meetingSummary(c)}`,
+      ui.inline([[ui.cb('👥 Kim keladi', `mt:st:${m.id}`)]]));
+    n += 1;
+  }
+  return n;
+};
+
+/** Bekor qilish → qatnashchilarga xabar. Bekor qilindimi */
+const cancelMeeting = async (bot, m, actor) => {
+  if (!(await meetings.cancel(m.id, actor.tgId))) return false;
+  const text = `🚫 <b>MAJLIS BEKOR QILINDI</b> — ${meetingWhen(m)}${m.body ? `\n${esc(m.body.slice(0, 200))}` : ''}\n<i>${esc(actor.name)}</i>`;
+  for (const r of await meetings.members(m.id)) {
+    if (!Number(r.delivered)) continue;
+    await notify.toUser(bot, r.tg_id, text);
+    await tg.throttle();
+  }
+  await notify.toArchive(bot, text);
+  return true;
+};
 
 /** Qabul qilish → hodimga xabar. { ok, task } */
 const acceptTask = async (bot, taskId, byTgId) => {
@@ -366,6 +644,37 @@ const requestAbsence = async (bot, emp, reason, proof = null) => {
 };
 
 /**
+ * «Javob so'rash» — ish vaqtida chiqib kelish (1–3 soat) yoki bugunga erta ketish.
+ * Tugmalar bo'lim rahbari va boshliqqa (org.approversOf), HR ga — tugmasiz (toHrAndBoss). { row }
+ */
+const requestLeave = async (bot, emp, kind, reason, proof = null) => {
+  const leaves = require('./leaves');
+  const row = await leaves.create({ employeeId: emp.id, kind, reason, proof });
+  const text = `🚪 <b>${esc(emp.full_name)}</b>${emp.position ? ` (${esc(emp.position)})` : ''} <b>javob so'rayapti</b> · ${time.clock(row.created_at)}\n` +
+    `⏱ ${esc(leaves.kindLabel(kind))}\n«${esc(reason)}»`;
+  await notify.toHrAndBoss(bot, emp, text, {}, proof, { decideExtra: ui.leaveDecisionKeyboard(row.id) });
+  await notify.toArchive(bot, text, proof);
+  return { row };
+};
+
+/** Qaror → hodimga xabar. null — allaqachon hal qilingan */
+const decideLeave = async (bot, id, status, byTgId, byName) => {
+  const leaves = require('./leaves');
+  const row = await leaves.decide(id, status, byTgId, byName);
+  if (!row) return null;
+  const until = leaves.untilOf(row);
+  await notify.toUser(
+    bot, row.tg_id,
+    status === 'approved'
+      ? row.kind === 'day'
+        ? `✅ <b>Javob berildi</b> (${esc(byName)}) — bugun ertaroq ketishingiz mumkin.\nKetishda «${ui.BTN.checkOut}» ni bosing (joylashuv + izoh) — «erta ketdi» deb yozilmaydi.`
+        : `✅ <b>Javob berildi</b> (${esc(byName)}) — ${esc(leaves.KINDS[row.kind].short)} chiqib kelishingiz mumkin.\n⏰ <b>${until}</b> gacha qayting.`
+      : `❌ Javob so'rovingiz (${esc(leaves.kindLabel(row.kind))}) <b>qabul qilinmadi</b> (${esc(byName)}). Ishni davom ettiring.`,
+  );
+  return row;
+};
+
+/**
  * «Ketdim» — lokatsiya + izoh bilan (uydan turib «ketdim» deyolmasin). { row, worked, done, open }
  * place = { lat, lon, dist, where, warn } — where: 'ofisdan' / 'uydan', warn — «ofisdan tashqarida» / «uyidan turib». Avval kelgan va hali ketmagan (chaqiruvchi tekshiradi)
  */
@@ -382,17 +691,20 @@ const checkOut = async (bot, emp, { place = null, note = null } = {}) => {
   const row = await attendance.checkOut(emp.id, time.today(), { place, note });
   const worked = attendance.workedMinutes(row);
   const early = earlyLeaveMinutes(emp, row.checked_out);
+  const leave = early ? await require('./leaves').approvedDay(emp.id) : null;
   const done = await tasks.doneOn(emp.id);
   const open = await tasks.openFor(emp.id);
   const placeText = place
-    ? `\n📍 ${place.dist != null ? `${place.where} ${require('../geo').prettyDistance(place.dist)}${place.warn ? ` ⚠️ <b>${esc(place.warn)}</b>` : ''} · ` : ''}<a href="https://maps.google.com/?q=${Number(place.lat).toFixed(6)},${Number(place.lon).toFixed(6)}">🗺 xaritada</a>`
+    ? `\n📍 ${place.dist != null ? `${place.where} ${require('../geo').prettyDistance(place.dist)}${place.warn ? ` ⚠️ <b>${esc(place.warn)}</b>` : ''} · ` : ''}<a href="${require('../geo').mapUrl(place.lat, place.lon)}">🗺 xaritada</a>`
     : '';
   await notify.toAttendanceWatchers(
     bot, emp,
-    `🏁 <b>${esc(emp.full_name)}</b> ketdi · ${time.clock(row.checked_out)}${early ? ` ⚠️ <b>erta ketdi</b> (${time.prettyDuration(early)} oldin, ish tugashi ${employees.workEndOf(emp)})` : ''}${worked !== null ? ` · ⏱ ${time.prettyDuration(worked)}` : ''} · ✅ ${done.length} · ⏳ ${open.length}` +
+    `🏁 <b>${esc(emp.full_name)}</b> ketdi · ${time.clock(row.checked_out)}${early ? leave ? ` 🚪 <b>javob olgan</b> (${esc(leave.decided_name || '')}, ${time.prettyDuration(early)} erta)` : ` ⚠️ <b>erta ketdi</b> (${time.prettyDuration(early)} oldin, ish tugashi ${employees.workEndOf(emp)})` : ''}${worked !== null ? ` · ⏱ ${time.prettyDuration(worked)}` : ''} · ✅ ${done.length} · ⏳ ${open.length}` +
       `${placeText}${note ? `\n💬 «${esc(note)}»` : ''}`,
   );
-  return { row, worked, done, open, early };
+  // agent jonli joylashuvi — kuzatuv tugaydi (keyingi tahrirlar yozilmaydi)
+  const liveStopped = (await require('./live').stopFor(emp.id, 'checkout')) > 0;
+  return { row, worked, done, open, early, leave, liveStopped };
 };
 
 /** Sababli kun qarori (so'rov bo'yicha) → hodimga xabar */
@@ -405,6 +717,68 @@ const decideExcuse = async (bot, emp, date, status, byTgId) => {
       : `❌ ${time.prettyDate(date)} uchun so'rovingiz tasdiqlanmadi — kun <b>kelmagan</b> hisoblanadi.`,
   );
   return row;
+};
+
+/**
+ * 20-okt: «⚠️ Ogohlantirish» (intizom) — HR so'rovi.
+ * Hodimga rasmiy ogohlantirish, «👀 Tanishdim» tugmasi bilan; 2 va undan ko'p bo'lsa boshliqqa ham xabar.
+ */
+const sendWarning = async (bot, emp, { fromTg, fromName = null, body = null, media = null }) => {
+  const warnings = require('./warnings');
+  const w = await warnings.create({ employeeId: emp.id, fromTg, fromName, body, media });
+  const count = await warnings.countFor(emp.id);
+  const head =
+    `⚠️ <b>OGOHLANTIRISH</b> — ${count}-ogohlantirish\n` +
+    `<i>${time.prettyDate(time.today())} · ${esc(fromName || '')}</i>\n${ui.LINE}\n`;
+  const text = `${head}${body ? esc(body) : ''}\n\n<i>Tanishganingizni bildiring.</i>`;
+  const kb = ui.inline([[ui.cb('👀 Tanishdim', `wn:ok:${w.id}`)]]);
+  if (media && media.fileId) await notify.sendProof(bot, emp.tg_id, media, text, kb);
+  else await notify.toUser(bot, emp.tg_id, text, kb);
+
+  const info =
+    `⚠️ <b>${esc(emp.full_name)}</b> ga ogohlantirish yuborildi (${count}-marta)\n` +
+    `<i>Yubordi: ${esc(fromName || '')}</i>${body ? `\n«${esc(String(body).slice(0, 200))}»` : ''}`;
+  // takroriy ogohlantirish — boshliq/direktor ham bilsin
+  if (count >= 2) await notify.toMany(bot, await employees.bossTgIds(), info);
+  await notify.toArchive(bot, info, media);
+  return { warning: w, count };
+};
+
+/** Hodim «👀 Tanishdim» bosdi — ogohlantirishni yuborgan odamga xabar */
+const warningSeen = async (bot, w, emp) => {
+  await notify.toUser(
+    bot, w.from_tg,
+    `👀 <b>${esc(emp.full_name)}</b> ogohlantirish bilan <b>tanishdi</b> — ${time.clock(time.stamp())}` +
+      `${w.body ? `\n«${esc(String(w.body).slice(0, 200))}»` : ''}`,
+  );
+};
+
+/**
+ * 20-okt: «✅ Keldi deb belgilash» — bo'lim rahbari yoki direktor o'tkazib yuborilgan kunni qo'lda qayd etadi.
+ * Sabab: oldin «Keldim» lokatsiya/video bosqichida yo'qolsa yoki telefon ishlamasa, kunni to'g'rilash yo'li yo'q edi —
+ * HR faqat «sababli» qila olardi, u esa «kelgan kun» emas.
+ */
+const markPresentBy = async (bot, emp, date, byTgId, { at = null, note = null } = {}) => {
+  const res = await attendance.markPresent(emp, date, { at, byTgId, note });
+  if (res.already) return res;
+  const by = await employees.byTgId(byTgId);
+  const byName = by ? by.full_name : await org.bossName();
+  const clock = time.clock(res.row.checked_in);
+  await notify.toUser(
+    bot, emp.tg_id,
+    `✅ <b>${time.prettyDate(date)}</b> kuni siz <b>vaqtida kelgan</b> deb belgilandi — ${clock}.
+` +
+      `<i>Belgiladi: ${esc(byName)}</i>${note ? `
+💬 «${esc(note)}»` : ''}`,
+  );
+  const text =
+    `✅ <b>${esc(emp.full_name)}</b> — ${time.prettyDate(date)} kuni qo'lda «keldi» deb belgilandi (${clock}, vaqtida).
+` +
+    `<i>Belgiladi: ${esc(byName)}</i>${note ? `
+💬 «${esc(note)}»` : ''}`;
+  await notify.toAttendanceWatchers(bot, emp, text);
+  await notify.toArchive(bot, text);
+  return res;
 };
 
 /** Direktor kunni o'zi sababli deb belgilaydi (ta'til, komandirovka) */
@@ -493,12 +867,59 @@ const modeNotice = (bot, u) => {
 };
 
 const homeClearedNotice = (bot, e) =>
-  notify.toUser(bot, e.tg_id, `🏠 Uy joylashuvingiz direktor tomonidan tozalandi. <b>Uyda turib</b> «${ui.BTN.sendLocation}» tugmasi bilan qaytadan yuboring.`, ui.locationKeyboard());
+  notify.toUser(bot, e.tg_id, `🏠 Uy joylashuvingiz boshliq tomonidan tozalandi — qaytadan yuboring.
+
+${HOME_PROMPT()}`, { parse_mode: 'HTML', ...ui.locationKeyboard() });
+
+/**
+ * Matndan koordinata: Google Maps havolasi (…?q=40.990204,71.646206 yoki …/@40.99,71.64,16z),
+ * Yandex Maps havolasi (whatshere[point] / pt / ll = UZUNLIK,kenglik — teskari tartib) yoki «40.990204, 71.646206».
+ * Qaytaradi: { lat, lon } yoki null.
+ */
+const parseCoords = (text) => {
+  let s = String(text || '');
+  try { s = decodeURIComponent(s); } catch { /* buzuq % — o'zicha */ }
+  if (/yandex\./i.test(s)) {
+    const y = ['whatshere[point]', 'pt', 'll'].map((k) => s.match(new RegExp(`[?&]${k.replace(/[[\]]/g, '\\$&')}=(-?\\d{1,3}\\.\\d+),(-?\\d{1,2}\\.\\d+)`))).find(Boolean);
+    if (!y) return null;
+    const [lat, lon] = [Number(y[2]), Number(y[1])];
+    return Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? { lat, lon } : null;
+  }
+  const m = s.match(/(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/);
+  if (!m) return null;
+  const lat = Number(m[1]);
+  const lon = Number(m[2]);
+  if (!(Math.abs(lat) <= 90 && Math.abs(lon) <= 180)) return null;
+  return { lat, lon };
+};
+
+/** Rahbar / direktor agentning uy joyini belgiladi — saqlash + agentga + kuzatuvchilarga + arxivga */
+const setHomeBy = async (bot, actor, e, lat, lon) => {
+  const before = employees.homeOf(e);
+  await employees.setHome(e.id, lat, lon);
+  const link = `<a href="${require('../geo').mapUrl(lat, lon)}">🗺 xaritada</a>`;
+  const by = esc(actor.name);
+  await notify.toUser(bot, e.tg_id,
+    `🏠 <b>Uy joylashuvingiz belgilandi</b> (${by}) · ${link}\n\n` +
+    `«${ui.BTN.checkIn}» shu nuqtadan kamida ${require('../geo').prettyDistance(config.fieldMinDistanceM)} uzoqda qabul qilinadi. Xato bo'lsa — rahbaringizga ayting.`);
+  const text = `🏠 <b>${esc(e.full_name)}</b> — uy joylashuvi ${before ? "o'zgartirildi" : 'belgilandi'} (${by}) · ${link}`;
+  await notify.toAttendanceWatchers(bot, e, text);
+  await notify.toArchive(bot, text);
+};
 
 /** Uy joylashuvi so'raladigan matn (eslatma va Keldim) */
 const HOME_PROMPT = () =>
-  `🏠 <b>Uy joylashuvingizni yuboring</b>\n\nSiz hudud (agent) rejimidasiz. <b>Hozir uyingizda</b> bo'lsangiz — pastdagi «${ui.BTN.sendLocation}» tugmasini bosing.\n` +
-  `⚠️ Ko'chada yoki boshqa joyda turib yubormang: «Keldim» shu nuqtadan kamida ${require('../geo').prettyDistance(config.fieldMinDistanceM)} uzoqda qabul qilinadi. Keyin faqat boshliq o'zgartira oladi.`;
+  `🏠 <b>Uy joylashuvingizni yuboring</b> (bir marta)
+
+Siz hudud (agent) rejimidasiz. <b>Hozir uyingizda</b> bo'lsangiz — joylashuvingizni istalgan usulda yuboring:
+` +
+  `• pastdagi «${ui.BTN.sendLocation}» tugmasi, yoki
+` +
+  `• 📎 (skrepka) → <b>Joylashuv</b> → «Joriy joylashuvni yuborish» (Send My Current Location).
+
+` +
+  `⚠️ Ko'chada yoki boshqa joyda turib yubormang: «Keldim» shu nuqtadan kamida ${require('../geo').prettyDistance(config.fieldMinDistanceM)} uzoqda qabul qilinadi. ` +
+  `Bir marta saqlanadi — keyin faqat boshliq tozalab, yangisini qo'yishga ruxsat beradi.`;
 
 /**
  * 5-okt: uy joylashuvi yo'q hudud agentlariga eslatma (cron — har kuni 06:00 dan har 30 daqiqada).
@@ -512,6 +933,38 @@ const remindHomeLocation = async (bot) => {
     const s = session.get(e.tg_id);
     if (!s.step) session.set(e.tg_id, { step: 'awaiting_home_location' });
     if (await notify.toUser(bot, e.tg_id, HOME_PROMPT(), ui.locationKeyboard())) n += 1;
+    await require('../telegram').throttle();
+  }
+  return n;
+};
+
+/**
+ * 7-okt: bir martalik xabar (deploydan keyin, settings `home_ask_sent`) — hamma hudud agentlariga:
+ * uy joyi yo'q — «yuboring» (tugmasiz ham, 📎 → Joylashuv); bor — saqlangan joyi va «noto'g'ri bo'lsa — boshliqqa».
+ */
+const HOME_ASK_KEY = 'home_ask_sent';
+const HOME_ASK_VER = '7okt';
+const broadcastHomeAsk = async (bot) => {
+  if ((await db.getSetting(HOME_ASK_KEY)) === HOME_ASK_VER) return 0;
+  await db.setSetting(HOME_ASK_KEY, HOME_ASK_VER);
+  const session = require('../session');
+  let n = 0;
+  for (const e of await employees.listStaff()) {
+    if (!employees.isField(e)) continue;
+    const h = employees.homeOf(e);
+    let ok;
+    if (h) {
+      ok = await notify.toUser(bot, e.tg_id,
+        `🏠 <b>Uy joylashuvingiz saqlangan</b> · <a href="${require('../geo').mapUrl(h.lat, h.lon)}">🗺 xaritada</a>
+
+` +
+          `Agar bu uyingiz emas bo'lsa — boshliqqa ayting: u tozalaydi va siz uyda turib qaytadan yuborasiz.`,
+        { parse_mode: 'HTML', link_preview_options: { is_disabled: true } });
+    } else {
+      if (!session.get(e.tg_id).step) session.set(e.tg_id, { step: 'awaiting_home_location' });
+      ok = await notify.toUser(bot, e.tg_id, HOME_PROMPT(), ui.locationKeyboard());
+    }
+    if (ok) n += 1;
     await require('../telegram').throttle();
   }
   return n;
@@ -616,12 +1069,13 @@ const decideReminders = async (bot, emp, ok, who) => {
 };
 
 module.exports = {
-  doneBlocked, DONE_NEEDS_CHECKIN, earlyLeaveMinutes, remindHomeLocation, HOME_PROMPT,
+  doneBlocked, DONE_NEEDS_CHECKIN, earlyLeaveMinutes, remindHomeLocation, broadcastHomeAsk, HOME_PROMPT, parseCoords, setHomeBy,
   remindCurrentText, requestReminders, decideReminders, setReminderTimes,
   parseTitle, splitTitles, mediaTitles, sendTaskMedia, ackTasks, assignTasks, addSelfTasks, completeBossTask, acceptTask,
-  sendAnnouncement, resendAnnouncement, returnTask, cancelTask,
+  sendAnnouncement, resendAnnouncement, runRecurring, askRecurringTasks, answerRecurringTask, nagRecurringMissed,
+  meetingWhen, meetingText, meetingKb, meetingSummary, sendMeeting, resendMeeting, answerMeeting, remindMeetings, cancelMeeting, returnTask, cancelTask,
   taskReplyTarget, sendTaskReply, personLink, chatRecipients, startChat, sendChatMessage,
-  lateNotice, lateNoticeRule, requestAbsence, checkOut, CHECKOUT_PROMPT, notifyTaskStarts, whenText, TASK_REPLY_OK, decideExcuse, markExcused,
+  lateNotice, lateNoticeRule, requestAbsence, requestLeave, decideLeave, checkOut, CHECKOUT_PROMPT, notifyTaskStarts, whenText, TASK_REPLY_OK, decideExcuse, markExcused, markPresentBy, sendWarning, warningSeen,
   kpiDecisionNotice, decideKpi, welcome, roleNotice, hrNotice, modeNotice, homeClearedNotice, setActive, announceWorktime,
   recipientsLabel: org.recipientsLabel,
 };

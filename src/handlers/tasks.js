@@ -502,13 +502,20 @@ const finishDone = async (ctx, proof) => {
   if (config.announceDone) {
     await notify.toGroup(botOf(ctx), `✅ ${reports.mentionHtml(emp)} — «<b>${esc(t.title)}</b>» bajarildi · ${time.clock(t.done_at)}\n<i>${left ? `Qolgan topshiriqlar: ${left} ta` : '🎉 Barcha topshiriqlar bajarildi!'}</i>`);
   }
+  // 9-okt: tekshiruvchi (bo'lim rahbari ham) qanday topshiriq berilganini ko'rsin — kim bergan, qachon, topshiriqning o'zi (media)
+  const giver = t.source === 'self' ? null : await employees.byTgId(t.created_by);
+  const givenLine = t.source === 'self'
+    ? "✍️ <i>o'zi yozgan vazifa</i>"
+    : `📌 bergan: <b>${esc(giver ? giver.full_name : t.source === 'admin' ? 'Direktor' : '—')}</b> · ${time.prettyDate(String(t.created_at).slice(0, 10))} ${time.clock(t.created_at)}`;
+  const kb = ui.reviewKeyboard(t.id);
+  if (t.task_file_id) kb.reply_markup.inline_keyboard.push([cb(`${ui.MEDIA_ICON[t.task_media_type] || '📎'} Topshiriqni ko'rish / eshitish`, `tk:media:${t.id}`)]);
   await notify.toDoneReviewers(
     botOf(ctx), emp, t,
-    `🕓 <b>${esc(emp.full_name)}</b> bajardi: <b>${esc(t.title)}</b>\n` +
+    `🕓 <b>${esc(emp.full_name)}</b> bajardi: <b>${esc(t.title)}</b>\n${givenLine}\n` +
       `⏱ muddat ${time.prettyDate(t.due_date)} · bajarildi ${time.clock(t.done_at)}${overdue ? ' 🔴 <i>kech</i>' : ' ✅'}` +
-      (proof && proof.note ? `\n💬 «${esc(proof.note)}»` : '') + (t.source !== 'self' ? '' : '\n<i>(o\'zi yozgan vazifa)</i>') +
+      (proof && proof.note ? `\n💬 javobi: «${esc(proof.note)}»` : '') +
       `\n\nQabul qilasizmi?`,
-    ui.reviewKeyboard(t.id),
+    kb,
     proof && proof.fileId ? proof : null,
   );
   if (proof && proof.fileId) {
@@ -685,7 +692,7 @@ const HR_NOTIFY_HINT = "\n\n<i>«Bajardim» xabarlari bo'lim rahbari va boshliqq
 
 const showReview = async (ctx) => {
   if (!ctx.state.isManager) return ctx.reply('⛔️ Faqat boshliq va direktor uchun.');
-  const list = tasks.visibleFor(ctx.state.actor, await tasks.pendingReview(reviewScope(ctx)));
+  const list = access.ownGivenForAdmin(ctx.state.actor, tasks.visibleFor(ctx.state.actor, await tasks.pendingReview(reviewScope(ctx))));
   const hint = ctx.state.isHr && ctx.state.employee ? HR_NOTIFY_HINT : '';
   if (!list.length) return render(ctx, `🔎 <b>TEKSHIRUV</b>\n\nHozircha «Bajardim» deb yuborilgan ish yo'q.${hint}`, hint ? inline(hrNotifyRow(ctx)) : undefined);
   const rows = list.map((t) => [cb(`🕓 ${t.full_name.split(' ')[0]}: ${t.title.slice(0, 35)}`, `rv:view:${t.id}`)]);

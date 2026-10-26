@@ -4,7 +4,7 @@ const config = require('../config');
 const ui = require('../ui');
 const time = require('../time');
 const session = require('../session');
-const { render, guard, guardSee } = require('../render');
+const { render, guard, guardSee, guardPay } = require('../render');
 const employees = require('../services/employees');
 const departments = require('../services/departments');
 const kpi = require('../services/kpi');
@@ -52,7 +52,7 @@ const kpiMonth = async (ctx, month) => {
     `Tasdiqlangan KPI jami: <b>${kpi.fmtMoney(totalBonus)}</b>\n<i>${config.kpiMode === 'gate' ? '🟢 KPI sharti bajarilgan · 🔴 bajarilmagan (KPI 0) · ' : ''}⚠️ — boshliq bahosi yoki mezon kiritilmagan</i>\n` +
     lines.join('\n');
   const btns = rows.map((k) => [cb(`${k.status === 'confirmed' ? '✅' : k.status === 'excluded' ? '⛔' : '⏳'} ${k.full_name} · ${k.total}`.slice(0, 60), `kpi:e:${k.employee_id}:${month}`)]);
-  if (ctx.state.isAdmin) {
+  if (ctx.state.isAdmin || ctx.state.isHr) {
     btns.push([cb('📥 Excel', `kpi:xl:${month}`), cb('✅ Hammasini tasdiqlash', `kpi:okall:${month}`)]);
     btns.push([cb('🔄 Qayta hisoblash', `kpi:recalc:${month}`), cb('⬅️ Oylar', 'kpi:home')]);
   } else btns.push([cb('📥 Excel', `kpi:xl:${month}`), cb('⬅️ Oylar', 'kpi:home')]);
@@ -92,8 +92,8 @@ const kpiCard = async (ctx, empId, month) => {
   const k = await kpi.compute(emp, month);
   const dept = emp.department_id ? await departments.byId(emp.department_id) : null;
   const p = `${emp.id}:${month}`;
-  if (!ctx.state.isAdmin) {
-    return render(ctx, `${kpiCardText(k, dept, await kpiExtras.forKpi(emp.id, month, k))}\n\n<i>👁 Faqat ko'rish — tahrirlash va tasdiqlash direktorda.</i>`, inline([
+  if (!ctx.state.isAdmin && !ctx.state.isHr) {
+    return render(ctx, `${kpiCardText(k, dept, await kpiExtras.forKpi(emp.id, month, k))}\n\n<i>👁 Faqat ko'rish — tahrirlash va tasdiqlash direktor va HR da.</i>`, inline([
       [cb('📊 Batafsil hisobot', `rp:emp:${emp.id}:${month}`), cb("⬅️ Ro'yxat", `kpi:m:${month}`)],
       [cb('🧮 Kalkulyatorda', `kc:v:${kpiCalc.encode(kpiCalc.stateFromKpi(k, emp.department_id))}`)],
     ]));
@@ -209,25 +209,25 @@ const register = (bot) => {
   bot.action('kpi:home', async (ctx) => { if (await guardSee(ctx)) { await ctx.answerCbQuery(); await kpiHome(ctx); } });
   bot.action(/^kpi:m:(\d{4}-\d{2})$/, async (ctx) => { if (await guardSee(ctx)) { await ctx.answerCbQuery(); await kpiMonth(ctx, ctx.match[1]); } });
   bot.action(/^kpi:recalc:(\d{4}-\d{2})$/, async (ctx) => {
-    if (!(await guard(ctx))) return;
+    if (!(await guardPay(ctx))) return;
     await kpi.computeAll(ctx.match[1], { force: false });
     await ctx.answerCbQuery('Qayta hisoblandi (kutilayotganlar)');
     await kpiMonth(ctx, ctx.match[1]);
   });
   bot.action(/^kpi:e:(\d+):(\d{4}-\d{2})$/, async (ctx) => { if (await guardSee(ctx)) { await ctx.answerCbQuery(); await kpiCard(ctx, ctx.match[1], ctx.match[2]); } });
   bot.action(/^kpi:score:(\d+):(\d{4}-\d{2})$/, async (ctx) => {
-    if (!(await guard(ctx))) return;
+    if (!(await guardPay(ctx))) return;
     await ctx.answerCbQuery();
     const e = await employees.byId(ctx.match[1]);
     return render(ctx, `⭐ <b>${esc(e.full_name)}</b> — boshliq bahosi (1–10):`, ui.scoreKeyboard(`kpi:sc:${e.id}:${ctx.match[2]}`));
   });
   bot.action(/^kpi:sc:(\d+):(\d{4}-\d{2}):(\d+|back)$/, async (ctx) => {
-    if (!(await guard(ctx))) return;
+    if (!(await guardPay(ctx))) return;
     if (ctx.match[3] === 'back') { await ctx.answerCbQuery(); return kpiCard(ctx, ctx.match[1], ctx.match[2]); }
     return hsSet(ctx, ctx.match[1], ctx.match[2], Number(ctx.match[3]), 'kpi');
   });
   bot.action(/^kpi:custom:(\d+):(\d{4}-\d{2})$/, async (ctx) => {
-    if (!(await guard(ctx))) return;
+    if (!(await guardPay(ctx))) return;
     await ctx.answerCbQuery();
     const e = await employees.byId(ctx.match[1]);
     const dept = e.department_id ? await departments.byId(e.department_id) : null;
@@ -235,19 +235,19 @@ const register = (bot) => {
     return ctx.reply(`🎯 <b>${esc((dept && dept.custom_name) || "Qo'shimcha mezon")}</b> — ${esc(e.full_name)} uchun bajarilish foizi (0–100):`, { parse_mode: 'HTML', ...ui.cancelKeyboard() });
   });
   bot.action(/^kpi:fund:(\d+):(\d{4}-\d{2})$/, async (ctx) => {
-    if (!(await guard(ctx))) return;
+    if (!(await guardPay(ctx))) return;
     await ctx.answerCbQuery();
     session.set(ctx.from.id, { step: 'kpi_fund', empId: Number(ctx.match[1]), month: ctx.match[2] });
     return ctx.reply("💰 Shu oy uchun bonus fondi (so'mda). 0 — fondsiz:", ui.cancelKeyboard());
   });
   bot.action(/^kpi:note:(\d+):(\d{4}-\d{2})$/, async (ctx) => {
-    if (!(await guard(ctx))) return;
+    if (!(await guardPay(ctx))) return;
     await ctx.answerCbQuery();
     session.set(ctx.from.id, { step: 'kpi_note', empId: Number(ctx.match[1]), month: ctx.match[2] });
     return ctx.reply(`💬 Izoh (hodim tasdiqlashda ko'radi) yoki «${ui.BTN.skip}» — izohni o'chirish:`, ui.skipKeyboard());
   });
   bot.action(/^kpi:ok:(\d+):(\d{4}-\d{2})$/, async (ctx) => {
-    if (!(await guard(ctx))) return;
+    if (!(await guardPay(ctx))) return;
     const k = await kpi.decide(ctx.match[1], ctx.match[2], 'confirmed', ctx.from.id);
     if (k.blocked) { await ctx.answerCbQuery(k.blocked, { show_alert: true }); return kpiCard(ctx, ctx.match[1], ctx.match[2]); }
     await ctx.answerCbQuery('Tasdiqlandi ✅');
@@ -255,7 +255,7 @@ const register = (bot) => {
     return kpiCard(ctx, ctx.match[1], ctx.match[2]);
   });
   bot.action(/^kpi:ex:(\d+):(\d{4}-\d{2})$/, async (ctx) => {
-    if (!(await guard(ctx))) return;
+    if (!(await guardPay(ctx))) return;
     const why = await kpi.decideBlock(ctx.match[1], ctx.match[2]);
     if (why) return ctx.answerCbQuery(why, { show_alert: true });
     await ctx.answerCbQuery();
@@ -263,18 +263,18 @@ const register = (bot) => {
     return ctx.reply(`⛔ Bonusdan chiqarish sababi (hodim ko'radi) yoki «${ui.BTN.skip}»:`, ui.skipKeyboard());
   });
   bot.action(/^kpi:reopen:(\d+):(\d{4}-\d{2})$/, async (ctx) => {
-    if (!(await guard(ctx))) return;
+    if (!(await guardPay(ctx))) return;
     await kpi.decide(ctx.match[1], ctx.match[2], 'draft', ctx.from.id);
     await ctx.answerCbQuery('Qayta ochildi');
     return kpiCard(ctx, ctx.match[1], ctx.match[2]);
   });
   bot.action(/^kpi:okall:(\d{4}-\d{2})$/, async (ctx) => {
-    if (!(await guard(ctx))) return;
+    if (!(await guardPay(ctx))) return;
     await ctx.answerCbQuery();
     return render(ctx, `✅ ${time.monthName(ctx.match[1])} — kutilayotgan barcha hodimlar tasdiqlansinmi? Har biriga natija yuboriladi.`, ui.confirmKeyboard(`kpi:okallok:${ctx.match[1]}`, `kpi:m:${ctx.match[1]}`, '✅ Ha, hammasi'));
   });
   bot.action(/^kpi:okallok:(\d{4}-\d{2})$/, async (ctx) => {
-    if (!(await guard(ctx))) return;
+    if (!(await guardPay(ctx))) return;
     const month = ctx.match[1];
     if (month >= time.month()) return ctx.answerCbQuery(`${time.monthName(month)} hali tugamagan — oy yakunida tasdiqlanadi`, { show_alert: true });
     await ctx.answerCbQuery();

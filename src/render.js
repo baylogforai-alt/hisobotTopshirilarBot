@@ -86,4 +86,12 @@ const guardSee = async (ctx) => {
 /** Buyruq argumentlari: '/hodim_qosh 123 Akbar' → '123 Akbar' */
 const args = (ctx) => String((ctx.message && ctx.message.text) || '').replace(/^\/\S+\s*/, '').trim();
 
-module.exports = { render, guard, guardSee, splitText, args, HTML, TG_LIMIT };
+/** Oklad va KPI summasini kiritish — direktor yoki HR (20-okt; tasdiqlash baribir direktorda) */
+const guardPay = async (ctx) => {
+  if (ctx.state.isAdmin || ctx.state.isHr) return true;
+  if (ctx.updateType === 'callback_query') { await ctx.answerCbQuery("⛔️ Faqat direktor va HR"); return false; }
+  await ctx.reply("⛔️ Bu bo'lim faqat direktor va HR uchun.");
+  return false;
+};
+
+module.exports = { render, guard, guardSee, guardPay, splitText, args, HTML, TG_LIMIT };

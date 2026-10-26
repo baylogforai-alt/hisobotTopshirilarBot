@@ -18,6 +18,7 @@ const LEGACY_BTN = {
 };
 
 const BTN = {
+  warn: '⚠️ Ogohlantirish',
   checkIn: '✅ Keldim',
   checkOut: '🏁 Ketdim',
   myTasks: '📋 Topshiriqlarim',
@@ -26,6 +27,7 @@ const BTN = {
   dailyReport: '📝 Kunlik hisobot',
   myReport: '📊 Hisobotim',
   absence: '🙋 Kelmayman (sabab)',
+  leave: "🚪 Javob so'rash",
   assign: '📤 Topshiriq berish',
   review: '🔎 Tekshiruv',
   myDept: "🏢 Bo'limim",
@@ -35,6 +37,7 @@ const BTN = {
   reports: '📈 Hisobotlar',
   archive: '🗂 Arxiv',
   sendLocation: '📍 Joylashuvni yuborish',
+  noLocation: '📵 Joylashuv yubora olmayman',
   late: '⏰ Kech qolaman',
   salary: '💵 Oylik va KPI',
   myTeam: '👥 Hodimlarim',
@@ -42,12 +45,15 @@ const BTN = {
   attView: '👁 Davomat nazorati',
   journal: '📋 Barcha topshiriqlar',
   announce: "📢 E'lon",
+  meeting: '🗓 Majlis',
+  recurring: '📆 Davriy eslatma',
   chat: '💬 Savol-javob',
   stActive: '⏳ Faol',
   stReview: '🕓 Kutilmoqda',
   stFix: "🔁 Ko'rib chiqish",
   stDone: '✅ Bajarilgan',
   visit: '📍 Hududga keldim',
+  agents: '📡 Agentlar qayerda',
   cancel: '❌ Bekor qilish',
   skip: "⏭ O'tkazib yuborish",
 };
@@ -61,16 +67,16 @@ const mainKeyboard = ({ isAdmin = false, isHead = false, isField = false, isHr =
   rows.push([BTN.myTasks, BTN.done], [BTN.stActive, BTN.stFix], [BTN.stReview, BTN.stDone], isBoss ? [BTN.selfTask, BTN.myReport] : [BTN.selfTask, BTN.dailyReport]);
   if (isAdmin || isHead) rows.push([BTN.assign, BTN.review]);
   // boshliq — BAYOMA tartibi (arxiv, davr, Excel, kunlik hisobotlar — «📈 Hisobotlar» ichida)
-  if (isAdmin && isBoss) rows.push([BTN.journal, BTN.announce], [BTN.myTeam, BTN.panel], [BTN.kpi, BTN.reports]);
-  else if (isAdmin) rows.push([BTN.journal, BTN.announce], [BTN.myTeam, BTN.panel], [BTN.kpi, BTN.reports], [BTN.archive, BTN.myReport]);
-  else if (isHr) rows.push([BTN.journal, BTN.announce], [BTN.myTeam, BTN.reports], [BTN.kpi, BTN.attView], [BTN.score, BTN.myReport]);
-  else if (isHead) rows.push([BTN.myTeam, BTN.myDept], [BTN.score, BTN.announce], [BTN.myReport]);
+  if (isAdmin && isBoss) rows.push([BTN.journal, BTN.announce], [BTN.myTeam, BTN.panel], [BTN.kpi, BTN.reports], [BTN.meeting, BTN.agents], [BTN.recurring, BTN.warn]);
+  else if (isAdmin) rows.push([BTN.journal, BTN.announce], [BTN.myTeam, BTN.panel], [BTN.kpi, BTN.reports], [BTN.meeting, BTN.agents], [BTN.recurring, BTN.warn], [BTN.archive, BTN.myReport]);
+  else if (isHr) rows.push([BTN.journal, BTN.announce], [BTN.myTeam, BTN.reports], [BTN.kpi, BTN.attView], [BTN.score, BTN.agents], [BTN.meeting, BTN.recurring], [BTN.warn, BTN.myReport]);
+  else if (isHead) rows.push([BTN.myTeam, BTN.myDept], [BTN.score, BTN.announce], [BTN.agents, BTN.warn], [BTN.myReport]);
   else rows.push([BTN.myReport]);
   if (isViewer && !isAdmin && !isHr) rows.push([BTN.attView]);
   // boshliq (direktor, role='admin' hodim) — hodim emas: kech qolaman / kelmayman / oylik yo'q
   // HR — eslatma sozlamalari yo'q (faqat boshliq boshqaradi)
   if (isBoss) rows.push([BTN.reminders]);
-  else rows.push([BTN.late, BTN.absence], isHr && !isAdmin ? [BTN.salary] : [BTN.salary, BTN.reminders]);
+  else rows.push([BTN.late, BTN.absence], [BTN.leave, BTN.salary], ...(isHr && !isAdmin ? [] : [[BTN.reminders]]));
   return Markup.keyboard(rows).resize();
 };
 
@@ -85,12 +91,9 @@ const kbForEmp = (emp) => mainKeyboard({
   isAdmin: emp.role === 'admin', isHead: emp.role === 'head', isField: isFieldEmp(emp), isHr: flag(emp, 'is_hr'), isViewer: flag(emp, 'can_view_att'), isBoss: isBossEmp(emp),
 });
 
-/**
- * Ishga kelishni tasdiqlash klaviaturasi — request_location tugmasi qurilmaning
- * HAQIQIY joriy GPS'ini yuboradi (xaritadan ixtiyoriy nuqta tanlab bo'lmaydi).
- */
-const locationKeyboard = () =>
-  Markup.keyboard([[Markup.button.locationRequest(BTN.sendLocation)], [BTN.cancel]]).resize().oneTime();
+/** noLoc — Keldimda «📵 Joylashuv yubora olmayman» (sabab bilan) */
+const locationKeyboard = ({ noLoc = false } = {}) =>
+  Markup.keyboard([[Markup.button.locationRequest(BTN.sendLocation)], ...(noLoc ? [[BTN.noLocation]] : []), [BTN.cancel]]).resize().oneTime();
 
 const skipKeyboard = () => Markup.keyboard([[BTN.skip], [BTN.cancel]]).resize().oneTime();
 const cancelKeyboard = () => Markup.keyboard([[BTN.cancel]]).resize().oneTime();
@@ -230,6 +233,8 @@ const reviewKeyboard = (taskId) => inline([[cb('✅ Qabul qilish', `rv:ok:${task
 
 /** Sababli kun so'rovi: tasdiqlash / rad etish */
 const excuseKeyboard = (attId) => inline([[cb('✅ Sababli', `ab:ok:${attId}`), cb('❌ Sababsiz', `ab:no:${attId}`)]]);
+/** «Javob so'rash» qarori — bo'lim rahbari va boshliq */
+const leaveDecisionKeyboard = (id) => inline([[cb('✅ Javob berish', `jv:ok:${id}`), cb("❌ Yo'q", `jv:no:${id}`)]]);
 
 /** "Ishga kelyapsizmi?" — ish boshlanishidan oldingi so'rov */
 const intentKeyboard = () => inline([[cb('✅ Ha, kelyapman', 'intent:yes'), cb("❌ Yo'q, kelmayman", 'intent:no')]]);
@@ -255,7 +260,7 @@ const taskMenuKeyboard = (t, { canDelete = true, extra = [] } = {}) => {
 const confirmKeyboard = (yesData, noData, yesLabel = '✅ Ha', noLabel = "⬅️ Yo'q") => inline([[cb(yesLabel, yesData), cb(noLabel, noData)]]);
 
 /** Admin panel */
-const panelKeyboard = ({ quiet = false, bossAtt = false, headCopy = true, hrBoss = false, headMoney = false, gate = { minDays: 25, minTaskPct: 90 } } = {}) =>
+const panelKeyboard = ({ quiet = false, bossAtt = false, bossDone = false, headCopy = true, hrBoss = false, headMoney = false, gate = { minDays: 25, minTaskPct: 90 } } = {}) =>
   inline([
     [cb('👥 Hodimlar', 'emp:list'), cb("🏢 Bo'limlar", 'dp:list')],
     [cb('💵 Oyliklar (oklad, KPI)', 'sal:list')],
@@ -266,10 +271,13 @@ const panelKeyboard = ({ quiet = false, bossAtt = false, headCopy = true, hrBoss
     [cb('🗓 Oy boshi tasdiqlari', 'adm:months'), cb('🚶 Tashriflar (bugun)', 'adm:visits')],
     [cb('🕘 Ish vaqti', 'adm:worktime'), cb('🏷 Nomlar', 'adm:names')],
     [cb('📅 Dam olish kuniga chaqirish', 'xc:home')],
+    [cb('🪪 Beyjik eslatmasi (agentlar)', 'bj:menu')],
+    [cb("📨 Bo'lim rahbarlari bergan topshiriqlar", 'adm:hg')],
     [cb("🧭 Yo'nalishlar", 'dn:list'), cb('👁 Davomat nazorati', 'vw:today')],
     [cb(`📤 Rahbar topshiriq nusxasi: ${headCopy ? '✅ yoqilgan' : "🚫 o'chiq"}`, `adm:htc:${headCopy ? 0 : 1}`)],
     [cb(`👁 HR boshliq topshiriqlarini: ${hrBoss ? "✅ ko'radi" : "🚫 ko'rmaydi"}`, `adm:hbt:${hrBoss ? 0 : 1}`)],
     [cb(`👁 Boshliq keldi-ketdini: ${bossAtt ? "✅ ko'radi" : "🚫 ko'rmaydi"}`, `adm:bat:${bossAtt ? 0 : 1}`)],
+    [cb(`✅ Boshliqqa «Bajardim»: ${bossDone ? '✅ boradi' : '🚫 bormaydi'}`, `adm:bdn:${bossDone ? 0 : 1}`)],
     [cb(`🔕 Menga topshiriq / keldi-ketdi xabarlari: ${quiet ? '🔕 kelmaydi' : '🔔 keladi'}`, `adm:qt:${quiet ? 0 : 1}`)],
     [cb(`💵 Rahbar KPI summasini: ${headMoney ? "✅ ko'radi" : "🚫 ko'rmaydi"}`, `adm:hm:${headMoney ? 0 : 1}`)],
     [cb(`🚦 KPI sharti: ${gate.minDays} kun · ${gate.minTaskPct}%`, 'adm:kg')],
@@ -298,6 +306,6 @@ const roleIcon = (role) => (role === 'admin' ? '👑' : role === 'head' ? '🎖'
 module.exports = {
   esc, BTN, LEGACY_BTN, LINE, mainKeyboard, kbFor, kbForEmp, urlButton, locationKeyboard, skipKeyboard, cancelKeyboard, cb, inline, dueKeyboard, startTimeKeyboard,
   PRIO_ICON, SOURCE_LABEL, MEDIA_ICON, MEDIA_LABEL, isGenericMediaTitle, mediaRows, ackRows, taskLine, taskList, doneKeyboard, doneMultiKeyboard, doneChecklist, proofKeyboard, reviewKeyboard, reviewMultiKeyboard, excuseKeyboard,
-  intentKeyboard, dailyReviewKeyboard, joinKeyboard, manageKeyboard, taskMenuKeyboard, confirmKeyboard, panelKeyboard,
+  leaveDecisionKeyboard, intentKeyboard, dailyReviewKeyboard, joinKeyboard, manageKeyboard, taskMenuKeyboard, confirmKeyboard, panelKeyboard,
   backKeyboard, scoreKeyboard, pctBar, roleIcon,
 };

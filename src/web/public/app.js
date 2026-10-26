@@ -21,6 +21,8 @@
   // -------------------------------------------------------------------------
   // DOM yordamchilari
   // -------------------------------------------------------------------------
+  /** Nuqta Yandex Maps'da (pt = lon,lat) — bot bilan bir xil (src/geo.js mapUrl) */
+  const ymaps = (lat, lon) => `https://yandex.uz/maps/?pt=${Number(lon).toFixed(6)},${Number(lat).toFixed(6)}&z=17&l=map`;
   const h = (tag, props, ...kids) => {
     const el = document.createElement(tag);
     if (props) {
@@ -137,6 +139,7 @@
   const section = (txt) => h('div', { class: 'section-title' }, txt);
   const SOURCE = { self: "o'zi", head: 'rahbar', admin: 'direktor' };
   const MEDIA_ICON = { voice: '🎤', audio: '🎵', video: '🎥', video_note: '🎥', photo: '🖼', document: '📄' };
+  const MEET_LABEL = { yes: '✅ Boraman', late: '⏰ Kech qolaman', no: '🙋 Kelmayman' };
 
   const seg = (items, active, onPick) => h('div', { class: 'seg', role: 'tablist' },
     items.map(([key, label]) => h('button', { class: key === active ? 'on' : '', type: 'button', role: 'tab', 'aria-selected': key === active ? 'true' : 'false', onclick: () => onPick(key) }, label)));
@@ -214,7 +217,7 @@
         h('p', null, e.code === 'expired' ? "Sessiya eskirdi — ilovani yopib, bot ichidan qayta oching." : "Ilovani faqat Telegram'dagi bot ichidan ochish mumkin."),
         tg && INIT ? h('button', { class: 'btn', type: 'button', onclick: () => tg.close() }, 'Yopish') : null));
     }
-    const final = e.status === 403 || e.status === 404;
+    const final = e.status === 403 || e.status === 404 || e.status === 423;
     return mount(h('div', { class: 'error-box' }, h('div', { class: 'big' }, final ? '⛔️' : '⚠️'), h('p', null, e.message),
       final
         ? h('button', { class: 'btn', type: 'button', onclick: () => go('#/') }, 'Bosh sahifa')
@@ -224,7 +227,7 @@
   // =========================================================================
   // BOSH SAHIFA
   // =========================================================================
-  const reasonSheet = (title, hint, path, done) => {
+  const reasonSheet = (title, hint, path, done, extra = {}) => {
     const ta = h('textarea', { class: 'input', maxlength: '300', placeholder: 'Sababini yozing…' });
     openSheet(title, h('p', { class: 'muted' }, hint), h('label', { class: 'field' }, ta),
       h('p', { class: 'hint' }, "Video yoki audio yubormoqchi bo'lsangiz — botdagi tugmadan foydalaning."),
@@ -232,9 +235,33 @@
         h('button', { class: 'btn ghost', type: 'button', onclick: closeSheet }, 'Bekor'),
         h('button', { class: 'btn', type: 'button', onclick: action(async () => {
           if (!ta.value.trim()) throw new Error('Sabab yozing');
-          const r = await api('POST', path, { reason: ta.value });
+          const r = await api('POST', path, { reason: ta.value, ...extra });
           closeSheet(); done(r); router();
         }) }, 'Yuborish')));
+  };
+
+  // «🚪 Javob so'rash» — qancha vaqtga + sabab (video/audio — botda)
+  const LEAVE_KINDS = [['60', '⏱ 1 soatga chiqib kelish'], ['120', '⏱ 2 soatga chiqib kelish'], ['180', '⏱ 3 soatga chiqib kelish'], ['day', '🏠 Bugunga (erta ketish)']];
+  const leaveSheet = () => {
+    const sel = h('select', { class: 'input' }, LEAVE_KINDS.map(([v, l]) => h('option', { value: v }, l)));
+    const ta = h('textarea', { class: 'input', maxlength: '300', placeholder: 'Sababini yozing…' });
+    openSheet("🚪 Javob so'rash", h('p', { class: 'muted' }, "So'rov bo'lim rahbari yoki boshliqqa boradi. Ruxsat bilan ketsangiz «erta ketdi» deb yozilmaydi."),
+      h('label', { class: 'field' }, h('span', null, 'Qancha vaqtga'), sel),
+      h('label', { class: 'field' }, ta),
+      h('p', { class: 'hint' }, "Video yoki audio yubormoqchi bo'lsangiz — botdagi tugmadan foydalaning."),
+      h('div', { class: 'btns' },
+        h('button', { class: 'btn ghost', type: 'button', onclick: closeSheet }, 'Bekor'),
+        h('button', { class: 'btn', type: 'button', onclick: action(async () => {
+          if (!ta.value.trim()) throw new Error('Sabab yozing');
+          await api('POST', '/api/att/leave', { kind: sel.value, reason: ta.value });
+          closeSheet(); toast("So'rov yuborildi"); router();
+        }) }, 'Yuborish')));
+  };
+  const leaveChip = (l) => {
+    if (!l) return null;
+    if (l.status === 'pending') return chip(`🚪 javob so'radingiz — kutilmoqda (${l.label})`, 'amber');
+    if (l.status === 'approved') return chip(`🚪 javob berildi — ${l.label}${l.until ? `, ${l.until} gacha` : ''}`, 'green');
+    return chip(`🚪 javob berilmadi (${l.label})`, 'red');
   };
 
   const pageHome = async () => {
@@ -243,6 +270,18 @@
     const r = me.roles;
     setTitle(`Salom, ${firstName(me.employee ? me.employee.name : me.name)}!`, `${me.company} · ${me.todayPretty}`);
     const out = [];
+
+    if (me.liveOff) {
+      out.push(h('div', { class: 'banner' },
+        h('p', null, h('b', null, "📡 Jonli joylashuvingiz o'chiq. "), "Yoqmaguningizcha ilova va bot ishlamaydi (faqat «Ketdim»). Botda: 📎 → Joylashuv → «Jonli joylashuvni ulashish» → «Men o'chirgunimcha»."),
+        h('button', { class: 'btn block', type: 'button', onclick: () => { if (tg && INIT) tg.close(); } }, '📡 Botga o\'tib yoqish')));
+    }
+
+    if (me.needCheckIn) {
+      out.push(h('div', { class: 'banner' },
+        h('p', null, h('b', null, "✅ Avval «Keldim» qiling. "), "Bugun ishga kelganingizni belgilamaguningizcha ilova va bot ishlamaydi. Botda «✅ Keldim» → joylashuv; joylashuv yubora olmasangiz — «📵 Joylashuv yubora olmayman» va sababini yozing. Kech qolsangiz yoki kelmasangiz — pastda bildiring."),
+        h('button', { class: 'btn block', type: 'button', onclick: () => { if (tg && INIT) tg.close(); } }, "✅ Botga o'tib «Keldim»")));
+    }
 
     if (me.employee && !me.monthConfirmed) {
       out.push(h('div', { class: 'banner' },
@@ -263,6 +302,7 @@
         btns.push(h('button', { class: 'btn ghost', type: 'button', onclick: () => reasonSheet('⏰ Kech qolaman', `Xabar bo'lim rahbari va HR ga boradi. Ish boshlanishidan (${me.workStart}) kamida ${me.lateNoticeMin || 20} daqiqa oldin aytsangiz — kechikish hisoblanmaydi.`, '/api/att/late', (x) => toast(x.inTime ? 'Yuborildi — kechikish hisoblanmaydi' : 'Yuborildi')) }, '⏰ Kech qolaman'));
         if (a.excuse !== 'approved') btns.push(h('button', { class: 'btn ghost', type: 'button', onclick: () => reasonSheet('🙋 Bugun kelmayman', 'HR yoki boshliq tasdiqlasa — kun sababli hisoblanadi (KPI ga ta\'sir qilmaydi).', '/api/att/absence', () => toast("So'rov yuborildi")) }, '🙋 Kelmayman'));
       } else if (!a.checkedOut) {
+        if (!a.leave || a.leave.status !== 'pending') btns.push(h('button', { class: 'btn ghost', type: 'button', onclick: leaveSheet }, "🚪 Javob so'rash"));
         btns.push(h('button', { class: 'btn ghost', type: 'button', onclick: action(async () => {
           if (!(await confirmBox("Ish kunini yakunlaysizmi? Botda joylashuvingiz va izoh so'raladi."))) return;
           await api('POST', '/api/att/checkout');
@@ -275,7 +315,23 @@
         h('div', { class: 'status-big' }, dot(a.status), label),
         h('p', { class: 'muted' }, times.join(' · ') || `Ish boshlanishi: ${me.workStart}`),
         a.lateNotice ? h('div', { class: 'chips' }, chip('⏰ kech qolishingizni bildirgansiz', 'amber')) : null,
+        a.leave ? h('div', { class: 'chips' }, leaveChip(a.leave)) : null,
         btns.length ? h('div', { class: 'btns' }, btns) : null));
+    }
+
+    if (me.meetings && me.meetings.length) {
+      out.push(h('div', { class: 'card' }, h('h2', null, '🗓 Majlislar'), me.meetings.slice(0, 3).map((m) => {
+        const path = `/api/meetings/${m.id}/answer`;
+        const btn = (a, label, fn) => h('button', { class: `btn small ${m.answer === a ? '' : 'ghost'}`.trim(), type: 'button', onclick: fn }, label);
+        return h('div', { class: 'meeting' },
+          h('p', null, h('b', null, `${relDate(m.date)}, ${m.time}`), ` · ${m.from || ''}`),
+          m.text ? h('p', null, m.text) : h('p', { class: 'muted' }, `${MEDIA_ICON[m.mediaType] || '📎'} mavzu botda (media)`),
+          m.answer ? h('div', { class: 'chips' }, chip(`Javobingiz: ${MEET_LABEL[m.answer]}${m.reason ? ` — «${m.reason}»` : ''}`, m.answer === 'yes' ? 'green' : 'amber')) : null,
+          h('div', { class: 'btns' },
+            btn('yes', '✅ Boraman', action(async () => { await api('POST', path, { answer: 'yes' }); toast('✅ Belgilandi'); router(); })),
+            btn('late', '⏰ Kech qolaman', () => reasonSheet('⏰ Majlisga kech qolaman', "Sabab majburiy — majlisni yozgan odam, boshliq va HR ko'radi.", path, () => toast('Yuborildi'), { answer: 'late' })),
+            btn('no', '🙋 Kelmayman', () => reasonSheet('🙋 Majlisga kelmayman', "Sabab majburiy — majlisni yozgan odam, boshliq va HR ko'radi.", path, () => toast('Yuborildi'), { answer: 'no' }))));
+      })));
     }
 
     const c = me.counts;
@@ -300,6 +356,7 @@
       tiles.push(tile('👥', r.seeAll ? 'Hodimlar' : 'Jamoam', '#/people'));
     }
     if (r.seeAll || r.isViewer || r.isHead) tiles.push(tile('👁', 'Davomat', '#/att'));
+    if (r.canLive) tiles.push(tile('📡', 'Agentlar qayerda', '#/live'));
     if (c.excuses !== undefined && (c.excuses || r.isManager)) tiles.push(tile('🙋', 'Sababli kunlar', '#/excuses', c.excuses));
     if (r.seeAll) tiles.push(tile('💰', 'KPI', `#/kpi/${curMonth()}`));
     if (r.isManager) tiles.push(tile('⭐', 'Baholash', `#/scores/${curMonth()}`));
@@ -308,6 +365,7 @@
     if (me.employee && !me.roles.isBoss) tiles.push(tile('💵', 'Oylik va KPI', '#/pay'));
     if (r.isAdmin || (me.employee && !r.isHr)) tiles.push(tile('🔔', 'Eslatmalar', '#/reminders', c.reminders));
     if (r.isManager || r.isHr) tiles.push(tile('📢', "E'lon", '#/announce'));
+    if (r.isAdmin || r.isHr) tiles.push(tile('🗓', 'Majlis', '#/meetings'));
     if (r.isAdmin) tiles.push(tile('⚙️', 'Sozlamalar', '#/settings'));
     out.push(h('div', { class: 'tiles' }, tiles));
     if (!me.employee && r.isAdmin) out.push(h('p', { class: 'muted' }, "Siz direktor sifatida kirgansiz (hodim emas) — davomat va o'z topshiriqlaringiz yo'q."));
@@ -595,8 +653,9 @@
       listBox.replaceChildren(...(vis.length ? vis.map((e) => h('button', { class: 'item', type: 'button', onclick: () => go(`#/emp/${e.id}`) },
         e.active ? dot(e.today) : h('span', { class: 'dot' }),
         h('div', { class: 'grow' }, h('div', { class: 't' }, `${e.icon} ${e.name}${e.active ? '' : ' ⛔'}`),
-          h('div', { class: 's' }, [e.title, e.department && e.department.name].filter(Boolean).join(' · '))),
-        e.active ? h('div', { class: 'end' }, `${e.attPct}%`, h('br'), e.openTasks ? `📋 ${e.openTasks}` : '') : null)) : [empty('Hech kim topilmadi')]));
+          h('div', { class: 's' }, [e.title, e.department && e.department.name].filter(Boolean).join(' · ')),
+          e.work ? h('div', { class: 's' }, `⏳ ${e.work.active} faol${e.work.late ? ` (🔴 ${e.work.late})` : ''} · 🕓 ${e.work.review} · ✅ ${e.work.done}`) : null),
+        e.active ? h('div', { class: 'end' }, `${e.attPct}%`) : null)) : [empty('Hech kim topilmadi')]));
     };
     const deps = [['all', 'Hammasi'], ...data.departments.map((d) => [String(d.id), d.name]), ['none', "Bo'limsiz"]];
     const segBox = h('div');
@@ -608,7 +667,7 @@
       data.employees.length > 6 ? h('div', { class: 'field' }, s) : null,
       r.seeAll && data.departments.length ? segBox : null,
       listBox,
-      h('p', { class: 'muted' }, "🟢 vaqtida · 🟡 kech · 🔴 kelmagan · 🔵 sababli · ⚪ hali vaqti emas. Foiz — shu oy davomati."),
+      h('p', { class: 'muted' }, "🟢 vaqtida · 🟡 kech · 🔴 kelmagan · 🔵 sababli · ⚪ hali vaqti emas. Foiz — shu oy davomati. ⏳ faol (🔴 kechikkan) · 🕓 tekshiruvda · ✅ shu oy bajarilgan — hodimni bosing, vazifalari ochiladi."),
       r.isAdmin ? h('div', { class: 'btns' },
         h('button', { class: 'btn ghost', type: 'button', onclick: () => go(all ? '#/people' : '#/people?all=1') }, all ? 'Faqat faollar' : 'Ishdan ketganlar ham'),
         h('button', { class: 'btn', type: 'button', onclick: () => go('#/new') }, "➕ Hodim qo'shish")) : null);
@@ -645,6 +704,20 @@
         e.username ? h('button', { class: 'btn ghost', type: 'button', onclick: () => { const u = `https://t.me/${encodeURIComponent(e.username)}`; if (tg && tg.openTelegramLink) tg.openTelegramLink(u); else window.open(u, '_blank', 'noopener'); } }, '💬 Lichka') : null,
         r.seeAll ? h('button', { class: 'btn ghost', type: 'button', onclick: () => go(`#/kpi/${d.month}/${e.id}`) }, '💰 KPI') : null)));
 
+    if (d.can.setHome) {
+      // Agentning uy joyi — direktor / o'z bo'limi rahbari belgilaydi (Yandex / Google Maps havolasi yoki koordinata)
+      const homeIn = h('input', { class: 'input', maxlength: '500', placeholder: '40.990204, 71.646206 yoki Yandex / Google Maps havolasi' });
+      const mapUrl = d.home ? ymaps(d.home.lat, d.home.lon) : null;
+      out.push(h('div', { class: 'card' }, h('h2', null, '🏠 Uy joylashuvi'),
+        h('p', { class: 'muted' }, d.home ? `${Number(d.home.lat).toFixed(6)}, ${Number(d.home.lon).toFixed(6)}` : 'Belgilanmagan — «Keldim» uydan 1,5 km+ uzoqda qabul qilinadi.'),
+        mapUrl ? h('button', { class: 'btn ghost small', type: 'button', onclick: () => { if (tg && tg.openLink) tg.openLink(mapUrl); else window.open(mapUrl, '_blank', 'noopener'); } }, '🗺 Xaritada') : null,
+        h('label', { class: 'field' }, h('span', null, d.home ? "O'zgartirish" : 'Belgilash'), homeIn, h('div', { class: 'hint' }, 'Koordinatani (Yandex Maps\'da nuqtani bosing — chiqadi) yoki Yandex / Google Maps havolasini qo\'ying. Botda — xaritadan nuqta tanlab yuborsa ham bo\'ladi.')),
+        h('button', { class: 'btn block', type: 'button', onclick: action(async () => {
+          if (!homeIn.value.trim()) { toast('Havola yoki koordinata kiriting'); return; }
+          await api('POST', `/api/employees/${e.id}/home`, { text: homeIn.value.trim() }); toast('Saqlandi, hodimga xabar yuborildi'); router();
+        }) }, '💾 Uy joyini saqlash')));
+    }
+
     out.push(h('div', { class: 'card' }, h('h2', null, d.monthName),
       h('div', null, `📋 Topshiriq: ${d.tasksStats.ontime}/${d.tasksStats.total} muddatida — ${d.tasksStats.pct}%`), bar(d.tasksStats.pct),
       h('p', { class: 'muted' }, `ochiq ${d.tasksStats.open}${d.tasksStats.overdue ? ` · 🔴 muddati o'tgan ${d.tasksStats.overdue}` : ''}${d.tasksStats.returns ? ` · ↩️ ${d.tasksStats.returns}` : ''}`),
@@ -659,6 +732,29 @@
         if (!(await confirmBox(`«${x.title}» bekor qilinsinmi? Hodimga xabar boradi.`))) return;
         await api('DELETE', `/api/tasks/${x.id}`); toast('Bekor qilindi'); router();
       }) }, '🗑 Bekor qilish')) : null)))) : empty("Ochiq topshiriq yo'q"));
+
+    if (d.given) {
+      // Boshliq: shu rahbar / HR kimga nima bergan — hodim bo'yicha (ochiq, tekshiruvda, shu oy bajarilgan)
+      const cnt = (k) => d.given.filter((x) => x.kind === k).length;
+      out.push(section(`📨 Bergan topshiriqlari (${d.given.length})`));
+      out.push(h('p', { class: 'muted' }, `⏳ faol ${cnt('open')} · 🔴 kechikkan ${cnt('overdue')} · 🕓 tekshiruvda ${cnt('review')} · ✅ shu oy bajarilgan ${cnt('accepted')}`));
+      const groups = new Map();
+      for (const x of d.given) {
+        if (!groups.has(x.employee.id)) groups.set(x.employee.id, { emp: x.employee, items: [] });
+        groups.get(x.employee.id).items.push(x);
+      }
+      out.push(d.given.length ? h('div', null, [...groups.values()].map((g) => h('div', { class: 'card' },
+        h('div', { class: 't' }, h('b', null, `👤 ${g.emp.name}`), ` — ${g.items.length} ta`),
+        h('div', { class: 'list' }, g.items.map((x) => {
+          const [kl, kc] = J_KIND[x.kind] || ['', ''];
+          return h('div', { class: 'item static' }, h('div', { class: 'grow' },
+            h('div', { class: 't' }, `${x.priority === 'high' ? '🔥 ' : ''}${x.media ? `${MEDIA_ICON[x.media.type] || '📎'} ` : ''}${x.title}`),
+            h('div', { class: 'chips' }, chip(kl, kc),
+              x.kind !== 'accepted' ? (x.ackAt ? chip(`👂 tushundi · ${clock(x.ackAt)}`, 'green') : chip("👂 «tushundim» yo'q", 'amber')) : null,
+              x.returned ? chip(`↩️ ${x.returned}`, 'amber') : null),
+            h('p', { class: 'muted' }, `Berilgan ${shortDate((x.createdAt || '').slice(0, 10))} ${clock(x.createdAt)} · muddat ${shortDate(x.due)}${x.startTime ? ` ${x.startTime}` : ''}${x.doneAt ? ` · bajardi ${shortDate(x.doneAt.slice(0, 10))}${x.lateDone ? ' (kech)' : ''}` : ''}`)));
+        }))))) : empty("Ochiq yoki shu oy bajarilgan topshiriq yo'q"));
+    }
 
     if (d.can.directions) {
       const org = await api('GET', '/api/org');
@@ -1027,6 +1123,189 @@
       })));
   };
 
+  // =========================================================================
+  // AGENTLAR QAYERDA — jonli joylashuv (6-okt). Xarita: Yandex plitkalari (14-okt, OSM iPhone'da ochilmadi) + SVG (kutubxonasiz)
+  // =========================================================================
+  const LIVE_ICON = { live: '🟢', stale: '🟡', stopped: '🔴', nolive: '⚪️', excused: '📵', absent: '⚫️', out: '🏁' };
+  const liveLine = (a) => {
+    if (a.kind === 'live' || a.kind === 'stale') return `${a.label} · ${a.ageMin < 1 ? 'hozirgina' : `${dur(a.ageMin)} oldin`}`;
+    if (a.kind === 'stopped') return `${a.stopReason === 'expired' ? 'muddati tugagan' : a.label} · ${clock(a.stoppedAt)}`;
+    if (a.kind === 'out') return `ketdi · ${clock(a.checkedOut)}`;
+    if (a.kind === 'nolive') return `${a.label} · keldi ${clock(a.checkedIn)}`;
+    return a.label;
+  };
+  const openExternal = (url) => { if (tg && INIT && tg.openLink) tg.openLink(url); else window.open(url, '_blank', 'noopener'); };
+  const distText = (m) => (m < 1000 ? `${m} m` : `${(m / 1000).toFixed(1)} km`);
+
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const svg = (tag, attrs) => { const el = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, String(v)); return el; };
+  const TILE = 256;
+  const wx = (lon, z) => ((lon + 180) / 360) * TILE * 2 ** z;
+  // Yandex plitkalari — elliptik Merkator (EPSG:3395), OSM dagi sferik emas: aks holda ~20 km siljiydi
+  const ECC = 0.0818191908426;
+  const wy = (lat, z) => {
+    const r = (lat * Math.PI) / 180;
+    const es = ECC * Math.sin(r);
+    return ((1 - Math.log(Math.tan(Math.PI / 4 + r / 2) * ((1 - es) / (1 + es)) ** (ECC / 2)) / Math.PI) / 2) * TILE * 2 ** z;
+  };
+  const TILE_SCALE = (window.devicePixelRatio || 1) > 1 ? 2 : 1; // iPhone — tiniq (512 px plitka 256 px da)
+
+  /** path: [[lat, lon]...], marks: [{ lat, lon, cls, text, label }]. Qaytaradi: { el, focus(lat, lon) } */
+  const tileMap = (path, marks) => {
+    const box = h('div', { class: 'map' });
+    const layer = h('div', { class: 'map-tiles' });
+    const over = svg('svg', { class: 'map-svg' });
+    const pins = h('div', { class: 'map-pins' });
+    const zoomIn = h('button', { class: 'map-zoom', type: 'button', 'aria-label': 'Yaqinlashtirish' }, '+');
+    const zoomOut = h('button', { class: 'map-zoom', type: 'button', 'aria-label': 'Uzoqlashtirish' }, '−');
+    box.append(layer, over, pins, h('div', { class: 'map-ctl' }, zoomIn, zoomOut), h('div', { class: 'map-attr' }, '© Yandex'));
+    const all = [...path.map(([lat, lon]) => ({ lat, lon })), ...marks];
+    let z = 15;
+    let cx = 0;
+    let cy = 0;
+    const size = () => ({ W: box.clientWidth || 340, H: box.clientHeight || 360 });
+    const fit = () => {
+      const { W, H } = size();
+      if (!all.length) return;
+      const lats = all.map((p) => p.lat);
+      const lons = all.map((p) => p.lon);
+      const [a, b, c, d] = [Math.min(...lats), Math.max(...lats), Math.min(...lons), Math.max(...lons)];
+      for (z = 17; z > 3; z -= 1) if (wx(d, z) - wx(c, z) <= W - 48 && wy(a, z) - wy(b, z) <= H - 48) break;
+      cx = (wx(c, z) + wx(d, z)) / 2;
+      cy = (wy(a, z) + wy(b, z)) / 2;
+    };
+    const cache = new Map();
+    const draw = () => {
+      const { W, H } = size();
+      const x0 = cx - W / 2;
+      const y0 = cy - H / 2;
+      const n = 2 ** z;
+      const keep = [];
+      for (let tx = Math.floor(x0 / TILE); tx <= Math.floor((x0 + W) / TILE); tx += 1) {
+        for (let ty = Math.max(0, Math.floor(y0 / TILE)); ty <= Math.min(n - 1, Math.floor((y0 + H) / TILE)); ty += 1) {
+          const key = `x=${((tx % n) + n) % n}&y=${ty}&z=${z}`;
+          let img = cache.get(key);
+          if (!img) {
+            img = h('img', { src: `https://core-renderer-tiles.maps.yandex.net/tiles?l=map&${key}&scale=${TILE_SCALE}&lang=uz_UZ`, alt: '', draggable: 'false' });
+            cache.set(key, img);
+          }
+          img.style.left = `${Math.round(tx * TILE - x0)}px`;
+          img.style.top = `${Math.round(ty * TILE - y0)}px`;
+          keep.push(img);
+        }
+      }
+      layer.replaceChildren(...keep);
+      if (cache.size > 300) cache.clear();
+      over.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      over.setAttribute('width', W);
+      over.setAttribute('height', H);
+      const pts = path.map(([lat, lon]) => `${(wx(lon, z) - x0).toFixed(1)},${(wy(lat, z) - y0).toFixed(1)}`).join(' ');
+      over.replaceChildren(...(path.length > 1 ? [svg('polyline', { points: pts, class: 'map-line-bg' }), svg('polyline', { points: pts, class: 'map-line' })] : []));
+      pins.replaceChildren(...marks.map((m) => {
+        const el = h('span', { class: `map-pin ${m.cls || ''}`.trim(), title: m.label || '' }, m.text || '');
+        el.style.left = `${Math.round(wx(m.lon, z) - x0)}px`;
+        el.style.top = `${Math.round(wy(m.lat, z) - y0)}px`;
+        return el;
+      }));
+    };
+    const zoom = (dz) => {
+      const nz = Math.max(3, Math.min(18, z + dz));
+      const k = 2 ** (nz - z);
+      cx *= k; cy *= k; z = nz;
+      draw();
+    };
+    zoomIn.addEventListener('click', () => zoom(1));
+    zoomOut.addEventListener('click', () => zoom(-1));
+    // surish (barmoq / sichqoncha)
+    let drag = null;
+    box.addEventListener('pointerdown', (ev) => {
+      if (ev.target.closest('.map-ctl')) return;
+      drag = { x: ev.clientX, y: ev.clientY, cx, cy };
+      try { box.setPointerCapture(ev.pointerId); } catch { /* eski brauzer */ }
+    });
+    box.addEventListener('pointermove', (ev) => {
+      if (!drag) return;
+      cx = drag.cx - (ev.clientX - drag.x);
+      cy = drag.cy - (ev.clientY - drag.y);
+      draw();
+    });
+    const end = () => { drag = null; };
+    box.addEventListener('pointerup', end);
+    box.addEventListener('pointercancel', end);
+    box.addEventListener('dblclick', () => zoom(1));
+    // xarita ustida barmoq bilan surish sahifani (va Telegram oynasini) siljitmasin
+    box.addEventListener('touchmove', (ev) => { if (!ev.target.closest('.map-ctl')) ev.preventDefault(); }, { passive: false });
+    // Birinchi chizishda quti hali 0 o'lchamli bo'lishi mumkin — o'lcham kelganda (va o'zgarganda) qayta chizamiz
+    if (window.ResizeObserver) {
+      let fitted = false;
+      new ResizeObserver(() => { if (!box.clientWidth) return; if (!fitted) { fit(); fitted = true; } draw(); }).observe(box);
+    } else requestAnimationFrame(() => { fit(); draw(); });
+    return {
+      el: box,
+      focus: (lat, lon, zz = 16) => { z = zz; cx = wx(lon, z); cy = wy(lat, z); draw(); box.scrollIntoView({ behavior: 'smooth', block: 'center' }); },
+    };
+  };
+
+  /** Kun tanlovi: oldingi kun · kecha · bugun (ro'yxat va agent sahifasida bir xil) */
+  const liveDays = () => [[addDays(today(), -2), shortDate(addDays(today(), -2))], [addDays(today(), -1), 'Kecha'], [today(), 'Bugun']];
+
+  const pageLive = async (m, q) => {
+    const date = q.get('date') || today();
+    const d = await api('GET', `/api/live?date=${encodeURIComponent(date)}`);
+    setTitle('📡 Agentlar qayerda', `${d.datePretty} · ${d.today ? 'jonli joylashuv' : 'kun oxiridagi joyi'}`);
+    const days = seg(liveDays(), date, (k) => go(k === today() ? '#/live' : `#/live?date=${k}`));
+    if (!d.rows.length) return mount(days, empty("Hudud (agent) rejimidagi hodim yo'q. Hodim kartochkasida ish turi «hudud» qilinsa — shu yerda chiqadi."));
+    const order = { live: 0, stale: 1, stopped: 2, nolive: 3, excused: 3, out: 4, absent: 5 };
+    const rows = d.rows.slice().sort((a, b) => order[a.kind] - order[b.kind] || a.name.localeCompare(b.name));
+    const marks = rows.filter((a) => a.lat != null).map((a) => ({ lat: a.lat, lon: a.lon, cls: `k-${a.kind}`, text: firstName(a.name), label: a.name }));
+    const map = marks.length ? tileMap([], marks) : null;
+    return mount(days, map ? h('div', { class: 'card flush' }, map.el) : null,
+      h('div', { class: 'list' }, rows.map((a) => h('button', { class: 'item', type: 'button', onclick: () => go(d.today ? `#/live/${a.id}` : `#/live/${a.id}?date=${date}`) },
+        h('span', { 'aria-hidden': 'true' }, LIVE_ICON[a.kind] || '•'),
+        h('div', { class: 'grow' }, h('div', { class: 't' }, a.name), h('div', { class: 's' }, [liveLine(a), a.department].filter(Boolean).join(' · '))),
+        h('span', { class: 'chev', 'aria-hidden': 'true' }, '›')))),
+      h('div', { class: 'btns' }, h('button', { class: 'btn ghost', type: 'button', onclick: () => router() }, '🔄 Yangilash')),
+      d.today ? h('p', { class: 'hint' }, `🟡 — ${d.gapMin} daqiqadan beri yangilanmagan (telefon o'chgan yoki internet yo'q bo'lishi mumkin).`) : null);
+  };
+
+  const pageLiveOne = async (m, q) => {
+    const date = q.get('date') || today();
+    const d = await api('GET', `/api/live/${m[1]}?date=${encodeURIComponent(date)}`);
+    const a = d.agent;
+    setTitle(`📡 ${a.name}`, `${d.datePretty}${d.today ? ` · ${liveLine(a)}` : ''}`);
+    const days = liveDays();
+    const pathPts = d.points.map(([lat, lon]) => [lat, lon]);
+    const marks = [];
+    if (d.home) marks.push({ lat: d.home.lat, lon: d.home.lon, cls: 'k-home', text: '🏠', label: 'Uy' });
+    d.stops.forEach((x, i) => marks.push({ lat: x.lat, lon: x.lon, cls: 'k-stop', text: String(i + 1), label: `To'xtash ${i + 1}` }));
+    d.visits.forEach((v) => marks.push({ lat: v.lat, lon: v.lon, cls: 'k-visit', text: '📍', label: `Tashrif ${clock(v.at)}` }));
+    if (pathPts.length) marks.push({ lat: pathPts[0][0], lon: pathPts[0][1], cls: 'k-start', text: 'S', label: `Boshlanish ${clock(d.points[0][2])}` });
+    if (d.today && a.lat != null && a.kind !== 'absent') marks.push({ lat: a.lat, lon: a.lon, cls: `k-now k-${a.kind}`, text: '●', label: 'Hozir' });
+    else if (pathPts.length > 1) { const l = pathPts[pathPts.length - 1]; marks.push({ lat: l[0], lon: l[1], cls: 'k-end', text: 'F', label: 'Oxirgi nuqta' }); }
+    const map = pathPts.length || marks.length ? tileMap(pathPts, marks) : null;
+    const facts = [
+      a.checkedIn && d.today ? `keldi ${clock(a.checkedIn)}` : null,
+      d.points.length ? `yo'l ~${distText(d.distanceM)}` : null,
+      d.points.length ? `${d.points.length} nuqta` : null,
+      d.visits.length ? `tashrif ${d.visits.length}` : null,
+    ].filter(Boolean);
+    return mount(seg(days, date, (k) => go(`#/live/${a.id}?date=${k}`)),
+      map ? h('div', { class: 'card flush' }, map.el) : h('div', { class: 'card' }, empty("Bu kunda yo'l nuqtalari yo'q.")),
+      h('div', { class: 'card' },
+        h('div', { class: 'status-big' }, h('span', { 'aria-hidden': 'true' }, LIVE_ICON[a.kind] || '•'), d.today ? liveLine(a) : d.datePretty),
+        facts.length ? h('p', { class: 'muted' }, facts.join(' · ')) : null,
+        h('div', { class: 'btns' },
+          a.lat != null && a.kind !== 'absent' && d.today ? h('button', { class: 'btn ghost small', type: 'button', onclick: () => openExternal(ymaps(a.lat, a.lon)) }, '🗺 Yandex xaritada') : null,
+          h('button', { class: 'btn ghost small', type: 'button', onclick: () => router() }, '🔄 Yangilash'))),
+      d.stops.length ? section("⏸ To'xtashlar (15 daq+)") : null,
+      d.stops.length ? h('div', { class: 'list' }, d.stops.map((x, i) => h('button', { class: 'item', type: 'button', onclick: () => map && map.focus(x.lat, x.lon) },
+        h('span', { class: 'num' }, String(i + 1)),
+        h('div', { class: 'grow' }, h('div', { class: 't' }, `${clock(x.from)} – ${x.ongoing ? 'hozir' : clock(x.to)}`), h('div', { class: 's' }, dur(x.min)))))) : null,
+      d.visits.length ? section('🚶 Tashriflar') : null,
+      d.visits.length ? h('div', { class: 'list' }, d.visits.map((v) => h('button', { class: 'item', type: 'button', onclick: () => map && map.focus(v.lat, v.lon) },
+        h('div', { class: 'grow' }, h('div', { class: 't' }, clock(v.at)), v.note ? h('div', { class: 's' }, v.note) : null)))) : null);
+  };
+
   // --- sababli kun so'rovlari ---
   const pageExcuses = async () => {
     setTitle('🙋 Sababli kunlar', "Kelmaslik so'rovlari");
@@ -1207,6 +1486,10 @@
       h('div', { class: 'card' }, seg([['1', "✅ Boshliq ko'radi"], ['0', "🚫 Ko'rmaydi"]], d.bossAttendance ? '1' : '0', action(async (k) => {
         await api('POST', '/api/settings/boss-attendance', { on: k === '1' }); toast('Saqlandi'); router();
       })), h('p', { class: 'muted' }, "Keldi / ketdi, kech qolaman, kelmayman xabarlari va ertalabki / kun yakuni hisobotlari boshliqqa ham borsinmi. O'chiq bo'lsa — faqat bo'lim rahbarlari va HR ga.")),
+      section("✅ Boshliq va «Bajardim»"),
+      h('div', { class: 'card' }, seg([['1', '✅ Boradi'], ['0', '🚫 Bormaydi']], d.bossDone ? '1' : '0', action(async (k) => {
+        await api('POST', '/api/settings/boss-done', { on: k === '1' }); toast('Saqlandi'); router();
+      })), h('p', { class: 'muted' }, "Hodim «Bajardim» deganda xabar (isbot bilan) boshliqqa ham borsinmi. O'chiq bo'lsa — bo'lim rahbari, topshiriqni bergan odam yoki HR ga; boshliq o'zi bergan topshiriqniki ham bormaydi.")),
       section('🏷 Boshliq ismi'),
       h('div', { class: 'card' }, h('label', { class: 'field' }, boss, h('div', { class: 'hint' }, "«HR va boshliq (…)ga yuborildi» yorlig'ida ko'rinadi.")),
         h('button', { class: 'btn ghost block', type: 'button', onclick: action(async () => { await api('POST', '/api/settings/boss-name', { name: boss.value }); toast('Saqlandi'); }) }, 'Saqlash')),
@@ -1276,6 +1559,86 @@
         h('div', { class: 'grow' }, h('div', { class: 't' }, a.text || `${MEDIA_ICON[a.mediaType] || '📎'} media`),
           h('div', { class: 's' }, `${shortDate(a.at.slice(0, 10))} ${clock(a.at)} · ${a.from || ''} · ${a.target || ''}`)),
         h('div', { class: 'end' }, `👀 ${a.seen}/${a.total}`))))] : null);
+  };
+
+  // =========================================================================
+  // MAJLIS — boshliq/direktor va HR
+  // =========================================================================
+  const pageMeetings = async () => {
+    setTitle('🗓 Majlis', 'Vaqti bilan; 30 daqiqa oldin eslatma');
+    const [data, hist] = await Promise.all([api('GET', '/api/announce/targets'), api('GET', '/api/meetings')]);
+    let to = 'all';
+    const selPeople = new Set();
+    const selDepts = new Set();
+    const pickBox = h('div');
+    const submit = h('button', { class: 'btn block', type: 'button' });
+    const count = () => (to === 'all' ? data.people.length : to === 'depts'
+      ? data.people.filter((p) => p.department && selDepts.has(p.department.id)).length : selPeople.size);
+    const paintSubmit = () => { const n = count(); submit.textContent = n ? `📤 Yuborish — ${n} kishiga` : 'Kimga — tanlang'; submit.disabled = !n; };
+    const checkRow = (label, sub, set, key) => {
+      const cb = h('input', { type: 'checkbox', checked: set.has(key), 'aria-label': label });
+      cb.addEventListener('change', () => { if (cb.checked) set.add(key); else set.delete(key); paintSubmit(); });
+      return h('label', { class: 'pick' }, cb, h('div', { class: 'grow' }, h('div', { class: 't' }, label), sub ? h('div', { class: 's' }, sub) : null));
+    };
+    const paintPick = () => {
+      if (to === 'all') pickBox.replaceChildren(h('p', { class: 'muted' }, `Hamma hodimlar — ${data.people.length} kishi.`));
+      else if (to === 'depts') pickBox.replaceChildren(h('div', { class: 'list' }, data.departments.map((d) => checkRow(`🏢 ${d.name}`, `${data.people.filter((p) => p.department && p.department.id === d.id).length} kishi`, selDepts, d.id))));
+      else pickBox.replaceChildren(h('div', { class: 'list' }, data.people.map((p) => checkRow(`${p.icon} ${p.name}`, [p.title, p.department && p.department.name].filter(Boolean).join(' · '), selPeople, p.id))));
+      paintSubmit();
+    };
+    const tabs = [['all', '👥 Hammaga'], ['depts', "🏢 Bo'limlarga"], ['emps', '☑️ Tanlash']];
+    const tabBox = h('div');
+    const paintTabs = () => tabBox.replaceChildren(seg(tabs, to, (k) => { to = k; paintTabs(); paintPick(); }));
+    const date = h('input', { class: 'input', type: 'date', min: today(), value: today() });
+    const tm = h('input', { class: 'input', type: 'time', step: '300', value: '15:00' });
+    const ta = h('textarea', { class: 'input', maxlength: '2000', placeholder: 'Majlis mavzusi. Masalan: Oylik reja, sotuv natijalari.' });
+    submit.addEventListener('click', action(async () => {
+      if (!ta.value.trim()) throw new Error('Majlis mavzusini yozing');
+      if (!date.value || !tm.value) throw new Error('Sana va soatni tanlang');
+      const ids = to === 'depts' ? [...selDepts] : to === 'emps' ? [...selPeople] : [];
+      if (!(await confirmBox(`Majlis (${relDate(date.value)}, ${tm.value}) — ${count()} kishiga yuborilsinmi?`))) return;
+      const r = await api('POST', '/api/meetings', { to, ids, date: date.value, time: tm.value, text: ta.value });
+      toast(`Yuborildi: ${r.delivered}/${r.total}`);
+      go(`#/meetings/${r.id}`);
+    }));
+    paintTabs(); paintPick();
+    if (!data.people.length) return mount(empty("Chaqiradigan hodim yo'q."));
+    mount(
+      h('div', { class: 'card' },
+        h('label', { class: 'field' }, h('span', null, '📅 Sana'), date),
+        h('label', { class: 'field' }, h('span', null, '⏰ Soat'), tm),
+        h('label', { class: 'field' }, h('span', null, 'Mavzu'), ta,
+          h('div', { class: 'hint' }, "Hodim «✅ Boraman / ⏰ Kech qolaman / 🙋 Kelmayman» bosadi — kech qolsa yoki kelmasa sababini yozadi (sizga, boshliq va HR ga keladi). 30 daqiqa oldin eslatma. Ovozli / video mavzu — botda «🗓 Majlis»."))),
+      section('Kimni chaqiramiz'), tabBox, pickBox,
+      h('div', { class: 'sticky-bar' }, submit),
+      hist.items.length ? [section('📜 Majlislar'), h('div', { class: 'list' }, hist.items.map((x) => h('button', { class: 'item', type: 'button', onclick: () => go(`#/meetings/${x.id}`) },
+        h('div', { class: 'grow' }, h('div', { class: 't' }, `${x.cancelled ? '🚫 ' : ''}${x.text || `${MEDIA_ICON[x.mediaType] || '📎'} media`}`),
+          h('div', { class: 's' }, `${shortDate(x.date)} ${x.time} · ${x.from || ''} · ${x.target || ''}`)),
+        h('div', { class: 'end' }, `✅${x.yes} ⏰${x.late} 🙋${x.no}`))))] : null);
+  };
+
+  const pageMeetingOne = async (m) => {
+    const d = await api('GET', `/api/meetings/${m[1]}`);
+    const x = d.meeting;
+    setTitle(x.cancelled ? '🚫 Majlis (bekor qilingan)' : '🗓 Majlis', `${relDate(x.date)}, ${x.time} · ${x.from || ''}`);
+    const live = !x.cancelled && !d.over;
+    const order = { late: 0, no: 1, yes: 2 };
+    const rows = [...d.members].sort((a, b) => (order[a.answer] ?? 3) - (order[b.answer] ?? 3));
+    mount(
+      h('div', { class: 'card' }, h('p', null, x.text || `${MEDIA_ICON[x.mediaType] || '📎'} media (botda)`), h('p', { class: 'muted' }, `→ ${x.target || ''}`)),
+      h('div', { class: 'chips' }, chip(`✅ ${x.yes} keladi`, 'green'), chip(`⏰ ${x.late} kech`, 'amber'), chip(`🙋 ${x.no} kelmaydi`, 'red'), chip(`❔ ${x.none} javob bermadi`)),
+      h('div', { class: 'list' }, rows.map((r) => h('div', { class: 'item static' },
+        h('div', { class: 'grow' }, h('div', { class: 't' }, `${r.answer ? MEET_LABEL[r.answer].split(' ')[0] : r.delivered ? '❔' : '🚫'} ${r.name}`),
+          r.reason ? h('div', { class: 's' }, `«${r.reason}»${r.proof ? ` ${MEDIA_ICON[r.proof] || '📎'} (botda)` : ''}`) : null),
+        h('div', { class: 'end' }, r.at ? `${shortDate(r.at.slice(0, 10))} ${clock(r.at)}` : r.delivered ? '' : 'yetmadi')))),
+      live && x.none ? h('button', { class: 'btn ghost block', type: 'button', onclick: action(async () => {
+        const r = await api('POST', `/api/meetings/${x.id}/resend`); toast(`${r.sent} kishiga qayta yuborildi`);
+      }) }, `🔔 Javob bermaganlarga qayta yuborish (${x.none})`) : null,
+      live ? h('button', { class: 'btn danger block', type: 'button', onclick: action(async () => {
+        if (!(await confirmBox('Majlis bekor qilinsinmi? Hamma qatnashchiga xabar boradi.'))) return;
+        await api('POST', `/api/meetings/${x.id}/cancel`); toast('🚫 Bekor qilindi'); router();
+      }) }, '🗑 Majlisni bekor qilish') : null,
+      h('button', { class: 'btn block', type: 'button', onclick: () => go('#/meetings') }, '🗓 Yangi majlis'));
   };
 
   const pageAnnounceOne = async (m) => {
@@ -1438,7 +1801,7 @@
     const mine = q.get('mine') === '1';
     const emp = q.get('emp') || '';
     const d = await api('GET', `/api/tasks/status?kind=${encodeURIComponent(kind)}${mine ? '&mine=1' : ''}${emp ? `&emp=${encodeURIComponent(emp)}` : ''}`);
-    const who = d.mine ? 'Meniki' : d.emp ? d.empName || 'Hodim' : (state.me && state.me.roles.seeAll ? 'Hamma hodimlar' : "Men va bo'limim");
+    const who = d.mine ? 'Meniki' : d.emp ? d.empName || 'Hodim' : (state.me && state.me.roles.isAdmin ? 'Men bergan' : state.me && state.me.roles.seeAll ? 'Hamma hodimlar' : "Men va bo'limim");
     setTitle(S_KIND.find(([k]) => k === kind)[1], `${who} · ${d.total} ta${kind === 'accepted' ? ' (shu oy)' : ''}`);
     const link = (x) => `#/status?${new URLSearchParams(Object.entries({ kind, mine: mine ? '1' : '', emp, ...x }).filter(([, v]) => v)).toString()}`;
     const tabs = seg(S_KIND.map(([k, l]) => [k, `${l} (${d.counts[k]})`]), kind, (k) => go(link({ kind: k })));
@@ -1509,6 +1872,8 @@
     [/^\/kpi\/(\d{4}-\d{2})\/(\d+)$/, pageKpiCard],
     [/^\/scores(?:\/(\d{4}-\d{2}))?$/, pageScores],
     [/^\/att$/, pageAtt],
+    [/^\/live$/, pageLive],
+    [/^\/live\/(\d+)$/, pageLiveOne],
     [/^\/journal$/, pageJournal],
     [/^\/excuses$/, pageExcuses],
     [/^\/pay$/, pagePay],
@@ -1517,6 +1882,8 @@
     [/^\/settings$/, pageSettings],
     [/^\/announce$/, pageAnnounce],
     [/^\/announce\/(\d+)$/, pageAnnounceOne],
+    [/^\/meetings$/, pageMeetings],
+    [/^\/meetings\/(\d+)$/, pageMeetingOne],
     [/^\/chats$/, pageChats],
     [/^\/chats\/new$/, pageChatNew],
     [/^\/chats\/(\d+)$/, pageChat],
@@ -1531,6 +1898,10 @@
     const found = ROUTES.map(([re, fn]) => [re.exec(path), fn]).find(([m]) => m);
     const mySeq = (seq += 1);
     if (tg && tg.BackButton) { if (path === '/') tg.BackButton.hide(); else tg.BackButton.show(); }
+    // Xarita sahifasida tepaga-pastga surish ilovani yopib yubormasin (Telegram 7.7+); boshqa sahifalarda — odatiy holat
+    if (tg && INIT && tg.isVersionAtLeast && tg.isVersionAtLeast('7.7')) {
+      try { if (path.startsWith('/live')) tg.disableVerticalSwipes(); else tg.enableVerticalSwipes(); } catch { /* eski klient */ }
+    }
     if (!found) { location.hash = '#/'; return; }
     $app.replaceChildren(h('div', { class: 'loading' }, 'Yuklanmoqda…'));
     try {

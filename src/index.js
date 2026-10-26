@@ -24,7 +24,9 @@ const COMMANDS = [
   { command: 'kunlik', description: 'Kunlik hisobot topshirish' },
   { command: 'kech', description: 'Kech qolaman (sabab, video/audio)' },
   { command: 'kelmayman', description: 'Bugun kelmayman (sabab)' },
+  { command: 'javob', description: "Ishdan javob so'rash (chiqib kelish / erta ketish)" },
   { command: 'tashrif', description: 'Hududga keldim (agentlar)' },
+  { command: 'agentlar', description: 'Agentlar qayerda (jonli joylashuv)' },
   { command: 'oylik', description: 'Oylik va KPI' },
   { command: 'kalkulyator', description: "KPI kalkulyator (agar … bo'lsa, qancha?)" },
   { command: 'eslatma', description: 'Eslatma vaqtlari' },
@@ -40,6 +42,9 @@ const COMMANDS = [
   { command: 'chaqirish', description: "Dam olish kuniga ishga chaqirish (qo'shimcha haq)" },
   { command: 'jurnal', description: 'Barcha topshiriqlar (direktor, HR)' },
   { command: 'elon', description: "E'lon (hammaga, bolimga, tanlanganlarga)" },
+  { command: 'majlis', description: 'Majlis (vaqti bilan; kech qolaman / kelmayman)' },
+  { command: 'davriy', description: 'Davriy eslatma: har oy / har hafta (boshliq, HR)' },
+  { command: 'ogohlantirish', description: 'Intizom ogohlantirishi (rahbar, HR, direktor)' },
   { command: 'faol', description: 'Faol topshiriqlar (jarayonda)' },
   { command: 'korib_chiqish', description: "Qaytarilgan — tuzatilayotgan topshiriqlar" },
   { command: 'kutilmoqda', description: 'Tekshiruvni kutayotganlar' },
@@ -91,14 +96,18 @@ const COMMANDS = [
   await bot.telegram.setMyCommands(COMMANDS, { scope: { type: 'all_private_chats' } }).catch(() => {});
   await bot.telegram.deleteMyCommands().catch(() => {});
 
-  // deploy paytida yuborilgan tugma/Keldim/isbot yo'qolmasin (sessiya bazada; eskirgan kiritishni handlerlar o'zi rad etadi)
-  await bot.launch({ dropPendingUpdates: false, allowedUpdates: ['message', 'callback_query'] }, () => {
+  // bot o'chiq turganda (deploy) yuborilgan Keldim/isbot yo'qolmasin — eskirgan kiritishni handlerlar o'zi rad etadi
+  await bot.launch({ dropPendingUpdates: false, allowedUpdates: ['message', 'edited_message', 'callback_query'] }, () => {
     const me = bot.botInfo;
     console.log(`\n🤖 @${me.username} ishga tushdi — ${config.companyName}`);
     console.log(`🕒 ${time.now().toFormat('yyyy-MM-dd HH:mm')} (${config.timezone})`);
     console.log(`⏰ Ish vaqti ${require('./services/worktime').get()}–${config.workEndHour}:00 · kunlar ${config.workDays} · kechikish ruxsati ${config.lateGraceMinutes} daq`);
     console.log(`👑 ADMIN_IDS: ${config.adminIds.join(', ') || '— (bazadagi role=admin)'}`);
     jobs.start(bot);
+    // 7-okt: bir martalik — hamma agentlarga uy joylashuvi haqida (settings home_ask_sent)
+    require('./services/flows').broadcastHomeAsk(bot)
+      .then((n) => { if (n) console.log(`🏠 Uy joylashuvi xabari: ${n} ta agentga`); })
+      .catch((e) => console.warn('[home-ask]', e.message));
     webapp.syncMenus(bot)
       .then((n) => { if (webapp.enabled()) console.log(`📱 Web App menyu tugmasi: ${n} ta chat`); })
       .catch((e) => console.warn('[webapp] menyu:', e.message));

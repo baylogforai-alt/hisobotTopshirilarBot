@@ -26,11 +26,11 @@ const setGlobalStep = (n) => db.setSetting(STEP_KEY, String(n));
 const fmt = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 const toMin = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
 
-/** Ish boshlanishidan har `step` soatda (butun soatlarda), ish oxirigacha */
+/** Ish boshlanishidan har `step` soatda (butun soatlarda), ish oxirigacha; 16-okt: oxirida doim 17:00 va 18:00 (ish tugashidan 1 soat oldin va tugashida) */
 const intervalTimes = (startMin, step) => {
-  const out = [];
-  for (let h = Math.floor(startMin / 60) + step; h < config.workEndHour; h += step) out.push(fmt(h * 60));
-  return out;
+  const hours = new Set([config.workEndHour - 1, config.workEndHour]);
+  for (let h = Math.floor(startMin / 60) + step; h < config.workEndHour; h += step) hours.add(h);
+  return [...hours].filter((h) => h * 60 > startMin).sort((a, b) => a - b).map((h) => fmt(h * 60));
 };
 
 /** '10:00, 14:30 17' → ['10:00','14:30','17:00']; noto'g'ri bo'lsa null */

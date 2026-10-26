@@ -15,4 +15,10 @@ const distanceMeters = (lat1, lon1, lat2, lon2) => {
 /** Masofani odam o'qiy oladigan ko'rinishga: 340 m / 1.2 km */
 const prettyDistance = (m) => (m < 1000 ? `${m} m` : `${(m / 1000).toFixed(1)} km`);
 
-module.exports = { distanceMeters, prettyDistance };
+/** Nuqta Yandex Maps'da (14-okt: Google o'rniga — iPhone'da boshliq Yandex ishlatadi). pt = lon,lat */
+const mapUrl = (lat, lon) => `https://yandex.uz/maps/?pt=${Number(lon).toFixed(6)},${Number(lat).toFixed(6)}&z=17&l=map`;
+
+/** Yandex Maps marshruti: [{ lat, lon }...] (rtext = lat,lon~lat,lon) */
+const routeUrl = (points) => `https://yandex.uz/maps/?rtext=${points.map((p) => `${Number(p.lat).toFixed(5)},${Number(p.lon).toFixed(5)}`).join('~')}&rtt=auto`;
+
+module.exports = { distanceMeters, prettyDistance, mapUrl, routeUrl };

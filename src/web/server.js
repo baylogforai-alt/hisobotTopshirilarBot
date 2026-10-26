@@ -9,6 +9,13 @@ const auth = require('./auth');
 const access = require('../services/access');
 const employees = require('../services/employees');
 const api = require('./api');
+const live = require('../services/live');
+const attendance = require('../services/attendance');
+
+/** Jonli joylashuvi o'chiq agentga ham ochiq yo'llar */
+const LIVE_PASS = new Set(['/api/me', '/api/att/checkout', '/api/att/leave']);
+// 7-okt: «Keldim» qilmagan hodim — faqat bosh sahifa, «Kech qolaman», «Kelmayman», oy boshi
+const CHECKIN_PASS = new Set(['/api/me', '/api/att/late', '/api/att/absence', '/api/month/confirm']);
 
 /**
  * HTTP SERVER: health check + Web App (Telegram Mini App) sahifasi + JSON API.
@@ -35,7 +42,8 @@ const loadStatic = () => {
   const out = {};
   for (const [route, s] of Object.entries(STATIC)) {
     const body = fs.readFileSync(path.join(PUBLIC, s.file));
-    out[route] = { body, type: s.type, etag: `"${crypto.createHash('sha1').update(body).digest('hex').slice(0, 16)}"` };
+    // ETag CSP ga ham bog'liq: CSP o'zgarsa (14-okt — OSM → Yandex) keshdagi eski sarlavha 304 bilan qolib ketmasin
+    out[route] = { body, type: s.type, etag: `"${crypto.createHash('sha1').update(body).update(CSP).digest('hex').slice(0, 16)}"` };
   }
   return out;
 };
@@ -44,7 +52,7 @@ const CSP = [
   "default-src 'none'",
   "script-src 'self' https://telegram.org",
   "style-src 'self'",
-  "img-src 'self' blob: data:",
+  "img-src 'self' blob: data: https://core-renderer-tiles.maps.yandex.net",
   "media-src 'self' blob:",
   "connect-src 'self'",
   "font-src 'self'",
@@ -144,6 +152,15 @@ const handleApi = async (req, res, url, bot) => {
 
   const route = api.match(req.method, url.pathname);
   if (!route) return sendJson(res, 404, { error: 'Topilmadi' });
+  // 7-okt: jonli joylashuvi o'chiq agent — ilovada ham faqat bosh sahifa va «Ketdim»
+  // majlisga javob (kech qolaman / kelmayman) — Keldimsiz va jonli joylashuvsiz ham
+  const meetPass = /^\/api\/meetings\/\d+\/answer$/.test(url.pathname);
+  if (actor.employee && !meetPass && !LIVE_PASS.has(url.pathname) && (await live.offFor(actor.employee))) {
+    return sendJson(res, 423, { error: "📡 Jonli joylashuvingiz o'chiq — botda yoqmaguningizcha ilova ishlamaydi (📎 → Joylashuv → Jonli joylashuvni ulashish).", code: 'live_off' });
+  }
+  if (actor.employee && !meetPass && !CHECKIN_PASS.has(url.pathname) && (await attendance.needsCheckIn(actor.employee))) {
+    return sendJson(res, 423, { error: "✅ Avval botda «Keldim» qiling (joylashuv yubora olmasangiz — «Joylashuv yubora olmayman» va sababini yozing). Kech qolsangiz yoki kelmasangiz — shu yerda bildiring.", code: 'no_checkin' });
+  }
 
   const body = write ? await readJson(req) : {};
   const result = await route.handler({ actor, params: route.params, query: url.searchParams, body, bot, res });
@@ -171,7 +188,7 @@ const createServer = ({ bot }) => {
       }
       const f = files[url.pathname];
       if (!f) return send(res, 404, 'Not found', { 'Content-Type': 'text/plain; charset=utf-8' });
-      if (req.headers['if-none-match'] === f.etag) return send(res, 304, '', { ETag: f.etag });
+      if (req.headers['if-none-match'] === f.etag) return send(res, 304, '', { ETag: f.etag, 'Content-Security-Policy': CSP, 'Cache-Control': 'no-cache' });
       return send(res, 200, req.method === 'HEAD' ? '' : f.body, {
         'Content-Type': f.type,
         'Content-Security-Policy': CSP,

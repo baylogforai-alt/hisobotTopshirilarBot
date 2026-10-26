@@ -1,5 +1,6 @@
 'use strict';
 
+const config = require('../config');
 const employees = require('./employees');
 
 /**
@@ -56,7 +57,42 @@ const canSetDue = (actor, t, newDue) => {
   if (own && newDue > t.due_date && t.due_date <= require('../time').today()) return false;
   return true;
 };
-const DUE_LOCKED = "🔒 Muddat kuni o'z vazifangiz muddatini uzaytirib bo'lmaydi — bajaring yoki rahbaringizga ayting.";
+/**
+ * Agentning (hudud hodimi) uy joyini belgilash / o'zgartirish: direktor/boshliq — hamma agentga,
+ * bo'lim rahbari — o'z bo'limidagi agentlarga (o'zinikini emas — uydan masofa sharti uni tekshiradi).
+ */
+const canSetHome = (actor, e) => {
+  if (!e || !Number(e.active) || !require('./employees').isField(e)) return false;
+  if (actor.isAdmin) return true;
+  const me = actor.employee;
+  return Boolean(actor.isHead && me && me.department_id && Number(me.id) !== Number(e.id) && Number(me.department_id) === Number(e.department_id));
+};
+
+/**
+ * 20-okt: «⚠️ Ogohlantirish» (intizom) — kimga yuborish mumkin.
+ * Direktor/boshliq va HR — hamma hodimga; bo'lim rahbari — faqat o'z bo'limiga; o'ziga — yo'q.
+ */
+const canWarn = (actor, e) => {
+  if (!e || !Number(e.active)) return false;
+  const me = actor.employee;
+  if (me && Number(e.id) === Number(me.id)) return false;
+  if (actor.isAdmin || actor.isHr) return true;
+  return Boolean(actor.isHead && me && me.department_id && Number(me.department_id) === Number(e.department_id));
+};
+
+/**
+ * 20-okt: «✅ Keldi deb belgilash» — o'tkazib yuborilgan kunni kim to'g'rilay oladi.
+ * Direktor/boshliq — hamma hodimni; bo'lim rahbari — faqat o'z bo'limini; o'ziga — yo'q.
+ */
+const canMarkPresent = (actor, e) => {
+  if (!e || !Number(e.active)) return false;
+  const me = actor.employee;
+  if (me && Number(e.id) === Number(me.id)) return false;
+  if (actor.isAdmin) return true;
+  return Boolean(actor.isHead && me && me.department_id && Number(me.department_id) === Number(e.department_id));
+};
+
+const DUE_LOCKED ="🔒 Muddat kuni o'z vazifangiz muddatini uzaytirib bo'lmaydi — bajaring yoki rahbaringizga ayting.";
 
 /**
  * Bekor qilish (o'chirish emas — yozuv qoladi, kim va qachon bekor qilgani yoziladi). Faol yoki tekshiruvdagi (done) topshiriq.
@@ -80,11 +116,12 @@ const canReview = (actor, emp) =>
  * Sababli qilish (kelmayman ab:*, kechikish lx:*) — boshliq/direktor va hodimning bo'lim rahbari.
  * 5-okt qarori: HR faqat ko'radi, tasdiqlamaydi.
  */
-const canDecideExcuse = (actor, emp) => {
+const canDecideExcuse = async (actor, emp) => {
   const me = actor.employee;
   if (!emp || (me && Number(emp.id) === Number(me.id))) return false;
   if (actor.isAdmin) return true;
-  return Boolean(actor.isHead && !actor.isHr && me && me.department_id && Number(me.department_id) === Number(emp.department_id));
+  if (actor.isHr) return !(await require('./org').deptApproverIdsOf(emp)).length; // 8-okt: bo'lim rahbari yo'q hodim — HR hal qiladi
+  return Boolean(actor.isHead && me && me.department_id && Number(me.department_id) === Number(emp.department_id));
 };
 
 /**
@@ -120,6 +157,9 @@ const canSeeTask = async (actor, t) => {
 /** Ro'yxatlar doirasi: direktor/HR — hamma (null); rahbar — o'z bo'limi; bo'limsiz rahbar — hech kim (-1, «hammasi» emas) */
 const deptScope = (actor) => (actor.isAdmin || actor.isHr ? null : (actor.employee && actor.employee.department_id) || -1);
 
+/** 17-okt: boshliq/direktor ro'yxatlarida (tekshiruv) — faqat O'ZI BERGAN topshiriqlar; boshqalar bergani — jurnal va Paneldan */
+const ownGivenForAdmin = (actor, list) => (actor.isAdmin && config.bossOwnLists ? list.filter((t) => Number(t.created_by) === Number(actor.tgId)) : list);
+
 /** Topshiriq bo'yicha yozishma: topshiriq egasi, uni qaytargan / bergan odam yoki tekshirish huquqi borlar */
 const canReplyTask = (actor, t, emp) => {
   if (actor.employee && Number(t.employee_id) === Number(actor.employee.id)) return true;
@@ -145,7 +185,22 @@ const tasksByKind = async (actor, kind, { mine = false } = {}) => {
   const tasks = require('./tasks');
   const ids = await taskScopeIds(actor, { mine });
   if (ids && !ids.length) return [];
-  return tasks.visibleFor(actor, await tasks.listByKind(kind, { employeeIds: ids }));
+  const list = tasks.visibleFor(actor, await tasks.listByKind(kind, { employeeIds: ids }));
+  // 8-okt: boshliq/direktor jamoa ko'rinishida — faqat O'ZI BERGAN topshiriqlar (rahbarlar bergani — Panel «📨 Bo'lim rahbarlari bergan»)
+  if (actor.isAdmin && config.bossOwnLists && !mine) return list.filter((t) => Number(t.created_by) === Number(actor.tgId));
+  return list;
 };
 
-module.exports = { taskScopeIds, tasksByKind, resolve, canEditTask, canCancelTask, canReview, canDecideExcuse, chatCandidates, canReplyTask, canSeeTask, deptScope, canSetDue, DUE_LOCKED };
+/**
+ * Agent jonli joylashuvi (6-okt): boshliq/direktor va HR — hamma agentni, bo'lim rahbari — o'z bo'limidagi agentlarni (o'zini emas).
+ */
+const canSeeLive = (actor, emp) => {
+  if (!emp || !employees.isField(emp) || employees.isBoss(emp)) return false;
+  if (actor.isAdmin || actor.isHr) return true;
+  const me = actor.employee;
+  return Boolean(actor.isHead && me && me.department_id && Number(me.department_id) === Number(emp.department_id) && Number(me.id) !== Number(emp.id));
+};
+const canUseLive = (actor) => Boolean(actor.isAdmin || actor.isHr || actor.isHead);
+const liveAgentsFor = async (actor) => (canUseLive(actor) ? (await employees.listStaff()).filter((e) => canSeeLive(actor, e)) : []);
+
+module.exports = { canSeeLive, canUseLive, liveAgentsFor, taskScopeIds, tasksByKind, resolve, canEditTask, canCancelTask, canReview, canDecideExcuse, chatCandidates, canReplyTask, canSeeTask, deptScope, ownGivenForAdmin, canSetDue, canSetHome, canMarkPresent, canWarn, DUE_LOCKED };

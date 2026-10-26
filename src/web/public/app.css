@@ -187,6 +187,8 @@ textarea.input { min-height: 96px; resize: vertical; }
 
 .banner { border-radius: var(--radius); padding: 14px; margin-bottom: var(--gap); background: color-mix(in srgb, var(--warn) 16%, var(--card)); }
 .banner p { margin: 0 0 10px; }
+.meeting p { margin: 0 0 6px; }
+.meeting + .meeting { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
 .status-big { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 700; }
 .status-big .dot { width: 14px; height: 14px; margin: 0; }
 
@@ -201,3 +203,26 @@ textarea.input { min-height: 96px; resize: vertical; }
 .msg .txt { white-space: pre-wrap; word-break: break-word; }
 .msg .btns:empty { display: none; }
 .panel .msgs .msg { border: 1px solid var(--line); }
+
+/* Agentlar qayerda — xarita (Yandex plitkalari + SVG yo'l) */
+.card.flush { padding: 0; overflow: hidden; }
+.map { position: relative; height: 360px; overflow: hidden; background: #dfe3e8; touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; }
+.map-tiles img { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; }
+.map-svg { position: absolute; left: 0; top: 0; pointer-events: none; }
+.map-line { fill: none; stroke: #2a7de1; stroke-width: 4; stroke-linejoin: round; stroke-linecap: round; }
+.map-line-bg { fill: none; stroke: #ffffff; stroke-width: 7; stroke-linejoin: round; stroke-linecap: round; opacity: 0.85; }
+.map-pins { position: absolute; inset: 0; pointer-events: none; }
+.map-pin { position: absolute; transform: translate(-50%, -50%); min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; display: flex; align-items: center; justify-content: center;
+  background: #ffffff; color: #15171a; border: 2px solid #2a7de1; font-size: 11px; font-weight: 700; white-space: nowrap; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); }
+.map-pin.k-live, .map-pin.k-now { border-color: #2fa84f; }
+.map-pin.k-now { background: #2fa84f; color: #ffffff; }
+.map-pin.k-stale { border-color: #e09a1a; }
+.map-pin.k-stopped, .map-pin.k-end { border-color: #e5484d; }
+.map-pin.k-nolive, .map-pin.k-excused, .map-pin.k-out { border-color: #7d8590; }
+.map-pin.k-stop { background: #e09a1a; color: #ffffff; border-color: #ffffff; }
+.map-pin.k-start { background: #2a7de1; color: #ffffff; border-color: #ffffff; }
+.map-pin.k-home, .map-pin.k-visit { border-color: transparent; background: rgba(255, 255, 255, 0.9); }
+.map-ctl { position: absolute; right: 8px; top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.map-zoom { width: 36px; height: 36px; border-radius: 10px; border: 0; background: #ffffff; color: #15171a; font-size: 20px; font-weight: 700; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); cursor: pointer; }
+.map-attr { position: absolute; right: 0; bottom: 0; padding: 1px 6px; font-size: 10px; background: rgba(255, 255, 255, 0.8); color: #333333; }
+.item .num { min-width: 24px; height: 24px; border-radius: 12px; background: #e09a1a; color: #ffffff; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }

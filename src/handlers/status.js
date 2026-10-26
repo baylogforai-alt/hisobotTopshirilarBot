@@ -3,7 +3,7 @@
 /**
  * «⏳ Faol» · «🔁 Ko'rib chiqish» · «🕓 Kutilmoqda» · «✅ Bajarilgan» — topshiriqlar holati bo'yicha alohida tugmalar (asosiy menyuda).
  * Ko'rib chiqish — kamchilik bilan qaytarilgan, tuzatilayotgan vazifalar (5-okt).
- * Hodim — o'zinikini; rahbar — o'zi + bo'limi; boshliq/direktor — hammaniki; HR — hammaniki (boshliq/direktor berganlarisiz).
+ * Hodim — o'zinikini; rahbar — o'zi + bo'limi; boshliq/direktor — faqat o'zi bergani (8-okt); HR — hammaniki (boshliq/direktor berganlarisiz).
  * Har qatorda: kim, nima, kim bergan, qachon yozilgan, muddat, boshlanish soati.
  *   sk:<a|f|r|d>:<t|m|e<id>>:<sahifa>   a — faol, f — ko'rib chiqish (qaytarilgan), r — tekshiruvda, d — bajarilgan (shu oy);
  *     t — hodimlar ro'yxati (ism + soni), e<id> — shu hodimning vazifalari, m — faqat meniki
@@ -114,7 +114,7 @@ const teamView = async (ctx, actor, k, lists, page) => {
   const pages = Math.max(1, Math.ceil(people.length / 20));
   const p = Math.min(Math.max(0, page), pages - 1);
   const slice = people.slice(p * 20, p * 20 + 20);
-  const who = actor.seeAll ? '👥 Hamma hodimlar' : "👥 Men va bo'limim";
+  const who = actor.isAdmin ? "📤 Men bergan topshiriqlar (rahbarlar bergani — Panel → «📨 Bo'lim rahbarlari bergan»)" : actor.seeAll ? '👥 Hamma hodimlar' : "👥 Men va bo'limim";
   const text =
     `<b>${TITLES[k]}</b> — ${lists[k].length} ta\n<i>${who} · hodimni bosing — vazifalari ochiladi</i>\n` +
     `${summary(lists)}\n${ui.LINE}\n` +

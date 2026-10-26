@@ -109,6 +109,9 @@ const config = {
    * Panel «👁 Boshliq keldi-ketdini» dan o'zgartirilmaguncha shu standart (BayLog: ha; BAYOMA: yo'q)
    */
   bossSeesAttendance: bool(process.env.BOSS_SEES_ATTENDANCE, true),
+  // BAYOMA (8/17-okt): boshliq/direktor holat ro'yxatlari, Tekshiruv, e'lon/majlis tarixida faqat o'zi bergani.
+  // BayLog'da standart YO'Q — Jaxongir hammasini tekshiradi; Odilxon uchun alohida «faqat o'z topshiriqlari» (own_tasks_ids)
+  bossOwnLists: bool(process.env.BOSS_OWN_LISTS, false),
   /** Bajarilgan ish / kelish-ketish guruhga e'lon qilinsinmi (real vaqtda) */
   announceDone: bool(process.env.ANNOUNCE_DONE, true),
 
@@ -131,6 +134,10 @@ const config = {
 
   // Hudud (agent) rejimi: "Keldim" uchun uydan kamida shuncha metr uzoqda bo'lishi kerak
   fieldMinDistanceM: num(process.env.FIELD_MIN_DISTANCE_M, 1000),
+  // Agent jonli joylashuvi (Telegram «Live Location»): shuncha daqiqa yangilanmasa — rahbar va HR ga ogohlantirish
+  liveGapMin: num(process.env.LIVE_GAP_MIN, 30),
+  // ish kunida «Keldim» (joylashuv yoki «Joylashuv yubora olmayman» + sabab) / «Kech qolaman» / «Kelmayman» qilmaguncha bot va ilova yopiq
+  checkinRequired: bool(process.env.CHECKIN_REQUIRED, true),
   // Ofis rejimida "Keldim" uchun video (yoki dumaloq video) majburiy (BayLog'da standart: yo'q)
   officeCheckinVideo: bool(process.env.OFFICE_CHECKIN_VIDEO, false),
   // Oy boshini tasdiqlamaguncha "Keldim" yopiq (BayLog'da standart: yo'q — xabar baribir boradi)

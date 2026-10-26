@@ -37,14 +37,14 @@ const startPassed = (dueDate, hhmm, now = time.now()) => {
  * media — topshiriqning o'zi ovoz / video / fayl / rasm bo'lsa: { type, fileId, fileName }
  * startTime — 'HH:mm': muddat kuni shu soatda hodimga «boshlash vaqti keldi» xabari boradi (o'tgan vaqt — xabarsiz)
  */
-const create = async ({ employeeId, title, dueDate, createdBy, source = 'self', priority = 'normal', startDate = time.today(), media = null, startTime = null }) => {
+const create = async ({ employeeId, title, dueDate, createdBy, source = 'self', priority = 'normal', startDate = time.today(), media = null, startTime = null, recurringId = null }) => {
   const st = normTime(startTime);
   const rows = await db.query(
-    `INSERT INTO tasks (employee_id, title, status, priority, source, created_by, created_at, start_date, due_date, task_media_type, task_file_id, task_file_name, start_time, start_notified_at)
-     VALUES ($1, $2, 'active', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
+    `INSERT INTO tasks (employee_id, title, status, priority, source, created_by, created_at, start_date, due_date, task_media_type, task_file_id, task_file_name, start_time, start_notified_at, recurring_id)
+     VALUES ($1, $2, 'active', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
     [Number(employeeId), String(title).trim().slice(0, 500), priority, source, createdBy ? Number(createdBy) : null, time.stamp(), startDate, dueDate,
       media ? media.type : null, media ? media.fileId : null, media && media.fileName ? String(media.fileName).slice(0, 200) : null,
-      st, st && startPassed(dueDate, st) ? time.stamp() : null],
+      st, st && startPassed(dueDate, st) ? time.stamp() : null, recurringId ? Number(recurringId) : null],
   );
   return byId(rows[0].id);
 };
@@ -96,6 +96,41 @@ const listByKind = async (kind, { employeeIds = null, since = null } = {}) => {
   if (!employeeIds) return rows;
   const ids = new Set(employeeIds.map(Number));
   return rows.filter((t) => ids.has(Number(t.employee_id)));
+};
+
+/** Shu odam (rahbar/HR/boshliq) BERGAN topshiriqlar: ochiq, tekshiruvda va shu oy bajarilganlar (o'ziga yozganlarisiz) */
+const givenBy = async (tgId, { since = null } = {}) => {
+  const from = since || time.monthRange(time.month()).from;
+  const today = time.today();
+  const rows = await db.query(
+    `${JOURNAL_SELECT} WHERE t.created_by = $1 AND t.source <> 'self' AND e.active = 1
+       AND (t.status IN ('active', 'done') OR (t.status = 'accepted' AND substr(t.done_at, 1, 10) >= $2))
+     ORDER BY e.full_name, t.due_date, t.id`,
+    [Number(tgId), from],
+  );
+  return rows.map((t) => withKinds(t, today));
+};
+
+/**
+ * 9-okt: jamoa oynasi — har hodim bo'yicha vazifalar holati (actor ko'ra oladiganlari).
+ * Map<employeeId, { open: [faol + qaytarilgan + tekshiruvda, kechikkanlar birinchi], active, late, review, done }>
+ */
+const summaryFor = async (actor, employeeIds) => {
+  const map = new Map(employeeIds.map((id) => [Number(id), { open: [], active: 0, late: 0, review: 0, done: 0 }]));
+  if (!map.size) return map;
+  const today = time.today();
+  for (const kind of ['active', 'fix', 'review', 'accepted']) {
+    for (const t of visibleFor(actor, await listByKind(kind, { employeeIds }))) {
+      const x = map.get(Number(t.employee_id));
+      if (kind === 'accepted') { x.done += 1; continue; }
+      if (kind === 'review') x.review += 1;
+      else { x.active += 1; if (t.due_date < today) x.late += 1; }
+      x.open.push(t);
+    }
+  }
+  const rank = (t) => (t.status === 'active' && t.due_date < today ? 0 : t.status === 'active' ? 1 : 2);
+  for (const x of map.values()) x.open.sort((a, b) => rank(a) - rank(b) || String(a.due_date).localeCompare(String(b.due_date)));
+  return map;
 };
 
 /** «Eshitdim, tushundim» kerakmi: boshqa odam bergan, hali tasdiqlanmagan, yopilmagan */
@@ -399,7 +434,7 @@ const dayStats = async (employeeId, date = time.today()) => {
 
 module.exports = {
   normTime, startPassed, dueStarts, markStartNotified, hiddenFromHr, visibleTo, visibleFor, listByKind,
-  isBossOwn, completeOwn, addReply, replies, replyCounts, needsAck, unackedFor, ack, journal, journalItem, giverKind, statusKind, byId, create, openFor, awaitingReviewFor, acceptedSince, doneOn, overdue, pendingReview, markDone, accept, returnBack, cancel,
+  isBossOwn, completeOwn, givenBy, summaryFor, addReply, replies, replyCounts, needsAck, unackedFor, ack, journal, journalItem, giverKind, statusKind, byId, create, openFor, awaitingReviewFor, acceptedSince, doneOn, overdue, pendingReview, markDone, accept, returnBack, cancel,
   rename, setDue, setPriority, range, rangeAll, isOnTime, submittedLate, stats, dayStats,
   createdOn, cancelledOn, dueOn, doneBetween, createdBetween, forRange, hasCoverageFor, dayRows,
 };

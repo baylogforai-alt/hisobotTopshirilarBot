@@ -60,7 +60,7 @@ const readKeyboard = (annId) => ui.inline([[ui.cb("👁 O'qidim", `an:r:${annId}
 
 /** E'lon matni (oluvchi ko'radigan ko'rinish) */
 const bodyOf = (ann) =>
-  `📢 <b>E'LON</b>${ann.sender_name ? ` — <i>${ui.esc(ann.sender_name)}</i>` : ''}\n` +
+  `${ann.recurring_id ? '📆 <b>ESLATMA</b>' : "📢 <b>E'LON</b>"}${ann.sender_name ? ` — <i>${ui.esc(ann.sender_name)}</i>` : ''}\n` +
   `<i>${time.prettyDate(String(ann.created_at).slice(0, 10))} · ${time.clock(ann.created_at)}</i>` +
   (ann.text ? `\n\n${ui.esc(ann.text)}` : '');
 
@@ -77,13 +77,13 @@ const deliver = (bot, chatId, ann, extra = {}) =>
  *   content — { text, media: {type, fileId, fileName} | null }
  * Natija: { ann, delivered, failed: [hodimlar] }
  */
-const send = async (bot, sender, targets, content, { target = 'all', toGroup = false } = {}) => {
+const send = async (bot, sender, targets, content, { target = 'all', toGroup = false, recurringId = null } = {}) => {
   const media = content.media || null;
   const rows = await db.query(
-    `INSERT INTO announcements (created_by, sender_name, target, text, media_type, file_id, file_name, recipients, delivered, to_group, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10) RETURNING id`,
+    `INSERT INTO announcements (created_by, sender_name, target, text, media_type, file_id, file_name, recipients, delivered, to_group, created_at, recurring_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10, $11) RETURNING id`,
     [Number(sender.tgId), sender.name || null, target, content.text || null, media ? media.type : null, media ? media.fileId : null,
-      media ? media.fileName || null : null, targets.length, toGroup ? 1 : 0, time.stamp()],
+      media ? media.fileName || null : null, targets.length, toGroup ? 1 : 0, time.stamp(), recurringId ? Number(recurringId) : null],
   );
   const ann = await byId(rows[0].id);
   let delivered = 0;

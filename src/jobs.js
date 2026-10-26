@@ -40,6 +40,10 @@ const dailyReport = require('./handlers/dailyReport');
  *   23:50        backup          — SQLite zaxira / Postgres'da JSON eksport direktorga (backup-export)
  *   har daqiqa   task-start      — topshiriqning boshlanish soati kelganda hodimga «hozir bajaring» xabari
  *   06:00–21:30  home-location   — uy joylashuvi yo'q hudud agentlariga har 30 daqiqada eslatma
+ *   har daqiqa   recurring-run   — «📆 Davriy eslatma»: har oy / har hafta belgilangan vaqtda eslatma yoki topshiriq
+ *   17:00        recurring-ask   — davriy topshiriq: keyingisidan oldingi ish kuni hali bajarilmaganiga «bajardingizmi?» savoli
+ *   10,12…18     recurring-nag   — bajarilmagan davriy topshiriq yopilguncha: hodimga (yoki tekshiruvda — yozgan odamga)
+ *   har 5 daq    live-watch      — agent jonli joylashuvi: yoqmagan / muddati tugagan / LIVE_GAP_MIN yangilanmagan → agent va rahbar/HR
  */
 
 const logRun = (kind, detail = '') =>
@@ -184,7 +188,7 @@ const tick = async (bot, now = time.now()) => {
       const list = tgId ? tasks.visibleFor(await require('./services/access').resolve(tgId), await tasks.overdue(deptId)) : await tasks.overdue(deptId);
       if (!list.length) return null;
       return { text: `⚠️ <b>MUDDATI O'TGAN TOPSHIRIQLAR (${list.length})</b>\n\n${ui.taskList(list, { withName: true })}` };
-    }, { quiet: true });
+    }, { quiet: true, noBoss: !(await require('./services/org').bossSeesDone()) }); // 8-okt: boshliqqa — faqat «Bajardim» sozlamasi yoqilsa
     await logRun('overdue-alert', `${n} ta rahbarga`);
   }
 };
@@ -209,10 +213,39 @@ const start = (bot) => {
     if (n) await logRun('task-start', `${n} ta topshiriq`);
   });
 
+  // majlisdan 30 daqiqa oldin — qatnashchilarga eslatma, yozgan odamga holat
+  schedule('meeting-remind', '* * * * *', async () => {
+    const n = await require('./services/flows').remindMeetings(bot);
+    if (n) await logRun('meeting-remind', `${n} ta majlis`);
+  });
+
+  // 17-okt: «📆 Davriy eslatma» — har oy / har hafta belgilangan daqiqada (eslatma yoki topshiriq)
+  schedule('recurring-run', '* * * * *', async () => {
+    const n = await require('./services/flows').runRecurring(bot);
+    if (n) await logRun('recurring-run', `${n} ta davriy eslatma`);
+  });
+
+  // 19-okt: davriy topshiriq — keyingisidan 1 kun oldin «bajardingizmi?» savoli; bajarilmaganlari yopilguncha har 2 soatda eslatma
+  const rec = require('./services/recurring');
+  schedule('recurring-ask', `0 ${rec.ASK_HOUR} * * ${dow}`, async () => {
+    const n = await require('./services/flows').askRecurringTasks(bot);
+    if (n) await logRun('recurring-ask', `${n} ta savol`);
+  });
+  schedule('recurring-nag', `0 ${rec.NAG_HOURS.join(',')} * * ${dow}`, async () => {
+    const n = await require('./services/flows').nagRecurringMissed(bot);
+    if (n) await logRun('recurring-nag', `${n} ta eslatma`);
+  });
+
   // 5-okt: uy joylashuvi yo'q agentlarga — har kuni 06:00 dan har 30 daqiqada (saqlangach to'xtaydi)
   schedule('home-location', '0,30 6-21 * * *', async () => {
     const n = await require('./services/flows').remindHomeLocation(bot);
     if (n) await logRun('home-location', `${n} ta agentga`);
+  });
+
+  // 6-okt: agent jonli joylashuvi — yoqmagan / to'xtagan / yangilanmayotgan agentlar (Keldim ↔ Ketdim, ish tugashigacha)
+  schedule('live-watch', '*/5 6-21 * * *', async () => {
+    const n = await require('./services/live').watch(bot);
+    if (n) await logRun('live-watch', `${n} ta xabar`);
   });
 
   // topshiriq eslatmalari — tick ichida (remindTick): har hodim o'z jadvalida

@@ -50,13 +50,49 @@ const checkIn = async (employee, location = null, date = time.today()) => {
        checkin_note = EXCLUDED.checkin_note`,
     [
       Number(employeeId), date, stamp,
-      location ? String(location.lat) : null, location ? String(location.lon) : null,
+      location && location.lat != null ? String(location.lat) : null, location && location.lon != null ? String(location.lon) : null,
       location && location.dist != null ? String(Math.round(location.dist)) : null, late,
       (location && location.mode) || null, proof ? proof.type : null, proof ? proof.fileId : null,
       location && location.note ? String(location.note).slice(0, 300) : null,
     ],
   );
   return { already: false, late, row: await get(employeeId, date) };
+};
+
+/**
+ * 20-okt: «Keldim» lokatsiya kelishi bilan qayd etiladi, video keyin yoziladi.
+ * Shuning uchun video kelmasa ham kun «keldi» bo'lib qoladi (avval butunlay yo'qolardi).
+ */
+const attachCheckinProof = async (employeeId, date, proof) => {
+  await db.query(
+    `UPDATE attendance SET checkin_proof_type = $1, checkin_proof_file_id = $2, checkin_note = COALESCE(checkin_note, $3)
+     WHERE employee_id = $4 AND work_date = $5 AND checked_in IS NOT NULL`,
+    [proof.type, proof.fileId, proof.note || null, Number(employeeId), date],
+  );
+  return get(employeeId, date);
+};
+
+/**
+ * 20-okt: «✅ Keldi deb belgilash» — bo'lim rahbari yoki direktor o'tkazib yuborilgan kunni qo'lda qayd etadi
+ * (telefoni ishlamadi, lokatsiya ketmadi va h.k.). Kun VAQTIDA kelgan hisoblanadi (late_minutes = 0).
+ * Allaqachon kelgan kun ustiga yozilmaydi. Kim va qachon belgilagani saqlanadi.
+ */
+const markPresent = async (employee, date, { at = null, byTgId = null, note = null } = {}) => {
+  const emp = typeof employee === 'object' && employee ? employee : null;
+  const employeeId = emp ? emp.id : employee;
+  const existing = await get(employeeId, date);
+  if (existing && existing.checked_in) return { already: true, row: existing };
+  const stamp = time.stampAt(date, at || time.hhmm(startMinutesOf(emp)));
+  const mode = emp && require('./employees').isField(emp) ? 'field' : 'office';
+  await db.query(
+    `INSERT INTO attendance (employee_id, work_date, checked_in, late_minutes, checkin_mode, marked_by, marked_at, marked_note)
+     VALUES ($1, $2, $3, 0, $4, $5, $6, $7)
+     ON CONFLICT (employee_id, work_date) DO UPDATE SET
+       checked_in = EXCLUDED.checked_in, late_minutes = 0, checkin_mode = EXCLUDED.checkin_mode,
+       marked_by = EXCLUDED.marked_by, marked_at = EXCLUDED.marked_at, marked_note = EXCLUDED.marked_note`,
+    [Number(employeeId), date, stamp, mode, Number(byTgId) || null, time.stamp(), note ? String(note).slice(0, 300) : null],
+  );
+  return { already: false, row: await get(employeeId, date) };
 };
 
 /** Kechikish sababi (kelgandan keyin). proof — video/audio/rasm isboti (ixtiyoriy) */
@@ -113,6 +149,22 @@ const workingNow = (date = time.today()) =>
   );
 
 const isCheckedIn = async (employeeId, date = time.today()) => Boolean((await get(employeeId, date) || {}).checked_in);
+/** «📵 Joylashuv yubora olmayman» bilan qilingan Keldim belgisi */
+const markNoLocation = (rowId) => db.query('UPDATE attendance SET checkin_noloc = 1 WHERE id = $1', [Number(rowId)]);
+/** «📵 Jonli joylashuv ishlamayapti» — bugun jonli joylashuv talab qilinmaydi (bir marta) */
+const markLiveExcused = async (rowId, reason) =>
+  (await db.query('UPDATE attendance SET live_excused_at = $1, live_excuse = $2 WHERE id = $3 AND live_excused_at IS NULL RETURNING id', [time.stamp(), String(reason).slice(0, 300), Number(rowId)])).length > 0;
+
+/**
+ * 7-okt: bugun bot/ilova yopiqmi — ish kuni, hodim (boshliq emas) hali «Keldim» qilmagan va sabab ham aytmagan
+ * («Kech qolaman» yoki «Kelmayman» — kutilmoqda/tasdiqlangan). Rad etilgan «Kelmayman» — sabab emas.
+ */
+const needsCheckIn = async (emp, date = time.today()) => {
+  if (!config.checkinRequired || !emp || require('./employees').isBoss(emp) || !time.isWorkDay(date)) return false;
+  const row = await get(emp.id, date);
+  return !(row && (row.checked_in || row.late_notice_at || ['pending', 'approved'].includes(row.excuse_status)));
+};
+
 const isCheckedOut = async (employeeId, date = time.today()) => Boolean((await get(employeeId, date) || {}).checked_out);
 
 // ---------------------------------------------------------------------------
@@ -282,7 +334,7 @@ const excuseLate = async (attId, byTgId) => {
 
 module.exports = {
   excuseLate, lateForgiven,
-  get, byId, startMinutesOf, lateMinutesOf, checkIn, setLateReason, lateNotice, checkOut, setIntent, workingNow, isCheckedIn, isCheckedOut,
+  get, byId, startMinutesOf, lateMinutesOf, checkIn, attachCheckinProof, markPresent, setLateReason, lateNotice, checkOut, setIntent, workingNow, isCheckedIn, isCheckedOut, markNoLocation, markLiveExcused, needsCheckIn,
   requestExcuse, decideExcuse, pendingExcuses, presentToday, absentToday, lateToday, range, workedMinutes,
   dayStatus, stats, noticedInTime,
 };

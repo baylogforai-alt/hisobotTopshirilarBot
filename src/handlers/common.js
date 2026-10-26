@@ -11,6 +11,7 @@ const activity = require('../services/activity');
 const access = require('../services/access');
 const webapp = require('../services/webapp');
 const db = require('../db');
+const { splitText } = require('../render');
 
 const { esc } = ui;
 
@@ -95,6 +96,7 @@ const HELP_EMPLOYEE = `
 0️⃣ Har oyning 1-kuni «yangi ish oyi» xabari keladi — «✅ Tanishdim» ni bosing${config.monthStartRequired ? ' (shundan keyin «' + ui.BTN.checkIn + '» ochiladi)' : ''}.
 1️⃣ Ishga kelganingizda — <b>«${ui.BTN.checkIn}»</b> → joylashuvni yuborasiz${config.officeCheckinVideo ? ' → <b>video</b>' : ''} (ofis radiusida; hudud agenti — uyidan ${(config.fieldMinDistanceM / 1000).toLocaleString('uz')} km dan uzoqda). Kechiksangiz sabab so'raladi.
 📍 Hudud agenti borgan joyida — «${ui.BTN.visit}» → joylashuv → video yoki audio → izoh.
+📡 Hudud agenti «${ui.BTN.checkIn}» dan keyin <b>jonli joylashuvni</b> yoqadi: 📎 → Joylashuv → «Jonli joylashuvni ulashish» → «Men o'chirgunimcha». O'chirsangiz — rahbar va HR ga xabar boradi. «Joylashuv» ko'rinmasa — 📎 dan keyin pastki qatorni chapga suring yoki Telegram'ni yangilang. Telegram yopiq turganda ham borishi uchun: iPhone — Sozlamalar → Telegram → Joylashuv → «Har doim»; Android — joylashuv «Har doim», batareya «Cheklovsiz».
 2️⃣ Topshiriqlaringiz «${ui.BTN.myTasks}» da. Boshliq yangi topshiriq bersa (matn, 🎤 ovoz, 🎥 video yoki 📄 fayl) — xabar keladi, <b>«✅ Eshitdim, tushundim»</b> ni bosing (yoki «tushundim» deb yozing).
 3️⃣ Ishni tugatsangiz — <b>«${ui.BTN.done}»</b> → ro'yxatdan tanlang → isbot: rasm, video, audio yoki fayl (PDF, Excel, Word…). Boshliq tekshirib qabul qiladi yoki kamchilik yozib qaytaradi. «Bajardim» — faqat «${ui.BTN.checkIn}» dan keyin.
 4️⃣ O'zingizga reja yozish — «${ui.BTN.selfTask}» (har birini yangi qatorda; boshiga <b>!</b> — muhim). Kun ichida paydo bo'lgan ish: <code>/bugun matn</code>.
@@ -104,7 +106,9 @@ const HELP_EMPLOYEE = `
 
 ⏰ Kech qolsangiz — «${ui.BTN.late}» → sababini yozing yoki video/audio yuboring. Ish boshlanishidan kamida ${config.lateNoticeMinBefore} daqiqa oldin aytsangiz — kechikish hisoblanmaydi.
 🙋 Kela olmasangiz — «${ui.BTN.absence}» → sabab (matn, video, audio yoki rasm). Rahbar yoki boshliq tasdiqlasa kun sababli hisoblanadi.
+🚪 Ish vaqtida chiqib kelish yoki ertaroq ketish kerak bo'lsa — «${ui.BTN.leave}» → qancha vaqtga → sabab. Bo'lim rahbari yoki boshliq ruxsat beradi; ruxsat bilan ketsangiz «erta ketdi» deb yozilmaydi.
 ↩️ Ishingiz kamchilik bilan qaytarilsa — «👌 Xo'p, tushundim» yoki «💬 O'z javobim» (matn, ovoz, video, rasm, fayl) bilan javob qaytarasiz.
+🗓 Majlisga chaqirilsangiz — xabardagi «✅ Boraman», «⏰ Kech qolaman» yoki «🙋 Kelmayman» ni bosing. Kech qolsangiz yoki kelmasangiz — <b>sababini yozish shart</b> (matn, ovoz yoki video). Majlisdan 30 daqiqa oldin bot eslatadi. /majlis — kelayotgan majlislaringiz.
 ⏰ Topshiriqqa boshlanish soati qo'yilgan bo'lsa — aynan o'sha soatda «hozir bajaring» xabari keladi.
 🔴 Muddati o'tgan topshiriqlar qizil belgi bilan ko'rinadi va KPI ga ta'sir qiladi. Bajarilmagan ish yo'qolmaydi — ertangi ro'yxatda turadi.
 📊 «${ui.BTN.myReport}» — shu oydagi natijalaringiz va KPI. /excel — hisobotingiz Excel faylda.
@@ -125,10 +129,15 @@ const HELP_MANAGER = `
 ☑️ «Bir nechta / hammaga» — bir xil topshiriqni belgilangan hodimlarning har biriga. HR va direktor boshliqqa ham topshiriq bera oladi (u bajarganda isbot ixtiyoriy).
 🔎 «${ui.BTN.review}» — «Bajardim» deganlarni qabul qilish / qaytarish. HR: «Bajardim» xabarlari o'ziga kelsinmi — shu yerdagi tugma bilan (/bajardim_xabar).
 📢 «${ui.BTN.announce}» — e'lon (masalan «bugun majlis»): rahbar — o'z bo'limiga, HR va direktor — hammaga / bo'limlarga / tanlanganlarga.
+🗓 «${ui.BTN.meeting}» (/majlis; boshliq va HR) — kimga → sana → soat → mavzu. Hodimlar «Boraman / Kech qolaman / Kelmayman» bosadi (sabab majburiy) — sabablar sizga, boshliq va HR ga keladi; 30 daqiqa oldin eslatma.
+📆 «${ui.BTN.recurring}» (/davriy; boshliq va HR) — hodim(lar)ga <b>har oy</b> (masalan 5-kuni 10:00) yoki <b>har hafta</b> (masalan har juma 16:00) avtomatik: 📨 eslatma («👀 Tanishdim») yoki 📌 topshiriq (har safar yangi, muddat bilan). «📜 Davriy eslatmalarim» — to'xtatish / bekor qilish.
+⚠️ «${ui.BTN.warn}» (/ogohlantirish) — intizom ogohlantirishi: hodimni tanlang → matn yoki 🎙 ovoz. Hodim «👀 Tanishdim» bosadi, yozuv bazada qoladi; 2-ogohlantirishdan boshlab boshliqqa ham xabar boradi. Rahbar — o'z bo'limiga, HR va direktor — hammaga.
+✅ «Keldi deb belgilash» (hodim kartochkasida) — hodim kelgan, lekin lokatsiya/video ketmagan kunni qo'lda to'g'rilash: sana → soat → izoh. Kun <b>vaqtida kelgan</b> bo'lib hisoblanadi.
 ⭐ «${ui.BTN.score}» — oy oxirida bo'lim hodimlarini 1–10 baholash (KPI ga kiradi).
 🏢 «${ui.BTN.myDept}» — bo'lim holati (bugun va oy).
 📝 Hodimlarning kunlik hisobotlari sizga shaxsiy keladi — «Ko'rdim» yoki izoh qoldirasiz.
-/topshiriq · /tekshiruv · /bolim · /baholash
+📡 «${ui.BTN.agents}» — hudud agentlari hozir qayerda (jonli joylashuv), bugungi yo'li va to'xtashlari; ilovada — xaritada. Agent o'chirsa yoki ${config.liveGapMin} daqiqa yangilanmasa — xabar keladi.
+/topshiriq · /tekshiruv · /bolim · /baholash · /agentlar · /ogohlantirish
 `.trim();
 
 const HELP_ADMIN = `
@@ -143,9 +152,10 @@ const HELP_ADMIN = `
 🗂 «${ui.BTN.archive}» — hodimlar arxivi: kun daftari, harakatlar tarixi, 7/30 kunlik, Excel.
 💵 Panel → «Oyliklar» (/oyliklar) — hamma hodimning okladi va KPI summasi, bosib yoziladi.
 📅 /chaqirish (Panel → «Dam olish kuniga chaqirish») — dam olish kuni ishlatish, qo'shimcha haq bilan.
-🎬 /yordam_video — /yordam uchun video qo'llanma yuklash.
+🎬 /yordam_video — /yordam uchun video qo'llanmalar: hodimlar, agentlar, rahbar/HR/nazoratchi va boshliq uchun alohida.
+🪪 /beyjik — agent «Hududga keldim» bosganda boradigan beyjik eslatmasining ovozli xabari: yozish, eshitish, o'zgartirish.
 Hodim kartochkasida: filial, ish turi (ofis/hudud), ish boshlanishi va tugashi, video, oklad, KPI summasi, HR belgisi, davomat nazorati, topshiriqlari.
-/panel · /elon · /jurnal · /kpi · /hisobotlar · /arxiv · /davr · /oraliq · /jamoa_excel · /hodim_qosh · /hodimlarim · /oyliklar · /chaqirish · /ish_vaqti · /nomlar · /filiallar · /tashriflar · /ofis · /holat · /guruh_ulash · /arxiv_ulash (guruh ichida)
+/panel · /elon · /majlis · /davriy · /ogohlantirish · /jurnal · /kpi · /hisobotlar · /arxiv · /davr · /oraliq · /jamoa_excel · /hodim_qosh · /hodimlarim · /oyliklar · /chaqirish · /ish_vaqti · /nomlar · /filiallar · /tashriflar · /agentlar · /ofis · /holat · /guruh_ulash · /arxiv_ulash (guruh ichida)
 `.trim();
 
 const WEBAPP_HINT =
@@ -217,6 +227,10 @@ const register = (bot) => {
   bot.use(groupGuard);
   bot.use(menuResetsStep);
   bot.use(trackUsage);
+  // jonli joylashuvi o'chiq agent — boshqa hech narsa ishlamaydi (7-okt)
+  bot.use((ctx, next) => require('./live').guard(ctx, next));
+  // ish kunida «Keldim» (yoki sabab) qilmagan hodim — boshqa hech narsa ishlamaydi (7-okt)
+  bot.use((ctx, next) => require('./attendance').guard(ctx, next));
 
   bot.command('id', (ctx) => ctx.reply(`🆔 Telegram ID: <code>${ctx.from.id}</code>\n💬 Chat ID: <code>${ctx.chat.id}</code>`, { parse_mode: 'HTML' }));
 
@@ -267,47 +281,117 @@ const register = (bot) => {
   bot.command(['yordam', 'help'], async (ctx) => {
     if (!ctx.state.employee && !ctx.state.isAdmin) return notRegistered(ctx);
     activity.mark(ctx, 'help');
-    // video qo'llanma (boshliq /yordam_video bilan yuklaydi) — avval video, keyin matn
-    const video = await helpVideo();
+    // 5-okt: video qo'llanma — avval video, keyin matn; 8-okt: har rol o'z videosini ko'radi (/yordam_video)
+    const video = await helpVideo(helpRoleOf(ctx));
     if (video) await notify.sendProof({ telegram: ctx.telegram }, ctx.chat.id, video, "🎬 <b>Botdan foydalanish — video qo'llanma</b>");
-    return ctx.reply(helpText(ctx), { parse_mode: 'HTML' });
+    // 8-okt: direktor uchun matn 4096 dan oshadi («message is too long») — bo'limlarga ajratib yuboriladi
+    const parts = [HELP_EMPLOYEE, ctx.state.isManager ? HELP_MANAGER : '', ctx.state.isAdmin ? HELP_ADMIN : ''].filter((p) => p.trim());
+    for (const part of parts) for (const chunk of splitText(part.trim())) await ctx.reply(chunk, { parse_mode: 'HTML' });
+    return undefined;
   });
 
-  // /yordam_video — boshliq/direktor qo'llanma videosini yuklaydi (keyingi yuborilgan video); «/yordam_video ochir» — olib tashlaydi
+  // /yordam_video — boshliq/direktor har rol uchun qo'llanma videosini yuklaydi (hv:*)
   bot.command('yordam_video', async (ctx) => {
     if (!ctx.state.isAdmin) return ctx.reply("⛔️ Faqat boshliq/direktor uchun.");
     if (/ochir|o'chir|olib/i.test(String(ctx.message.text || ''))) {
-      await db.setSetting(HELP_VIDEO_KEY, '');
-      return ctx.reply("🗑 /yordam videosi olib tashlandi.", ui.kbFor(ctx));
+      for (const r of [...Object.keys(HELP_ROLES), '']) await db.setSetting(helpKey(r), '');
+      return ctx.reply("🗑 /yordam videolari olib tashlandi (hamma rol).", ui.kbFor(ctx));
     }
-    session.set(ctx.from.id, { step: 'help_video' });
+    return ctx.reply(...(await helpVideoMenu()));
+  });
+  bot.action('hv:menu', async (ctx) => {
+    if (!ctx.state.isAdmin) return ctx.answerCbQuery('⛔️');
+    await ctx.answerCbQuery().catch(() => {});
+    return ctx.editMessageText(...(await helpVideoMenu())).catch(() => {});
+  });
+  bot.action(/^hv:(set|see|del):(\w+)$/, async (ctx) => {
+    if (!ctx.state.isAdmin) return ctx.answerCbQuery('⛔️');
+    const [, act, role] = ctx.match;
+    if (!HELP_ROLES[role]) return ctx.answerCbQuery();
+    await ctx.answerCbQuery().catch(() => {});
+    if (act === 'see') {
+      const v = await helpVideo(role, { own: true });
+      if (!v) return ctx.reply("Bu rol uchun video hali yuklanmagan.");
+      return notify.sendProof({ telegram: ctx.telegram }, ctx.chat.id, v, `🎬 <b>${HELP_ROLES[role]}</b> — /yordam videosi`);
+    }
+    if (act === 'del') {
+      await db.setSetting(helpKey(role), '');
+      return ctx.editMessageText(...(await helpVideoMenu(`🗑 «${HELP_ROLES[role]}» videosi olib tashlandi.`))).catch(() => {});
+    }
+    session.set(ctx.from.id, { step: 'help_video', helpRole: role });
     return ctx.reply(
-      `🎬 <b>/yordam uchun video qo'llanma</b>\n\nVideoni shu yerga yuboring (oddiy video yoki fayl). Hodimlar /yordam bosganda avval shu video chiqadi.${(await helpVideo()) ? '\n<i>Hozir video bor — yangisi uning o\'rniga qo\'yiladi. Olib tashlash: /yordam_video ochir</i>' : ''}`,
+      `🎬 <b>${HELP_ROLES[role]}</b> uchun video qo'llanma\n\nVideoni shu yerga yuboring (oddiy video yoki fayl). ${HELP_ROLE_HINT[role]} /yordam bosganda avval shu video chiqadi.` +
+        ((await helpVideo(role, { own: true })) ? "\n<i>Hozir video bor — yangisi uning o'rniga qo'yiladi.</i>" : ''),
       { parse_mode: 'HTML', ...ui.cancelKeyboard() },
     );
   });
   bot.on(['video', 'video_note', 'animation', 'document'], async (ctx, next) => {
-    if (ctx.chat.type !== 'private' || session.get(ctx.from.id).step !== 'help_video') return next();
+    const st = ctx.chat.type === 'private' ? session.get(ctx.from.id) : {};
+    if (st.step !== 'help_video') return next();
     if (!ctx.state.isAdmin) { session.clear(ctx.from.id); return next(); }
     const m = ctx.message;
     const media = m.video ? { type: 'video', fileId: m.video.file_id }
       : m.video_note ? { type: 'video_note', fileId: m.video_note.file_id }
         : m.animation ? { type: 'video', fileId: m.animation.file_id }
           : { type: 'document', fileId: m.document.file_id };
+    const role = HELP_ROLES[st.helpRole] ? st.helpRole : 'employee';
     session.clear(ctx.from.id);
-    await db.setSetting(HELP_VIDEO_KEY, JSON.stringify(media));
-    return ctx.reply("✅ Video saqlandi. Endi /yordam bosilganda avval shu video chiqadi.", ui.kbFor(ctx));
+    await db.setSetting(helpKey(role), JSON.stringify(media));
+    await ctx.reply(`✅ Video saqlandi: <b>${HELP_ROLES[role]}</b>. ${HELP_ROLE_HINT[role]} /yordam bosganda avval shu video chiqadi.`, { parse_mode: 'HTML', ...ui.kbFor(ctx) });
+    return ctx.reply(...(await helpVideoMenu()));
   });
 };
 
-const HELP_VIDEO_KEY = 'help_video';
-/** /yordam video qo'llanmasi {type, fileId} yoki null */
-const helpVideo = async () => {
+/** /yordam videolari — har rolga alohida (8-okt). Kalit: help_video_<rol>; eski umumiy 'help_video' — zaxira */
+const HELP_ROLES = {
+  employee: '👤 Hodimlar (ofis)',
+  agent: '🚶 Agentlar (hudud)',
+  staff: '👥 Rahbar, HR va nazoratchi',
+  boss: '👑 Boshliq',
+};
+const HELP_ROLE_HINT = {
+  employee: 'Ofis hodimlari',
+  agent: 'Hudud agentlari',
+  staff: "Bo'lim rahbarlari, HR va davomat nazoratchisi",
+  boss: 'Boshliq va direktorlar',
+};
+const helpKey = (role) => (role ? `help_video_${role}` : 'help_video');
+/** Kim qaysi videoni ko'radi: boshliq/direktor → boss; rahbar/HR/nazoratchi → staff; agent → agent; qolgan → employee */
+const helpRoleOf = (ctx) => {
+  const emp = ctx.state.employee;
+  if (ctx.state.isAdmin) return 'boss';
+  if (ctx.state.isHead || ctx.state.isHr || employees.isViewer(emp)) return 'staff';
+  if (employees.isField(emp)) return 'agent';
+  return 'employee';
+};
+const readVideo = async (key) => {
   try {
-    const raw = await db.getSetting(HELP_VIDEO_KEY);
+    const raw = await db.getSetting(key);
     const v = raw ? JSON.parse(raw) : null;
     return v && v.fileId ? v : null;
   } catch { return null; }
+};
+/** /yordam video qo'llanmasi {type, fileId} yoki null; rol videosi bo'lmasa — eski umumiy video (own — faqat rolniki) */
+const helpVideo = async (role = 'employee', { own = false } = {}) =>
+  (await readVideo(helpKey(role))) || (own ? null : readVideo(helpKey('')));
+
+const helpVideoMenu = async (head = '') => {
+  const rows = [];
+  const lines = [];
+  for (const [role, label] of Object.entries(HELP_ROLES)) {
+    const has = Boolean(await helpVideo(role, { own: true }));
+    lines.push(`${has ? '✅' : '▫️'} ${label}`);
+    rows.push([ui.cb(`${has ? '🔄' : '⬆️'} ${label}`, `hv:set:${role}`)]);
+    if (has) rows.push([ui.cb('👁 Ko\'rish', `hv:see:${role}`), ui.cb('🗑 Olib tashlash', `hv:del:${role}`)]);
+  }
+  const legacy = Boolean(await readVideo(helpKey('')));
+  return [
+    (head ? `${head}\n\n` : '') +
+      `🎬 <b>/yordam video qo'llanmalari</b>\n\nHar kim /yordam bosganda o'z roliga mos video chiqadi:\n${lines.join('\n')}` +
+      (legacy ? "\n\n<i>Eski umumiy video ham bor — videosi yuklanmagan rollarga shu chiqadi.</i>" : '') +
+      '\n\nQaysi rolga video yuklaysiz?',
+    { parse_mode: 'HTML', ...ui.inline(rows) },
+  ];
 };
 
 module.exports = { register, attachEmployee, trackUsage, notRegistered, helpText, helpVideo };

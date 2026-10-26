@@ -24,7 +24,10 @@ const office = require('../services/office');
 const org = require('../services/org');
 const excel = require('../services/excel');
 const announcements = require('../services/announcements');
+const meetings = require('../services/meetings');
 const chats = require('../services/chats');
+const live = require('../services/live');
+const visits = require('../services/visits');
 
 /**
  * WEB APP API. Har bir handler: ({ actor, params, query, body, bot, res }) → JSON.
@@ -170,6 +173,11 @@ const taskOut = (t) => {
   };
 };
 
+const leaveOut = async (l) => (l ? {
+  id: Number(l.id), kind: l.kind, label: require('../services/leaves').kindLabel(l.kind), status: l.status,
+  by: l.decided_name || null, until: require('../services/leaves').untilOf(l), reason: l.reason,
+} : null);
+
 const todayOf = async (e) => {
   const today = time.today();
   const row = await attendance.get(e.id, today);
@@ -184,6 +192,8 @@ const todayOf = async (e) => {
     lateNotice: Boolean(row && row.late_notice_at),
     lateReason: row && row.late_reason ? row.late_reason : null,
     excuse: row && row.excuse_status ? row.excuse_status : null,
+    noLocation: Boolean(row && Number(row.checkin_noloc)),
+    leave: await leaveOut(await require('../services/leaves').latest(e.id, today)),
   };
 };
 
@@ -290,6 +300,7 @@ route('GET', '/api/me', async ({ actor }) => {
     roles: {
       isAdmin: actor.isAdmin, isHead: actor.isHead, isHr: actor.isHr, isManager: actor.isManager, isViewer: actor.isViewer, seeAll: actor.seeAll,
       isBoss: employees.isBoss(emp),
+      canLive: access.canUseLive(actor),
     },
     employee: emp ? empOut(emp, { money: true }) : null,
     doneNotify: actor.isHr ? employees.wantsDoneNotify(emp) : null,
@@ -304,6 +315,9 @@ route('GET', '/api/me', async ({ actor }) => {
     if (!employees.isBoss(emp)) out.attendance = await todayOf(emp);
     out.monthConfirmed = employees.isBoss(emp) || !config.monthStartRequired || (await months.isConfirmed(emp.id));
     out.workStart = emp.work_start || worktime.get();
+    out.liveOff = await live.offFor(emp);
+    out.needCheckIn = await attendance.needsCheckIn(emp);
+    out.meetings = (await meetings.upcomingFor(emp.id)).map(meetOut);
   }
   if (emp || actor.isAdmin) {
     // «⏳ Faol · 🕓 Kutilmoqda · ✅ Bajarilgan» plitkalari: hodim — o'ziniki, rahbar — bo'limi, boshliq/HR — hamma
@@ -312,14 +326,14 @@ route('GET', '/api/me', async ({ actor }) => {
     out.counts.status = st;
   }
   if (actor.isManager) {
-    const list = tasks.visibleFor(actor, await tasks.pendingReview(actor.seeAll ? null : emp && emp.department_id));
+    const list = access.ownGivenForAdmin(actor, tasks.visibleFor(actor, await tasks.pendingReview(actor.seeAll ? null : emp && emp.department_id)));
     let n = 0;
     for (const t of list) if (access.canReview(actor, await employees.byId(t.employee_id))) n += 1;
     out.counts.review = n;
   }
   if (actor.isManager || actor.isHr) {
     let n = 0;
-    for (const r of await attendance.pendingExcuses()) if (access.canDecideExcuse(actor, await employees.byId(r.employee_id))) n += 1;
+    for (const r of await attendance.pendingExcuses()) if (await access.canDecideExcuse(actor, await employees.byId(r.employee_id))) n += 1;
     out.counts.excuses = n;
   }
   if (actor.isAdmin) {
@@ -588,6 +602,95 @@ route('POST', '/api/announce/:id/resend', async ({ actor, params, bot }) => {
 });
 
 // ===========================================================================
+// «🗓 MAJLIS» — boshliq/direktor va HR yozadi; hodim javob beradi (kech qolaman / kelmayman — sabab majburiy)
+// ===========================================================================
+const canMeet = (actor) => Boolean(actor.isAdmin || actor.isHr);
+const meetOut = (m) => ({
+  id: Number(m.id), from: m.sender_name || null, text: m.body || null, mediaType: m.media_type || null, date: m.meet_date, time: m.meet_time,
+  target: m.target || null, cancelled: Boolean(m.cancelled_at),
+  answer: m.answer || null, reason: m.reason || null,
+  ...(m.total !== undefined ? { total: m.total, yes: m.yes, late: m.late, no: m.no, none: m.none } : {}),
+});
+const loadMeeting = async (meetId) => {
+  const m = await meetings.byId(id(meetId));
+  if (!m) notFound('Majlis topilmadi');
+  return m;
+};
+
+route('GET', '/api/meetings', async ({ actor }) => {
+  need(canMeet(actor), 'Majlis — faqat boshliq va HR uchun');
+  return { items: (await meetings.list({ limit: 30, senderTg: actor.isAdmin && config.bossOwnLists ? actor.tgId : null })).map(meetOut) };
+});
+
+/** { to: 'all' | 'depts' | 'emps', ids?, date: 'yyyy-MM-dd', time: 'HH:mm', text } */
+route('POST', '/api/meetings', async ({ actor, body, bot }) => {
+  need(canMeet(actor), 'Majlis — faqat boshliq va HR uchun');
+  const msg = text(body.text, 2000, { name: 'Majlis mavzusi' });
+  const date = String(body.date || '');
+  if (!time.isValidDate(date) || date < time.today()) bad("Sana noto'g'ri");
+  const hhmm = tasks.normTime(body.time);
+  if (!hhmm) bad("Soat noto'g'ri (masalan 14:30)");
+  if (tasks.startPassed(date, hhmm)) bad("Bu vaqt o'tib ketgan");
+  const list = await managedList(actor);
+  let targets;
+  let label;
+  if (body.to === 'all') {
+    targets = list;
+    label = 'Hammaga';
+  } else if (body.to === 'depts' || body.to === 'emps') {
+    if (!Array.isArray(body.ids) || !body.ids.length || body.ids.length > 200) bad('Kamida bittasini tanlang');
+    const ids = new Set(body.ids.map((v) => id(v)));
+    if (body.to === 'depts') {
+      targets = list.filter((e) => ids.has(Number(e.department_id)));
+      const names = (await departments.listActive()).filter((d) => ids.has(Number(d.id))).map((d) => d.name);
+      label = `Bo'lim${names.length > 1 ? 'lar' : ''}: ${names.join(', ')}`;
+    } else {
+      targets = list.filter((e) => ids.has(Number(e.id)));
+      if (targets.length !== ids.size) deny("Ba'zi hodimlarni chaqira olmaysiz");
+      label = targets.length === 1 ? targets[0].full_name : `Tanlanganlar: ${targets.map((e) => e.full_name).join(', ')}`.slice(0, 300);
+    }
+  } else bad("Kimga — noto'g'ri");
+  if (!targets.length) bad("Qatnashchi yo'q");
+  const r = await flows.sendMeeting(bot, actor, targets, { body: msg, date, hhmm, target: label });
+  return { id: Number(r.meeting.id), total: r.total, delivered: r.delivered, target: label };
+});
+
+route('GET', '/api/meetings/:id', async ({ actor, params }) => {
+  need(canMeet(actor), 'Majlis — faqat boshliq va HR uchun');
+  const m = await loadMeeting(params.id);
+  const members = (await meetings.members(m.id)).map((r) => ({
+    empId: Number(r.employee_id), name: r.full_name, delivered: Number(r.delivered) === 1, answer: r.answer || null, reason: r.reason || null,
+    proof: r.proof_type || null, at: r.answered_at || null,
+  }));
+  return { meeting: meetOut({ ...m, ...(await meetings.counts(m.id)) }), members, over: meetings.isOver(m) };
+});
+
+route('POST', '/api/meetings/:id/resend', async ({ actor, params, bot }) => {
+  need(canMeet(actor), 'Majlis — faqat boshliq va HR uchun');
+  const m = await loadMeeting(params.id);
+  if (m.cancelled_at || meetings.isOver(m)) bad('Majlis tugagan yoki bekor qilingan');
+  return { sent: await flows.resendMeeting(bot, m) };
+});
+
+route('POST', '/api/meetings/:id/cancel', async ({ actor, params, bot }) => {
+  need(canMeet(actor), 'Majlis — faqat boshliq va HR uchun');
+  const m = await loadMeeting(params.id);
+  if (!(await flows.cancelMeeting(bot, m, actor))) bad('Allaqachon bekor qilingan');
+  return { ok: true };
+});
+
+/** Hodim javobi: { answer: 'yes'|'late'|'no', reason } — kech qolaman / kelmayman: sabab majburiy (ovoz/video — botda) */
+route('POST', '/api/meetings/:id/answer', async ({ actor, params, body, bot }) => {
+  need(actor.employee, 'Faqat hodimlar uchun');
+  const m = await loadMeeting(params.id);
+  if (!meetings.ANSWERS.includes(body.answer)) bad("Javob noto'g'ri");
+  const reason = body.answer === 'yes' ? null : text(body.reason, 300, { name: 'Sabab' });
+  const r = await flows.answerMeeting(bot, actor.employee, m, body.answer, { reason });
+  if (!r.ok) bad(r.error);
+  return { ok: true };
+});
+
+// ===========================================================================
 // «💬 SAVOL-JAVOB» — bitta odam, bir nechta, bo'lim(lar), hamma bilan (access.chatCandidates)
 // ===========================================================================
 const loadChat = async (actor, chatId) => {
@@ -769,7 +872,7 @@ route('POST', '/api/me/done-notify', async ({ actor, body }) => {
 
 route('GET', '/api/review', async ({ actor }) => {
   need(actor.isManager, 'Faqat rahbar va direktor uchun');
-  const list = tasks.visibleFor(actor, await tasks.pendingReview(actor.seeAll ? null : actor.employee && actor.employee.department_id));
+  const list = access.ownGivenForAdmin(actor, tasks.visibleFor(actor, await tasks.pendingReview(actor.seeAll ? null : actor.employee && actor.employee.department_id)));
   const out = [];
   for (const t of list) if (access.canReview(actor, await employees.byId(t.employee_id))) out.push(taskOut(t));
   return { tasks: out };
@@ -875,6 +978,18 @@ route('POST', '/api/att/absence', async ({ actor, body, bot }) => {
   return { recipients: await org.recipientsLabel(emp), auto };
 });
 
+route('POST', '/api/att/leave', async ({ actor, body, bot }) => {
+  const emp = mustStaff(actor);
+  const leaves = require('../services/leaves');
+  const block = await require('../handlers/leave').blockReason(emp);
+  if (block) bad(block.replace(/<[^>]+>/g, ''));
+  const kind = String(body.kind || '');
+  if (!leaves.isKind(kind)) bad("Qancha vaqtga — 60, 120, 180 yoki day");
+  const reason = text(body.reason, 300, { name: 'Sabab' });
+  const { row } = await flows.requestLeave(bot, emp, kind, reason);
+  return { id: Number(row.id), recipients: await org.recipientsLabel(emp, { approvers: true }) };
+});
+
 route('POST', '/api/att/checkout', async ({ actor, bot }) => {
   const emp = mustStaff(actor);
   if (!(await attendance.isCheckedIn(emp.id))) bad("Bugun «Keldim» qilmagansiz");
@@ -904,6 +1019,7 @@ route('GET', '/api/employees', async ({ actor, query }) => {
   else if (actor.seeAll) list = await employees.listActive();
   else list = await employees.teamOf(actor.employee);
   const { from, to } = time.monthRange(time.month());
+  const work = await tasks.summaryFor(actor, list.filter((e) => Number(e.active)).map((e) => e.id));
   const out = [];
   for (const e of list) {
     const item = { ...empOut(e, { money }) };
@@ -912,6 +1028,9 @@ route('GET', '/api/employees', async ({ actor, query }) => {
       item.today = (await todayOf(e)).status;
       item.attPct = (await attendance.stats(e, from, to)).pct;
       item.openTasks = (await tasks.openFor(e.id)).length;
+      // 9-okt: jamoa ro'yxatida vazifalar holati (faol · kechikkan · tekshiruvda · shu oy bajarilgan)
+      const w = work.get(Number(e.id));
+      item.work = { active: w.active, late: w.late, review: w.review, done: w.done };
     }
     out.push(item);
   }
@@ -938,14 +1057,31 @@ route('GET', '/api/employees/:id', async ({ actor, params }) => {
     open: tasks.visibleFor(actor, await tasks.openFor(e.id)).map(taskOut),
     awaiting: tasks.visibleFor(actor, await tasks.awaitingReviewFor(e.id)).map(taskOut),
     directions: (await directions.ofEmployee(e.id)).map((r) => ({ id: Number(r.id), name: r.name, icon: r.icon || '🧭' })),
+    // 7-okt: boshliq — rahbar / HR BERGAN topshiriqlar (xabar bormaydi, shu yerdan ko'riladi)
+    given: actor.isAdmin && (e.role !== 'employee' || employees.isHr(e))
+      ? tasks.visibleFor(actor, await tasks.givenBy(e.tg_id)).map((t) => ({ ...taskOut(t), kind: t.status_kind }))
+      : null,
     remind: { times: e.remind_times ? reminders.listOf(e.remind_times) : null, pending: e.remind_pending ? reminders.listOf(e.remind_pending) : null },
     can: {
       edit: actor.isAdmin,
       assign: actor.isManager && !self && employees.canManage(actor.employee, actor.isAdmin, e),
       viewer: actor.seeAll,
       directions: actor.seeAll,
+      setHome: access.canSetHome(actor, e),
     },
+    home: access.canSetHome(actor, e) ? employees.homeOf(e) : null,
   };
+});
+
+/** Agentning uy joyi — direktor / o'z bo'limi rahbari: { lat, lon } yoki { text } (Yandex / Google Maps havolasi / «40.99, 71.64») */
+route('POST', '/api/employees/:id/home', async ({ actor, params, body, bot }) => {
+  const e = await loadEmp(params.id);
+  need(access.canSetHome(actor, e), "Faqat direktor va o'z bo'limi rahbari (hudud agenti uchun)");
+  const c = body.text != null ? flows.parseCoords(text(body.text, 500, { name: 'Joylashuv' }))
+    : (Number.isFinite(Number(body.lat)) && Number.isFinite(Number(body.lon)) ? flows.parseCoords(`${Number(body.lat).toFixed(6)},${Number(body.lon).toFixed(6)}`) : null);
+  if (!c) bad("Koordinata topilmadi — «40.990204, 71.646206» yoki Yandex / Google Maps havolasi");
+  await flows.setHomeBy(bot, actor, e, c.lat, c.lon);
+  return { ok: true, home: c };
 });
 
 const ROLE_NEW = ['employee', 'head', 'hr', 'admin'];
@@ -982,7 +1118,7 @@ route('PATCH', '/api/employees/:id', async ({ actor, params, body, bot }) => {
   const e = await loadEmp(params.id);
   const keys = Object.keys(body);
   if (!keys.length) bad("O'zgarish yo'q");
-  if (!actor.isAdmin) need(actor.isHr && keys.every((k) => k === 'isViewer'), 'Faqat direktor');
+  if (!actor.isAdmin) need(actor.isHr && keys.every((k) => ['isViewer', 'salary', 'bonusFund'].includes(k)), 'Faqat direktor');
   const self = actor.employee && Number(actor.employee.id) === Number(e.id);
   if (self && (keys.includes('role') || keys.includes('active'))) bad("O'zingizning rolingiz va holatingizni o'zgartira olmaysiz");
   const ALLOWED = ['name', 'position', 'departmentId', 'branchId', 'role', 'isHr', 'isViewer', 'flexible', 'workMode', 'videoRequired', 'salary', 'bonusFund', 'workStart', 'workEnd', 'active'];
@@ -1064,6 +1200,28 @@ route('POST', '/api/employees/:id/excuse', async ({ actor, params, body, bot }) 
   if (!time.isValidDate(body.date)) bad("Sana noto'g'ri");
   await flows.markExcused(bot, e, body.date, actor.tgId, text(body.reason, 300, { required: false, name: 'Sabab' }));
   return { ok: true };
+});
+
+/**
+ * 20-okt: «✅ Keldi deb belgilash» — o'tkazib yuborilgan kunni bo'lim rahbari yoki direktor qo'lda qayd etadi.
+ * { date: 'yyyy-MM-dd', time?: 'HH:mm', note?: string }
+ */
+route('POST', '/api/employees/:id/present', async ({ actor, params, body, bot }) => {
+  const e = await loadEmp(params.id);
+  need(access.canMarkPresent(actor, e), "Faqat bo'lim rahbari va direktor");
+  if (!time.isValidDate(body.date)) bad("Sana noto'g'ri");
+  if (body.date > time.today()) bad("Kelajak kunni belgilab bo'lmaydi");
+  let at = null;
+  if (body.time !== undefined && body.time !== null && body.time !== '') {
+    at = employees.parseWorkStart(String(body.time));
+    if (!at) bad("Vaqt noto'g'ri (HH:mm)");
+  }
+  const res = await flows.markPresentBy(bot, e, body.date, actor.tgId, {
+    at,
+    note: text(body.note, 300, { required: false, name: 'Izoh' }),
+  });
+  if (res.already) throw new HttpError(409, 'Bu kun allaqachon kelgan deb yozilgan');
+  return { ok: true, checkedIn: res.row.checked_in };
 });
 
 route('POST', '/api/employees/:id/clear-home', async ({ actor, params, bot }) => {
@@ -1215,7 +1373,7 @@ route('GET', '/api/kpi/:month', async ({ actor, params }) => {
   if (month > time.month()) bad('Kelajakdagi oy');
   const rows = await kpi.computeAll(month);
   return {
-    month, monthName: time.monthName(month), current: month === time.month(), canEdit: actor.isAdmin, kpiMode: config.kpiMode,
+    month, monthName: time.monthName(month), current: month === time.month(), canEdit: actor.isAdmin || actor.isHr, kpiMode: config.kpiMode,
     rows: rows.map((k) => kpiOut(k, { money: true })),
   };
 });
@@ -1228,7 +1386,7 @@ route('GET', '/api/kpi/:month/:empId', async ({ actor, params }) => {
   return {
     kpi: kpiOut(k, { money: true }),
     monthName: time.monthName(month),
-    canEdit: actor.isAdmin,
+    canEdit: actor.isAdmin || actor.isHr,
     returnPenalty: config.returnPenaltyPct,
     gate: await kpi.gateSettings(),
   };
@@ -1236,7 +1394,8 @@ route('GET', '/api/kpi/:month/:empId', async ({ actor, params }) => {
 
 /** { headScore?, headNote?, customPct?, bonusFund?, note? } — faqat «kutmoqda» holatida */
 route('PATCH', '/api/kpi/:month/:empId', async ({ actor, params, body }) => {
-  need(actor.isAdmin, 'Faqat direktor');
+  // 21-okt: HR KPI ni to'liq o'zi yuritadi (foydalanuvchi qarori — tasdiq so'ralmaydi)
+  need(actor.isAdmin || actor.isHr, 'Faqat direktor va HR');
   const month = monthOf(params.month);
   const e = await loadEmp(params.empId);
   const cur = await kpi.compute(e, month);
@@ -1259,7 +1418,7 @@ route('PATCH', '/api/kpi/:month/:empId', async ({ actor, params, body }) => {
 
 /** { status: confirmed | excluded | draft, note? } */
 route('POST', '/api/kpi/:month/:empId/decide', async ({ actor, params, body, bot }) => {
-  need(actor.isAdmin, 'Faqat direktor');
+  need(actor.isAdmin || actor.isHr, 'Faqat direktor va HR');
   const month = monthOf(params.month);
   const e = await loadEmp(params.empId);
   if (!['confirmed', 'excluded', 'draft'].includes(body.status)) bad("Holat noto'g'ri");
@@ -1275,7 +1434,7 @@ route('POST', '/api/kpi/:month/:empId/decide', async ({ actor, params, body, bot
 });
 
 route('POST', '/api/kpi/:month/confirm-all', async ({ actor, params, bot }) => {
-  need(actor.isAdmin, 'Faqat direktor');
+  need(actor.isAdmin || actor.isHr, 'Faqat direktor va HR');
   const month = monthOf(params.month);
   if (month >= time.month()) throw new HttpError(409, `${time.monthName(month)} hali tugamagan — oy yakunida tasdiqlanadi`);
   await kpi.computeAll(month);
@@ -1379,6 +1538,48 @@ route('GET', '/api/att/:attId/video', async ({ actor, params, bot, res }) => {
   return streamProof(bot, res, { type: row.checkin_proof_type, fileId: row.checkin_proof_file_id });
 });
 
+// ===========================================================================
+// AGENT JONLI JOYLASHUVI (6-okt) — boshliq/direktor, HR, bo'lim rahbari (access.canSeeLive)
+// ===========================================================================
+const liveOut = (e, s) => ({
+  id: Number(e.id), name: e.full_name, position: e.position || null, department: e.department_name || null,
+  kind: s.kind, label: live.KIND[s.kind][1], lat: s.kind === 'absent' ? null : s.lat, lon: s.kind === 'absent' ? null : s.lon,
+  lastAt: s.lastAt, ageMin: s.ageMin, checkedIn: s.att ? s.att.checked_in : null, checkedOut: s.att ? s.att.checked_out : null,
+  stoppedAt: s.share ? s.share.stopped_at : null, stopReason: s.share ? s.share.stop_reason : null,
+});
+
+route('GET', '/api/live', async ({ actor, query }) => {
+  need(access.canUseLive(actor), "Faqat boshliq, HR va bo'lim rahbari");
+  // 14-okt: ro'yxatda ham kun tanlovi (kecha, oldingi kun) — o'tgan kun: agentning o'sha kungi oxirgi joyi
+  const date = query.get('date') || time.today();
+  if (!time.isValidDate(date) || date > time.today()) bad("Sana noto'g'ri");
+  const rows = [];
+  for (const e of await access.liveAgentsFor(actor)) rows.push(liveOut(e, await live.statusOf(e, date)));
+  return { date, datePretty: time.prettyDate(date), today: date === time.today(), gapMin: config.liveGapMin, rows };
+});
+
+route('GET', '/api/live/:emp', async ({ actor, params, query }) => {
+  const e = await employees.byId(id(params.emp, 'Hodim'));
+  if (!e) notFound();
+  need(access.canSeeLive(actor, e), "Ruxsat yo'q");
+  const date = query.get('date') || time.today();
+  if (!time.isValidDate(date) || date > time.today()) bad("Sana noto'g'ri");
+  const s = await live.statusOf(e, date);
+  const pts = await live.points(e.id, date);
+  const isToday = date === time.today();
+  const endAt = isToday && (s.kind === 'live' || s.kind === 'stale') ? time.stamp() : null;
+  const home = employees.homeOf(e);
+  return {
+    date, datePretty: time.prettyDate(date), today: isToday,
+    agent: liveOut(e, s),
+    home: home ? { lat: Number(home.lat), lon: Number(home.lon) } : null,
+    points: pts.map((p) => [Number(p.lat), Number(p.lon), p.at]),
+    distanceM: live.pathLength(pts),
+    stops: live.stops(pts, { endAt }).map((x) => ({ from: x.from, to: x.to, min: x.min, lat: x.lat, lon: x.lon, ongoing: Boolean(x.ongoing && endAt) })),
+    visits: (await visits.forEmployee(e.id, date, date)).map((v) => ({ at: v.created_at, lat: Number(v.lat), lon: Number(v.lon), note: v.note || null })),
+  };
+});
+
 // --- sababli kun so'rovlari ---
 route('GET', '/api/excuses', async ({ actor }) => {
   need(actor.isManager || actor.isHr, "Ruxsat yo'q");
@@ -1386,7 +1587,7 @@ route('GET', '/api/excuses', async ({ actor }) => {
   for (const r of await attendance.pendingExcuses()) {
     const e = await employees.byId(r.employee_id);
     // 5-okt: HR so'rovlarni ko'radi, lekin hal qilmaydi (canDecide=false)
-    const canDecide = access.canDecideExcuse(actor, e);
+    const canDecide = await access.canDecideExcuse(actor, e);
     if (!canDecide && !(actor.isHr && Number(e.id) !== Number(actor.employee && actor.employee.id))) continue;
     out.push({ attId: Number(r.id), employeeId: Number(e.id), name: e.full_name, date: r.work_date, datePretty: time.prettyDate(r.work_date), reason: r.excuse_reason || '', proofType: r.excuse_proof_type || null, canDecide });
   }
@@ -1397,7 +1598,7 @@ const loadExcuse = async (actor, attId, { view = false } = {}) => {
   const row = await attendance.byId(id(attId));
   if (!row) notFound();
   const e = await employees.byId(row.employee_id);
-  need(access.canDecideExcuse(actor, e) || (view && actor.isHr), "Sababli qilish — faqat bo'lim rahbari yoki boshliq");
+  need((await access.canDecideExcuse(actor, e)) || (view && actor.isHr), "Sababli qilish — faqat bo'lim rahbari yoki boshliq");
   return { row, e };
 };
 
@@ -1601,6 +1802,7 @@ route('GET', '/api/settings', async ({ actor }) => {
     headTaskCopy: await org.headTaskCopy(),
     hrBossTasks: await org.hrSeesBossTasks(),
     bossAttendance: await org.bossSeesAttendance(),
+    bossDone: await org.bossSeesDone(),
     groupLinked: Boolean(await notify.getGroupId()),
     archiveLinked: Boolean(await notify.getArchiveId()),
     office: main ? { radius: main.radius } : null,
@@ -1664,6 +1866,13 @@ route('POST', '/api/settings/boss-attendance', async ({ actor, body }) => {
   need(actor.isAdmin, 'Faqat direktor');
   await org.setBossSeesAttendance(body.on === true);
   return { on: await org.bossSeesAttendance() };
+});
+
+/** { on } — boshliq «Bajardim» xabarlarini oladimi */
+route('POST', '/api/settings/boss-done', async ({ actor, body }) => {
+  need(actor.isAdmin, 'Faqat direktor');
+  await org.setBossSeesDone(body.on === true);
+  return { on: await org.bossSeesDone() };
 });
 
 route('POST', '/api/settings/boss-name', async ({ actor, body }) => {

@@ -267,7 +267,7 @@ const addVisitsSheet = (wb, rows, title, sub, { withName = true } = {}) => {
   for (const v of rows) {
     ws.addRow({
       name: v.full_name, date: v.visit_date, time: time.clock(v.created_at), proof: visits.proofLabel(v.proof_type).replace(/^\S+\s/, ''),
-      note: v.note || '', home: v.home_dist ? Number(v.home_dist) : '', map: v.lat ? `https://maps.google.com/?q=${v.lat},${v.lon}` : '',
+      note: v.note || '', home: v.home_dist ? Number(v.home_dist) : '', map: v.lat ? require('../geo').mapUrl(v.lat, v.lon) : '',
     });
   }
   zebra(ws);

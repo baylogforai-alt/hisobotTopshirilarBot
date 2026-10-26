@@ -221,27 +221,36 @@ const deptHeadIdsOf = async (emp) => {
 
 /**
  * Keldi / ketdi / tashrif xabarlari — bo'lim rahbarlari + HR (boshliqqa EMAS — 2-okt qarori; Panelda yoqsa — boshliqqa ham).
- * Hech kim bo'lmasa (bo'limsiz va HR yo'q) — boshliq, xabar yo'qolmasin.
+ * 8-okt: hech kim bo'lmasa ham boshliqqa BORMAYDI (faqat Panel sozlamasi) — texnik direktorlar nusxa oladi.
  */
 const attendanceWatchersOf = async (emp) => {
   const ids = new Set(await deptHeadIdsOf(emp));
   for (const h of await listHr()) ids.add(Number(h.tg_id));
   ids.delete(Number(emp.tg_id));
-  if (!ids.size || (await require('./org').bossSeesAttendance())) for (const id of await bossTgIds()) ids.add(Number(id));
+  if (await require('./org').bossSeesAttendance()) for (const id of await bossTgIds()) ids.add(Number(id));
   ids.delete(Number(emp.tg_id));
   return require('./org').dropQuiet([...ids]);
 };
 
 /**
- * «Bajardim» — tekshiruv so'rovi kimga: bo'lim rahbarlari + boshliq + topshiriqni bergan odam;
+ * «Bajardim» — tekshiruv so'rovi kimga: bo'lim rahbarlari + topshiriqni bergan odam (boshliq ham — o'zi bergan bo'lsa, 9-okt);
+ * boshliqqa boshqalar bergani — faqat Panelda yoqilgan bo'lsa (org.bossSeesDone, standart yo'q; 8-okt — zaxira sifatida ham yo'q); hech kim qolmasa — HR;
  * HR — faqat o'zi yoqqan bo'lsa (notify_done). task — topshiriq (beruvchini bilish uchun), ixtiyoriy.
  */
 const doneReviewersOf = async (emp, task = null) => {
   const ids = new Set(await deptHeadIdsOf(emp));
-  for (const id of await bossTgIds()) ids.add(Number(id));
+  const bossOn = await require('./org').bossSeesDone();
+  if (bossOn) for (const id of await bossTgIds()) ids.add(Number(id));
   // HR — o'zi yoqsa; boshliq/direktor bergan topshiriq va boshliq missiyasi HR ga bormaydi
   const hidden = Boolean(task && require('./tasks').hiddenFromHr(task)) && !(await require('./org').hrSeesBossTasks());
   for (const h of await listHr()) if (wantsDoneNotify(h) && !hidden) ids.add(Number(h.tg_id));
+  const giverTg = task && task.created_by && task.source !== 'self' ? Number(task.created_by) : null;
+  if (giverTg) ids.add(giverTg);
+  // sozlama o'chiq — boshliqqa faqat o'zi bergan topshiriq boradi (9-okt; boshqalar bergani va o'z vazifalari — yo'q)
+  if (!bossOn) for (const id of await bossTgIds()) if (Number(id) !== giverTg) ids.delete(Number(id));
+  ids.delete(Number(emp.tg_id));
+  // hech kim qolmasa (bo'limsiz hodim, o'z vazifasi) — HR; boshliqqa emas (8-okt) — u «🔎 Tekshiruv» dan ko'radi
+  if (!ids.size && !bossOn && !hidden) for (const h of await listHr()) ids.add(Number(h.tg_id));
   ids.delete(Number(emp.tg_id));
   // jim rejimdagilar — o'zi bergan topshiriqdan tashqari; hech kim qolmasa o'zgarishsiz (qabul qiladigan odam qolsin)
   const giver = task && task.created_by && task.source !== 'self' && Number(task.created_by) !== Number(emp.tg_id) ? Number(task.created_by) : null;

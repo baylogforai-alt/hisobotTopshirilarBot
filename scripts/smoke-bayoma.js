@@ -26,6 +26,7 @@ process.env.FIELD_MIN_DISTANCE_M = '1500';
 process.env.LATE_NOTICE_MIN_BEFORE = '20';
 process.env.ANNOUNCE_DONE = '0';
 process.env.BOSS_SEES_ATTENDANCE = '0';
+process.env.BOSS_OWN_LISTS = 'true'; // BAYOMA: boshliq ro'yxatlarida faqat o'zi bergani (BayLog standarti — yo'q)
 process.env.DAILY_REPORT_REQUIRED = '0';
 process.env.COMPANY_NAME = 'BAYOMA';
 process.env.BOSS_NAME = 'Odilxon';
@@ -37,6 +38,8 @@ process.env.WORK_END_HOUR = '18';
 process.env.DAILY_REPORT_HOUR = '19';
 process.env.LATE_GRACE_MINUTES = '10';
 process.env.WORK_DAYS = '1-6';
+// «Keldim»siz bot yopiq (7-okt) — eski bo'limlar Keldimsiz ishlaydi; 48-bo'limda yoqiladi
+process.env.CHECKIN_REQUIRED = 'false';
 
 const fs = require('fs');
 for (const f of ['./data/smoke-bayoma.db', './data/smoke-bayoma.db-wal', './data/smoke-bayoma.db-shm']) fs.rmSync(f, { force: true });
@@ -145,6 +148,9 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
 
 (async () => {
   await db.init();
+  // BAYOMA standartlari (BayLog'da ikkalasi yoqiq): rahbar topshiriq nusxasi va boshliqqa «Bajardim» — o'chiq
+  await db.setSetting('head_task_copy', '0');
+  await db.setSetting('boss_done', '0');
   await require('../src/services/worktime').load();
   const bot = createBot();
   const send = (u) => bot.handleUpdate(u);
@@ -233,12 +239,12 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('uzoqdan — rad etildi', lastText(99999).includes('uzoqdasiz') && !(await attendance.isCheckedIn(akbar.id)));
   await send(msg(99999, '✅ Keldim'));
   await send(loc(99999, 41.3112, 69.2798));
-  ok('ofisdan — endi video so\'raldi (hali qayd etilmadi)', lastText(99999).includes('video') && !(await attendance.isCheckedIn(akbar.id)));
+  ok('ofisdan — DARHOL qayd etildi, keyin video so\'raldi', lastText(99999).includes('video') && (await attendance.isCheckedIn(akbar.id)));
   await send(photo(99999, 'rasm'));
-  ok('rasm qabul qilinmaydi — video kerak', lastText(99999).includes('Video kerak') && !(await attendance.isCheckedIn(akbar.id)));
+  ok('rasm qabul qilinmaydi — video kerak (kelish yozuvi saqlanadi)', lastText(99999).includes('Video kerak') && (await attendance.isCheckedIn(akbar.id)));
   mark = sent.length;
   await send(videoNote(99999));
-  ok('dumaloq video bilan — qabul qilindi', (await attendance.isCheckedIn(akbar.id)) && lastText(99999).match(/qayd etildi|kech keldingiz/));
+  ok('dumaloq video bilan — qabul qilindi', (await attendance.isCheckedIn(akbar.id)) && lastText(99999).match(/tasdiqlandi|qayd etildi|kech keldingiz/));
   const attA = await attendance.get(akbar.id);
   ok('davomatda video va rejim saqlandi', attA.checkin_proof_type === 'video_note' && attA.checkin_proof_file_id === 'VN_FILE_ID' && attA.checkin_mode === 'office');
   ok('boshliqqa video + matn bordi', sent.slice(mark).some((s) => s.method === 'sendVideoNote' && Number(s.payload.chat_id) === 20001));
@@ -263,7 +269,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   let open = await tasks.openFor(akbar.id);
   ok('2 ta topshiriq yaratildi, muhim birinchi', open.length === 2 && open[0].priority === 'high' && open[0].source === 'head');
   ok('hodimga xabar bordi', lastText(99999).includes('Yangi topshiriq'));
-  ok('direktorga nusxa bordi', lastText(1000).includes('Bobur') && lastText(1000).includes('2 ta topshiriq'));
+  ok('direktorga nusxa YO\'Q (7-okt standart)', !lastText(1000).includes('2 ta topshiriq'));
 
   // direktor boshqa bo'lim hodimiga ham bera oladi; boshliq boshqa bo'limga bera olmaydi
   await send(msg(1000, '📤 Topshiriq berish'));
@@ -309,7 +315,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   let t = await tasks.byId(headTask.id);
   ok('done + isbot saqlandi', t.status === 'done' && t.proof_file_id === 'BIG_FILE_ID' && t.proof_note === 'Mana hisobot');
   ok('boshliqqa rasm + qabul/qaytarish tugmalari', sent.slice(mark).some((s) => s.method === 'sendPhoto' && Number(s.payload.chat_id) === 20001 && s.payload.photo === 'BIG_FILE_ID' && JSON.stringify(s.payload.reply_markup).includes(`rv:ok:${headTask.id}`)));
-  ok('direktorga ham bordi', sent.slice(mark).some((s) => s.method === 'sendPhoto' && Number(s.payload.chat_id) === 1000));
+  ok('boshliqqa (direktor 1000) standart bormadi — rahbar tekshiradi', !sent.slice(mark).some((s) => s.method === 'sendPhoto' && Number(s.payload.chat_id) === 1000));
 
   await send(msg(20001, '🔎 Tekshiruv'));
   ok('tekshiruv ro\'yxatida 1 ta', lastText(20001).includes('TEKSHIRUV (1)'));
@@ -349,8 +355,8 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   await send(msg(30001, 'Kasal bo\'ldim'));
   let att = await attendance.get(sardor.id);
   ok('so\'rov pending', att && att.excuse_status === 'pending' && att.excuse_reason === "Kasal bo'ldim");
-  const abOk = findCb(1000, /^ab:ok:\d+$/);
-  ok('boshliqqa (rahbariyat) sababli/sababsiz tugmalari', Boolean(abOk));
+  const abOk = findCb(20001, /^ab:ok:\d+$/);
+  ok("boshliqqa tugmali so'rov yo'q (bo'lim rahbari bor)", !findCb(1000, /^ab:ok:\d+$/));
   ok('bo\'lim rahbariga — tasdiqlash tugmalari', to(20001).slice(-1)[0].payload.text.includes('kelmasligini') && JSON.stringify(to(20001).slice(-1)[0].payload.reply_markup || {}).includes('ab:ok'));
   ok('HR ga — faqat xabar, tugmasiz', to(50001).length === 0 || !JSON.stringify(to(50001).slice(-1)[0].payload.reply_markup || {}).includes('ab:ok'));
   await send(cbq(99999, abOk));
@@ -572,7 +578,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   await send(msg(99999, 'Hisobotni topshirib ketdim'));
   const coRow = await attendance.get(akbar.id);
   ok('ketdim — lokatsiya va izoh saqlandi', (await attendance.isCheckedOut(akbar.id)) && lastText(99999).includes('yakunlandi') && coRow.checkout_note === 'Hisobotni topshirib ketdim' && Number(coRow.checkout_dist) < 150);
-  ok('ketdi xabarida izoh va xarita, ogohlantirishsiz', sent.slice(mark).some((s) => /ketdi/.test(s.payload.text || '') && /Hisobotni topshirib/.test(s.payload.text || '') && /maps\.google/.test(s.payload.text || '') && !/ofisdan tashqarida/.test(s.payload.text || '')));
+  ok('ketdi xabarida izoh va xarita, ogohlantirishsiz', sent.slice(mark).some((s) => /ketdi/.test(s.payload.text || '') && /Hisobotni topshirib/.test(s.payload.text || '') && /yandex\.uz\/maps/.test(s.payload.text || '') && !/ofisdan tashqarida/.test(s.payload.text || '')));
   // 7-okt: Ketdimdan keyin «Bajardim» yopiq — keyingi bo'limlar uchun hodim yana «ishda» bo'lsin
   await db.query('UPDATE attendance SET checked_out = NULL WHERE employee_id = $1 AND work_date = $2', [akbar.id, bugun]);
 
@@ -707,9 +713,9 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('uyga yaqin (≈55 m) — rad etildi', lastText(40001).includes('uyingizga yaqinsiz') && !(await attendance.isCheckedIn(jasur.id)));
   await send(msg(40001, '✅ Keldim'));
   await send(loc(40001, 39.66, 66.95));
-  ok('uydan ≈6 km — video so\'raldi (majburiy)', lastText(40001).includes('video') && !findCb(40001, /^ci:novideo$/) && !(await attendance.isCheckedIn(jasur.id)));
+  ok('uydan ≈6 km — DARHOL qayd etildi, majburiy video so\'raldi', lastText(40001).includes('video') && !findCb(40001, /^ci:novideo$/) && (await attendance.isCheckedIn(jasur.id)));
   await send(cbq(40001, 'ci:novideo'));
-  ok('majburiy bo\'lsa videosiz o\'tmaydi', !(await attendance.isCheckedIn(jasur.id)));
+  ok('majburiy bo\'lsa «videosiz» tugmasi ishlamaydi — video kutilib turadi', session.get(40001).step === 'awaiting_checkin_video' && !(await attendance.get(jasur.id)).checkin_proof_file_id);
   await send(video(40001, 'Yo\'ldaman'));
   const attJ = await attendance.get(jasur.id);
   ok('agent ishga chiqdi (hudud, video, izoh)', attJ && attJ.checked_in && attJ.checkin_mode === 'field' && attJ.checkin_proof_type === 'video' && attJ.checkin_note === "Yo'ldaman" && Number(attJ.checkin_dist) > 1000);
@@ -723,11 +729,49 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('ixtiyoriy video — «Videosiz» tugmasi', Boolean(findCb(40001, /^ci:novideo$/)));
   await send(cbq(40001, 'ci:novideo'));
   ok('videosiz qayd etildi', (await attendance.isCheckedIn(jasur.id)) && !(await attendance.get(jasur.id)).checkin_proof_file_id);
+  // 7-okt: jonli joylashuvsiz agentga bot yopiq — ish vaqtida test bog'liq bo'lmasin: shu yerda yoqiladi
+  await send({ update_id: (uid += 1), message: { ...base(40001), location: { latitude: 39.66, longitude: 66.95, live_period: 0x7fffffff } } });
 
   console.log('\n— 15. Tashriflar —');
   await send(msg(99999, '📍 Hududga keldim'));
   ok('ofis hodimida tashrif yo\'q', lastText(99999).includes('faqat hudud'));
+  // 19-okt: beyjik eslatmasi — ovozsiz faqat matn
+  const bjText = (from, chatId, re) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && re.test(x.payload.text || x.payload.caption || ''));
+  mark = sent.length;
   await send(msg(40001, '📍 Hududga keldim'));
+  ok('tashrif: avval beyjik eslatmasi (ovoz hali yo\'q — faqat matn)', bjText(mark, 40001, /Beyjigingiz taqilganligiga/) && countSince(mark, 40001, 'sendVoice') === 0);
+  session.clear(40001);
+  // boshliq ovoz yozadi: HR mumkin emas; video rad; boshidan yozish; bekor qilish; saqlash
+  await send(msg(50001, '/beyjik'));
+  await send(cbq(50001, 'bj:set'));
+  ok('beyjik: HR ovoz yoza olmaydi', session.get(50001).step !== 'badge_audio');
+  await send(cbq(1000, 'adm:home'));
+  ok('Panelda «🪪 Beyjik eslatmasi»', Boolean(findCb(1000, /^bj:menu$/)));
+  await send(cbq(1000, 'bj:menu'));
+  ok('beyjik menyusi: ovoz yo\'q — «yozish» tugmasi', lastText(1000).includes('BEYJIK') && Boolean(findCb(1000, /^bj:set$/)) && !findCb(1000, /^bj:see$/));
+  await send(cbq(1000, 'bj:set'));
+  ok('beyjik: ovoz so\'raldi', session.get(1000).step === 'badge_audio');
+  await send(video(1000));
+  ok('beyjik: video qabul qilinmaydi', session.get(1000).step === 'badge_audio' && lastText(1000).includes('Faqat ovozli'));
+  const bjVoice = (fid) => { const v = voice(1000); v.message.voice.file_id = fid; return v; };
+  await send(bjVoice('BADGE_V1'));
+  ok('beyjik: «Shu / Boshidan / Bekor» so\'raldi', session.get(1000).step === 'badge_confirm' && findCb(1000, /^bj:ok$/) && findCb(1000, /^bj:again$/) && findCb(1000, /^bj:x$/));
+  await send(cbq(1000, 'bj:again'));
+  await send(bjVoice('BADGE_V2'));
+  await send(cbq(1000, 'bj:x'));
+  ok('beyjik: bekor qilindi — saqlanmadi', !(await require('../src/handlers/field').badgeAudio()) && !session.get(1000).step);
+  await send(cbq(1000, 'bj:set'));
+  await send(bjVoice('BADGE_V3'));
+  await send(cbq(1000, 'bj:again'));
+  await send(bjVoice('BADGE_V4'));
+  await send(cbq(1000, 'bj:ok'));
+  ok('beyjik: boshidan yozilgan oxirgi ovoz saqlandi', ((await require('../src/handlers/field').badgeAudio()) || {}).fileId === 'BADGE_V4');
+  await send(cbq(1000, 'bj:ok'));
+  ok('beyjik: ikkinchi «Shu» — o\'zgarmaydi', ((await require('../src/handlers/field').badgeAudio()) || {}).fileId === 'BADGE_V4');
+  ok('beyjik menyusi: eshitish va o\'zgartirish', Boolean(findCb(1000, /^bj:see$/)) && Boolean(findCb(1000, /^bj:del$/)));
+  mark = sent.length;
+  await send(msg(40001, '📍 Hududga keldim'));
+  ok('tashrif: beyjik matni + ovozli xabar', bjText(mark, 40001, /Beyjigingiz taqilganligiga/) && sent.slice(mark).some((s) => s.method === 'sendVoice' && Number(s.payload.chat_id) === 40001 && s.payload.voice === 'BADGE_V4'));
   ok('tashrif: joylashuv so\'raldi', lastText(40001).includes('Hududga keldim') && session.get(40001).step === 'visit_location');
   await send(loc(40001, 39.65, 66.97));
   ok('tashrif: video/audio so\'raldi', lastText(40001).includes('audio'));
@@ -753,6 +797,39 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
 
   await send(cbq(1000, `emp:home:${jasur.id}`));
   ok('direktor uy joyini tozaladi', !employees.homeOf(await employees.byTgId(40001)) && lastText(40001).includes('tozalandi'));
+
+  console.log('\n— 15b. Rahbar / direktor agentning uy joyini belgilaydi —');
+  const fl = require('../src/services/flows');
+  ok('parseCoords: Google Maps havolasi', JSON.stringify(fl.parseCoords('https://maps.google.com/maps?q=40.990204,71.646206&ll=40.990204,71.646206&z=16')) === JSON.stringify({ lat: 40.990204, lon: 71.646206 }));
+  ok('parseCoords: @ havola va oddiy koordinata', fl.parseCoords('https://www.google.com/maps/@41.0207,71.6422,17z').lat === 41.0207 && fl.parseCoords('40.99, 71.64').lon === 71.64);
+  ok("parseCoords: noto'g'ri — null", fl.parseCoords('salom') === null && fl.parseCoords('95.123, 71.123') === null);
+  ok('parseCoords: Yandex havolasi — lon,lat teskari (whatshere > pt > ll)',
+    JSON.stringify(fl.parseCoords('https://yandex.uz/maps/10335/namangan/?ll=71.600000%2C40.900000&mode=whatshere&whatshere%5Bpoint%5D=71.672600%2C40.998300&z=17')) === JSON.stringify({ lat: 40.9983, lon: 71.6726 }) &&
+    JSON.stringify(fl.parseCoords('https://yandex.uz/maps/?pt=71.64,40.99&z=17&l=map')) === JSON.stringify({ lat: 40.99, lon: 71.64 }) &&
+    JSON.stringify(fl.parseCoords('https://yandex.ru/maps/?ll=71.6726,40.9983&z=16')) === JSON.stringify({ lat: 40.9983, lon: 71.6726 }));
+  ok('parseCoords: Yandex qisqa havola — null (teskari o\'qilmaydi)', fl.parseCoords('https://yandex.uz/maps/-/CHqA4Z~0') === null);
+  await send(cbq(1000, `emp:${jasur.id}`));
+  ok('kartochkada «🏠 Uy joyini belgilash»', findCb(1000, new RegExp(`^fh:${jasur.id}$`)) === `fh:${jasur.id}`);
+  mark = sent.length;
+  await send(cbq(30001, `fh:${jasur.id}`));
+  ok("oddiy hodim belgilay olmaydi", !session.get(30001).step && sent.slice(mark).some((s) => s.method === 'answerCallbackQuery' && s.payload.show_alert));
+  await send(cbq(20001, `tm:e:${jasur.id}`));
+  ok("bo'lim rahbari — jamoa kartochkasida tugma", findCb(20001, new RegExp(`^fh:${jasur.id}$`)) === `fh:${jasur.id}`);
+  await send(cbq(20001, `fh:${jasur.id}`));
+  ok('rahbar: havola / joylashuv so\'raldi', session.get(20001).step === 'set_emp_home' && lastText(20001).includes('Google Maps'));
+  await send(msg(20001, 'uyi shu yerda'));
+  ok('koordinatasiz matn — qayta so\'raydi', session.get(20001).step === 'set_emp_home' && lastText(20001).includes('topilmadi'));
+  mark = sent.length;
+  await send(msg(20001, 'https://maps.google.com/maps?q=40.990204,71.646206&ll=40.990204,71.646206&z=16'));
+  let jH = employees.homeOf(await employees.byTgId(40001));
+  ok('rahbar havola bilan uy joyini belgiladi', jH && Number(jH.lat) === 40.990204 && Number(jH.lon) === 71.646206 && !session.get(20001).step);
+  ok('agentga xabar bordi', sent.slice(mark).some((s) => Number(s.payload.chat_id) === 40001 && (s.payload.text || '').includes('belgilandi')));
+  ok('arxivga bordi', sent.slice(mark).some((s) => Number(s.payload.chat_id) === -100777 && (s.payload.text || '').includes('uy joylashuvi')));
+  await send(cbq(1000, `fh:${jasur.id}`));
+  await send({ update_id: (uid += 1), message: { ...base(1000), location: { latitude: 39.6, longitude: 66.9 }, venue: { location: { latitude: 39.6, longitude: 66.9 }, title: 'Uy', address: 'x' } } });
+  jH = employees.homeOf(await employees.byTgId(40001));
+  ok("direktor xaritadan tanlangan joy bilan o'zgartirdi", Number(jH.lat) === 39.6 && lastText(1000).includes('39.600000'));
+  await employees.clearHome(jasur.id);
 
   console.log('\n— 16. Oylik va KPI, oy boshi —');
   await send(msg(40001, '💵 Oylik va KPI'));
@@ -794,9 +871,9 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
 
   await send(msg(20001, '✅ Keldim'));
   await send(cbq(20001, `ms:ok:${month}`));
+  mark = sent.length;
   await send(msg(20001, '✅ Keldim'));
   await send(loc(20001, 41.3112, 69.2798));
-  mark = sent.length;
   await send(videoNote(20001));
   attB = await attendance.get(bobur.id);
   ok('keyin Keldim — kechikish sababi saqlanib qoldi', attB.checked_in && attB.late_reason === '(ovozli xabar)' && session.get(20001).step !== 'late_reason');
@@ -830,22 +907,22 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('boshliq ismi o\'zgardi', (await org.bossName()) === 'Odilxon aka' && lastText(1000).includes('Odilxon aka'));
   await send(cbq(1000, `emp:name:${abbosE.id}`));
   await send(msg(1000, 'Abbos Aliyev'));
-  ok('HR ismi o\'zgardi va xabarlarda yangi ism', (await org.recipientsLabel(akbar)) === 'HR (Abbos Aliyev)');
+  ok('HR ismi o\'zgardi va xabarlarda yangi ism', (await org.recipientsLabel(akbar)).endsWith('HR (Abbos Aliyev)') && !(await org.recipientsLabel(akbar)).includes('boshliq'));
   await org.setBossSeesAttendance(true);
-  ok('boshliq keldi-ketdini yoqsa - yorliqda boshliq ham', (await org.recipientsLabel(akbar)) === 'HR (Abbos Aliyev) va boshliq (Odilxon aka)');
+  ok('boshliq keldi-ketdini yoqsa - yorliqda boshliq ham', (await org.recipientsLabel(akbar)).endsWith('HR (Abbos Aliyev) va boshliq (Odilxon aka)'));
   await org.setBossSeesAttendance(false);
 
   // =========================================================================
   console.log('\n— 18. Eslatma jadvali (hodim so\'raydi → direktor/HR tasdiqlaydi) —');
   const reminders = require('../src/services/reminders');
   ok('parseTimes', JSON.stringify(reminders.parseTimes('13:00, 10 16.30')) === '["10:00","13:00","16:30"]' && reminders.parseTimes('25:00') === null && reminders.parseTimes('03:00') === null);
-  ok('intervalTimes 9:00 dan har 3 soat', JSON.stringify(reminders.intervalTimes(540, 3)) === '["12:00","15:00"]');
+  ok('intervalTimes 9:00 dan har 3 soat', JSON.stringify(reminders.intervalTimes(540, 3)) === '["12:00","15:00","17:00","18:00"]');
   await send(msg(30001, '🔔 Eslatmalar'));
   ok('eslatmalar ekrani (umumiy jadval)', lastText(30001).includes('ESLATMALAR') && lastText(30001).includes('umumiy') && findCb(30001, /^rm:int:2$/));
   mark = sent.length;
   await send(cbq(30001, 'rm:int:2'));
   let sard = await employees.byTgId(30001);
-  ok('har 2 soat so\'raldi (pending)', sard.remind_pending === '11:00,13:00,15:00,17:00' && !sard.remind_times);
+  ok('har 2 soat so\'raldi (pending)', sard.remind_pending === '11:00,13:00,15:00,17:00,18:00' && !sard.remind_times);
   ok('so\'rov faqat boshliqqa bordi (tugmalar bilan), HR ga emas', sent.slice(mark).some((s) => Number(s.payload.chat_id) === 1000 && JSON.stringify(s.payload.reply_markup || {}).includes(`rs:ok:${sard.id}`)) && !sent.slice(mark).some((s) => Number(s.payload.chat_id) === 50001));
   ok('bo\'lim rahbariga (Bobur) bormaydi', !sent.slice(mark).some((s) => Number(s.payload.chat_id) === 20001));
   await send(cbq(99999, `rs:ok:${sard.id}`));
@@ -854,7 +931,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('HR tasdiqlay olmaydi', Boolean((await employees.byTgId(30001)).remind_pending));
   await send(cbq(1000, `rs:ok:${sard.id}`));
   sard = await employees.byTgId(30001);
-  ok('boshliq tasdiqladi → jadval kuchga kirdi', sard.remind_times === '11:00,13:00,15:00,17:00' && !sard.remind_pending && lastText(30001).includes('tasdiqlandi'));
+  ok('boshliq tasdiqladi → jadval kuchga kirdi', sard.remind_times === '11:00,13:00,15:00,17:00,18:00' && !sard.remind_pending && lastText(30001).includes('tasdiqlandi'));
   await send(cbq(1000, `rs:ok:${sard.id}`));
   ok('ikkinchi marta — allaqachon ko\'rib chiqilgan', lastText(1000).includes('allaqachon'));
 
@@ -865,7 +942,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('o\'z vaqtlari so\'raldi', (await employees.byTgId(30001)).remind_pending === '10:30,16:45');
   await send(cbq(1000, `rs:no:${sard.id}`));
   sard = await employees.byTgId(30001);
-  ok('direktor rad etdi → eski jadval qoldi', sard.remind_times === '11:00,13:00,15:00,17:00' && !sard.remind_pending && lastText(30001).includes('rad etildi'));
+  ok('direktor rad etdi → eski jadval qoldi', sard.remind_times === '11:00,13:00,15:00,17:00,18:00' && !sard.remind_pending && lastText(30001).includes('rad etildi'));
 
   const jobs2 = require('../src/jobs');
   await tasks.create({ employeeId: sard.id, title: 'Kassa hisoboti', dueDate: bugun, createdBy: 20001, source: 'head' });
@@ -930,9 +1007,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
 
   await send(msg(hrTg, '💰 KPI'));
   await send(cbq(hrTg, `kpi:e:${akbar.id}:${month}`));
-  ok('HR KPI ni ko\'radi (summalar bilan), tahrir tugmalarisiz', lastText(hrTg).includes('KPI summasi') && lastText(hrTg).includes("Faqat ko'rish") && !findCb(hrTg, new RegExp(`^kpi:ok:${akbar.id}:`)));
-  await send(cbq(hrTg, `kpi:ok:${akbar.id}:${month}`));
-  ok('HR KPI tasdiqlay olmaydi', sent.slice(-1)[0].method === 'answerCallbackQuery');
+  ok('HR KPI ni summalar va tahrir tugmalari bilan ko\'radi (21-okt)', lastText(hrTg).includes('KPI summasi') && Boolean(findCb(hrTg, new RegExp(`^kpi:fund:${akbar.id}:`))));
   await send(msg(hrTg, '📈 Hisobotlar'));
   ok('HR hisobotlarni ko\'radi', lastText(hrTg).includes('HISOBOTLAR'));
   await send(cbq(hrTg, `tm:e:${sardor.id}`));
@@ -983,9 +1058,9 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('reviewersOf(hodim) ga HR qo\'shildi', (await employees.reviewersOf(akbar)).includes(50001) && !(await employees.reviewersOf(await employees.byTgId(50001))).includes(50001));
   // yangi hodimni Keldim qildiramiz (video bilan) — HR ga video borishi kerak
   await db.query('DELETE FROM attendance WHERE employee_id = $1 AND work_date = $2', [akbar.id, bugun]);
+  mark = sent.length;
   await send(msg(99999, '✅ Keldim'));
   await send(loc(99999, 41.3112, 69.2798));
-  mark = sent.length;
   await send(videoNote(99999));
   ok('HR ga Keldim videosi bordi', sent.slice(mark).some((s) => s.method === 'sendVideoNote' && Number(s.payload.chat_id) === 50001));
   ok('HR ga «keldi» matni bordi', sent.slice(mark).some((s) => Number(s.payload.chat_id) === 50001 && (s.payload.text || '').includes('keldi')));
@@ -1037,6 +1112,15 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   let wr = await fetch(`${WEB}/app`);
   ok('ilova sahifasi + qat\'iy CSP', wr.status === 200 && (wr.headers.get('content-security-policy') || '').includes("script-src 'self' https://telegram.org") && (await wr.text()).includes('/app/app.js'));
   ok('nosniff va frame-ancestors (faqat Telegram)', wr.headers.get('x-content-type-options') === 'nosniff' && (wr.headers.get('content-security-policy') || '').includes('frame-ancestors https://web.telegram.org'));
+  ok('CSP: Yandex xarita plitkalari ruxsat', (wr.headers.get('content-security-policy') || '').includes('img-src') && (wr.headers.get('content-security-policy') || '').includes('https://core-renderer-tiles.maps.yandex.net'));
+  {
+    // 14-okt: 304 da CSP bo'lmasa, Telegram keshdagi eski CSP ni ishlatib Yandex plitkalarini bloklardi
+    const r304 = await fetch(`${WEB}/app`, { headers: { 'If-None-Match': wr.headers.get('etag') } });
+    const crypto = require('crypto');
+    const html = require('fs').readFileSync(require('path').join(__dirname, '../src/web/public/index.html'));
+    ok('304 javobida ham CSP; ETag CSP ga bog\'liq (faqat tana xeshi emas)', r304.status === 304 && (r304.headers.get('content-security-policy') || '').includes('core-renderer-tiles') &&
+      wr.headers.get('etag') !== `"${crypto.createHash('sha1').update(html).digest('hex').slice(0, 16)}"`);
+  }
   wr = await fetch(`${WEB}/app/app.js`);
   ok('app.js beriladi', wr.status === 200 && (wr.headers.get('content-type') || '').includes('javascript'));
   wr = await fetch(`${WEB}/app/../src/config.js`);
@@ -1097,7 +1181,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   w = await call(20001, 'POST', '/api/tasks/assign', { employeeIds: [akbar.id, jasur.id], text: 'Web: inventarizatsiya\nWeb: hisobot', due: time.addDays(bugun, 1) });
   ok('bir nechta hodimga birdan (2 × 2 topshiriq)', w.status === 200 && w.data.results.length === 2 && w.data.results.every((x) => x.count === 2));
   ok('hodimga «Yangi topshiriq» (beruvchi ismi bilan)', sent.slice(mark).some((s) => Number(s.payload.chat_id) === 99999 && (s.payload.text || '').includes('Yangi topshiriq') && (s.payload.text || '').includes('Bobur')));
-  ok('HR va direktorga nusxa', sent.slice(mark).some((s) => Number(s.payload.chat_id) === 50001 && (s.payload.text || '').includes('Web: inventarizatsiya')));
+  ok('HR va direktorga nusxa YO\'Q (7-okt standart)', !sent.slice(mark).some((s) => [50001, 1000].includes(Number(s.payload.chat_id)) && (s.payload.text || '').includes('Web: inventarizatsiya')));
   w = await call(20001, 'POST', '/api/tasks/assign', { employeeIds: [abbosE.id], text: 'Begona bo\'limga', due: bugun });
   ok('boshqa bo\'lim hodimiga — 403', w.status === 403);
   w = await call(20001, 'POST', '/api/tasks/assign', { employeeIds: [bobur.id], text: "O'zimga", due: bugun });
@@ -1183,7 +1267,9 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
 
   // davomat nazoratchisi (Azizbek)
   w = await call(50001, 'PATCH', `/api/employees/${sardor.id}`, { salary: 1 });
-  ok('HR oklad o\'zgartira olmaydi', w.status === 403);
+  ok('HR oklad yozadi (20-okt)', w.status === 200 && Number((await employees.byTgId(30001)).salary) === 1);
+  w = await call(50001, 'PATCH', `/api/employees/${sardor.id}`, { position: 'Yangi lavozim' });
+  ok('HR lavozimni o\'zgartira olmaydi — faqat direktor', w.status === 403);
   w = await call(50001, 'PATCH', `/api/employees/${sardor.id}`, { isViewer: true });
   ok('HR «davomat nazorati» ruxsatini beradi', w.status === 200 && employees.isViewer(await employees.byTgId(30001)));
   w = await call(30001, 'GET', '/api/att/today');
@@ -1218,6 +1304,21 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   ok('noma\'lum maydon — 400', w.status === 400);
   w = await call(99999, 'PATCH', `/api/employees/${akbar.id}`, { salary: 99999999 });
   ok('hodim o\'z okladini o\'zgartira olmaydi', w.status === 403 && Number((await employees.byId(akbar.id)).salary) === 3000000);
+  // agentning uy joyi (ilova)
+  const jasurW = await employees.byTgId(40001);
+  if (employees.isField(jasurW)) {
+    w = await call(40001, 'POST', `/api/employees/${jasurW.id}/home`, { text: '40.99, 71.64' });
+    ok("ilova: agent o'z uy joyini o'zgartira olmaydi", w.status === 403);
+    w = await call(1000, 'GET', `/api/employees/${jasurW.id}`);
+    ok('ilova: kartochkada can.setHome', w.status === 200 && w.data.can.setHome === true);
+    w = await call(1000, 'POST', `/api/employees/${jasurW.id}/home`, { text: 'salom' });
+    ok('ilova: koordinatasiz — 400', w.status === 400);
+    w = await call(1000, 'POST', `/api/employees/${jasurW.id}/home`, { text: 'https://maps.google.com/maps?q=40.990204,71.646206&z=16' });
+    ok('ilova: direktor uy joyini belgiladi', w.status === 200 && Number(employees.homeOf(await employees.byTgId(40001)).lat) === 40.990204);
+    await employees.clearHome(jasurW.id);
+  }
+  w = await call(1000, 'POST', `/api/employees/${akbar.id}/home`, { text: '40.99, 71.64' });
+  ok('ilova: ofis hodimiga uy joyi yo\'q — 403', w.status === 403);
   w = await call(50001, 'PATCH', `/api/employees/${abbosE.id}`, { isViewer: true, role: 'admin' });
   ok('HR o\'zini direktor qila olmaydi', w.status === 403 && (await employees.byId(abbosE.id)).role === 'head');
   mark = sent.length;
@@ -1256,9 +1357,9 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
 
   // KPI
   w = await call(50001, 'GET', `/api/kpi/${month}`);
-  ok('HR KPI ro\'yxatini summalar bilan ko\'radi', w.status === 200 && w.data.canEdit === false && w.data.rows.some((k) => k.employeeId === akbar.id && 'bonus' in k));
+  ok('HR KPI ro\'yxatini summalar bilan ko\'radi', w.status === 200 && w.data.canEdit === true && w.data.rows.some((k) => k.employeeId === akbar.id && 'bonus' in k));
   w = await call(50001, 'PATCH', `/api/kpi/${month}/${akbar.id}`, { customPct: 100 });
-  ok('HR KPI ni o\'zgartira olmaydi', w.status === 403);
+  ok('HR KPI ni o\'zi o\'zgartiradi (21-okt)', w.status === 200 && Number((await kpi.get(akbar.id, month)).custom_pct) === 100);
   await kpi.decide(akbar.id, month, 'draft', 1000);
   w = await call(1000, 'PATCH', `/api/kpi/${month}/${akbar.id}`, { customPct: 80, headScore: 9 });
   ok('direktor mezon va bahoni kiritdi', w.status === 200 && w.data.kpi.customPct === 80 && w.data.kpi.headScore === 9);
@@ -1367,8 +1468,8 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
   const abN = (await attendance.get(nasiba.id));
   const withBtn = sent.slice(mark).filter((x) => JSON.stringify(x.payload.reply_markup || {}).includes(`ab:ok:${abN.id}`)).map((x) => Number(x.payload.chat_id)).sort();
   const nasibaHeads = (await employees.deptHeadIdsOf(nasiba)).map(Number).sort();
-  ok("kelmayman tugmalari — bo'lim rahbari (yoki boshliq), HR ga emas", !withBtn.includes(50001) && withBtn.length > 0 && (nasibaHeads.length ? JSON.stringify(withBtn) === JSON.stringify(nasibaHeads) : withBtn.includes(70001)));
-  ok("Odilxonga kelmayman — faqat bo'lim rahbari bo'lmasa (tugmali)", nasibaHeads.length ? !sent.slice(mark).some((x) => Number(x.payload.chat_id) === 70001) : withBtn.includes(70001));
+  ok("kelmayman tugmalari — bo'lim rahbari (u yo'q bo'lsa — HR)", withBtn.length > 0 && (nasibaHeads.length ? JSON.stringify(withBtn) === JSON.stringify(nasibaHeads) : withBtn.includes(50001)));
+  ok("Odilxonga kelmayman bormaydi (8-okt: rahbar yo'q bo'lsa — HR)", !sent.slice(mark).some((x) => Number(x.payload.chat_id) === 70001));
   ok('texnik direktor ma\'lumot oladi, tugmasiz', sent.slice(mark).some((x) => Number(x.payload.chat_id) === 1000 && (x.payload.text || '').includes('Bolam kasal') && !JSON.stringify(x.payload.reply_markup || {}).includes('ab:ok')));
   await send(msg(70001, '🙋 Kelmayman (sabab)'));
   ok('Odilxon (kompaniya rahbari) — kelmayman yuritilmaydi', lastText(70001).includes('kompaniya rahbari') && !(await attendance.get(odil.id)));
@@ -1412,21 +1513,46 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     await flows.assignTasks(tgBot, await access.resolve(1000), akbar, ['Direktor topshirig\'i — nusxasiz'], bugun);
     ok('direktor bergan topshiriq: HR ga nusxa yo\'q', countSince(mark, 99999) === 1 && countSince(mark, hrTg) === 0);
     mark = sent.length;
-    await flows.assignTasks(tgBot, await access.resolve(20001), akbar, ['Rahbar topshirig\'i — nusxa bilan'], bugun);
-    ok('rahbar bergan topshiriq: standart — direktor va HR ga nusxa', countSince(mark, 1000) === 1 && countSince(mark, hrTg) === 1);
-    await send(msg(1000, '/panel'));
-    ok('panelda nusxa tugmasi (yoqilgan)', findCb(1000, /^adm:htc:0$/) && JSON.stringify(to(1000).slice(-1)[0].payload.reply_markup).includes('yoqilgan'));
-    await send(cbq(hrTg, 'adm:htc:0'));
-    ok('HR nusxa sozlamasini o\'zgartira olmaydi', (await org.headTaskCopy()) === true);
-    await send(cbq(1000, 'adm:htc:0'));
-    ok('direktor o\'chirdi', (await org.headTaskCopy()) === false);
-    mark = sent.length;
     await flows.assignTasks(tgBot, await access.resolve(20001), akbar, ['Rahbar topshirig\'i — nusxasiz'], bugun);
-    ok('o\'chiq: rahbar bergan topshiriq hodimga boradi, nusxa yo\'q', countSince(mark, 99999) === 1 && countSince(mark, 1000) === 0 && countSince(mark, hrTg) === 0);
-    w = await call(1000, 'POST', '/api/settings/head-task-copy', { on: true });
-    ok('ilovada qayta yoqildi', w.status === 200 && (await org.headTaskCopy()) === true);
-    w = await call(hrTg, 'POST', '/api/settings/head-task-copy', { on: false });
-    ok('ilovada HR o\'zgartira olmaydi', w.status === 403 && (await org.headTaskCopy()) === true);
+    ok('rahbar bergan topshiriq: standart (7-okt) — boshliq va HR ga xabar YO\'Q', countSince(mark, 99999) === 1 && countSince(mark, 1000) === 0 && countSince(mark, hrTg) === 0);
+    await send(msg(1000, '/panel'));
+    ok('panelda nusxa tugmasi (o\'chiq)', findCb(1000, /^adm:htc:1$/));
+    await send(cbq(hrTg, 'adm:htc:1'));
+    ok('HR nusxa sozlamasini o\'zgartira olmaydi', (await org.headTaskCopy()) === false);
+    await send(cbq(1000, 'adm:htc:1'));
+    ok('direktor yoqdi', (await org.headTaskCopy()) === true);
+    mark = sent.length;
+    await flows.assignTasks(tgBot, await access.resolve(20001), akbar, ['Rahbar topshirig\'i — nusxa bilan'], bugun);
+    ok('yoqilgan: direktor va HR ga nusxa', countSince(mark, 99999) === 1 && countSince(mark, 1000) === 1 && countSince(mark, hrTg) === 1);
+    w = await call(1000, 'POST', '/api/settings/head-task-copy', { on: false });
+    ok('ilovada o\'chirildi', w.status === 200 && (await org.headTaskCopy()) === false);
+    w = await call(hrTg, 'POST', '/api/settings/head-task-copy', { on: true });
+    ok('ilovada HR o\'zgartira olmaydi', w.status === 403 && (await org.headTaskCopy()) === false);
+    // 7-okt: boshliq rahbar kartochkasidan «📨 Bergan topshiriqlari» ni ko'radi (xabarsiz)
+    const headEmp = await employees.byTgId(20001);
+    const lastKb = (id) => JSON.stringify((to(id).slice(-1)[0] || { payload: {} }).payload.reply_markup || {});
+    await send(cbq(1000, `emp:${headEmp.id}`));
+    ok('rahbar kartochkasida «Bergan topshiriqlari» tugmasi', lastKb(1000).includes(`emp:given:${headEmp.id}"`));
+    await send(cbq(1000, `emp:given:${headEmp.id}`));
+    const gvText = lastText(1000);
+    ok('bergan topshiriqlar: hodim ismi va topshiriq ko\'rinadi', gvText.includes('bergan topshiriqlari') && gvText.includes(akbar.full_name) && gvText.includes('Rahbar topshirig'));
+    const gcb = (lastKb(1000).match(/emp:gc:\d+:\d+/) || [])[0];
+    ok('topshiriq tugmasi bor', Boolean(gcb));
+    if (gcb) {
+      await send(cbq(1000, gcb));
+      ok('topshiriq kartochkasi (orqaga — bergan ro\'yxati)', lastText(1000).includes('Kim bergan') && lastKb(1000).includes(`emp:given:${headEmp.id}"`));
+    }
+    mark = sent.length;
+    await send(cbq(hrTg, `emp:given:${headEmp.id}`));
+    ok('HR bu ro\'yxatni ocha olmaydi (faqat boshliq)', !lastText(hrTg).includes('bergan topshiriqlari') || countSince(mark, hrTg) === 0);
+    await send(cbq(1000, `emp:${akbar.id}`));
+    ok('oddiy hodim kartochkasida tugma yo\'q', !lastKb(1000).includes('emp:given:'));
+    w = await call(1000, 'GET', `/api/employees/${headEmp.id}`);
+    ok('ilova: rahbar kartochkasida «given» (kimga, nima, holat)', w.status === 200 && Array.isArray(w.data.given) && w.data.given.some((x) => x.employee.id === akbar.id && x.title.includes('Rahbar topshirig') && x.kind));
+    w = await call(1000, 'GET', `/api/employees/${akbar.id}`);
+    ok('ilova: oddiy hodimda «given» yo\'q', w.status === 200 && w.data.given === null);
+    w = await call(hrTg, 'GET', `/api/employees/${headEmp.id}`);
+    ok('ilova: HR uchun «given» yo\'q (faqat boshliq)', w.status === 200 && w.data.given === null);
   }
 
   // =========================================================================
@@ -1741,9 +1867,9 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     const watchers = await employees.attendanceWatchersOf(await fresh(akbar));
     ok('keldi-ketdi oluvchilar: HR bor, boshliq yo\'q', watchers.includes(50001) && !watchers.includes(70001));
     await db.query('DELETE FROM attendance WHERE employee_id = $1 AND work_date = $2', [akbar.id, bugun]);
+    mark = sent.length;
     await send(msg(99999, '✅ Keldim'));
     await send(loc(99999, 41.3112, 69.2798));
-    mark = sent.length;
     await send(videoNote(99999));
     ok('Keldim: HR ga xabar + video, Odilxonga hech narsa', textTo(mark, 50001, /keldi/) && sent.slice(mark).some((x) => x.method === 'sendVideoNote' && Number(x.payload.chat_id) === 50001) && countSince(mark, 70001) === 0);
     ok('texnik direktorga (ADMIN_IDS) nusxa qoladi', countSince(mark, 1000) > 0);
@@ -1769,7 +1895,30 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     mark = sent.length;
     await send(photo(99999, 'tayyor'));
     const rvTo = (from, chatId, tid) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && JSON.stringify(x.payload.reply_markup || {}).includes(`rv:ok:${tid}`));
-    ok('Bajardim: Odilxonga tekshiruv tugmasi bilan', rvTo(mark, 70001, d1.id));
+    ok('Bajardim: Odilxonga standart bormaydi', !rvTo(mark, 70001, d1.id));
+    const dOwn = await tasks.create({ employeeId: akbar.id, title: 'Odilxon ishi', dueDate: bugun, createdBy: 70001, source: 'admin' });
+    await send(cbq(99999, `done:${dOwn.id}`));
+    mark = sent.length;
+    await send(photo(99999, 'tayyor o'));
+    ok("9-okt: Odilxon o'zi bergan topshiriq — unga boradi (tekshiruv tugmasi bilan)", rvTo(mark, 70001, dOwn.id));
+    const dSelf = await tasks.create({ employeeId: akbar.id, title: "O'zim yozdim", dueDate: bugun, createdBy: 99999, source: 'self' });
+    await send(cbq(99999, `done:${dSelf.id}`));
+    mark = sent.length;
+    await send(photo(99999, 'tayyor s'));
+    ok("hodimning o'z vazifasi — Odilxonga bormaydi", countSince(mark, 70001) === 0);
+    await send(cbq(70001, 'adm:home'));
+    ok("Panelda «Boshliqqa Bajardim» tugmasi, standart o'chiq", findCb(70001, /^adm:bdn:1$/) && !(await require('../src/services/org').bossSeesDone()));
+    await send(cbq(50001, 'adm:bdn:1'));
+    ok('HR yoqa olmaydi', !(await require('../src/services/org').bossSeesDone()));
+    await send(cbq(70001, 'adm:bdn:1'));
+    ok('boshliq yoqdi', await require('../src/services/org').bossSeesDone());
+    let wbd = await call(70001, 'GET', '/api/settings');
+    ok('ilova: sozlamalarda bossDone', wbd.status === 200 && wbd.data.bossDone === true);
+    const d1b = await tasks.create({ employeeId: akbar.id, title: 'Ombor hisoboti 2', dueDate: bugun, createdBy: 1000, source: 'admin' });
+    await send(cbq(99999, `done:${d1b.id}`));
+    mark = sent.length;
+    await send(photo(99999, 'tayyor b'));
+    ok('yoqilgach — Bajardim: Odilxonga tekshiruv tugmasi bilan', rvTo(mark, 70001, d1b.id));
     ok('Bajardim: HR ga bormadi', countSince(mark, 50001) === 0);
     ok('Bajardim: topshiriq bergan direktorga (1000) bordi', countSince(mark, 1000) > 0);
     await send(msg(50001, '🔎 Tekshiruv'));
@@ -1797,6 +1946,10 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     ok('o\'chiq bo\'lsa ham — HR o\'zi bergan topshiriq unga keladi', rvTo(mark, 50001, d3.id));
     await send(cbq(70001, `rv:ok:${d1.id}`));
     ok('Odilxon qabul qildi', (await tasks.byId(d1.id)).status === 'accepted');
+    wbd = await call(50001, 'POST', '/api/settings/boss-done', { on: false });
+    ok("ilova: HR boss-done ni o'zgartira olmaydi", wbd.status === 403);
+    wbd = await call(70001, 'POST', '/api/settings/boss-done', { on: false });
+    ok("ilova: boshliq o'chirdi", wbd.status === 200 && wbd.data.on === false);
     w = await call(50001, 'POST', '/api/me/done-notify', { on: true });
     ok('ilova: HR yoqdi', w.status === 200 && w.data.doneNotify === true && employees.wantsDoneNotify(await fresh(hr)));
     w = await call(50001, 'GET', '/api/me');
@@ -1950,7 +2103,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     ok('KPI summasi yozildi', Number((await fresh(nasiba)).bonus_fund) === 1000000);
     await send(cbq(50001, 'sal:list'));
     await send(cbq(50001, `sal:s:${nasiba.id}`));
-    ok('HR oylikni o\'zgartira olmaydi', session.get(50001).step !== 'edit_salary');
+    ok('HR oylik (oklad) kiritadi — 20-okt', session.get(50001).step === 'edit_salary');
     session.clear(50001);
   }
 
@@ -2183,7 +2336,7 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     ok('hodim: «✅ Bajarilgan»', lastText(99999).includes('BAJARILGAN'));
     await send(msg(70001, '⏳ Faol'));
     tx = lastText(70001);
-    ok('boshliq: avval hodimlar ro\'yxati (ism + soni), vazifa matnlari yo\'q', tx.includes('Hamma hodimlar') && /<b>Akbar Karimov<\/b> — \d+ ta/.test(tx) && !tx.includes('Mijozlar bazasini') && findCb(70001, new RegExp(`^sk:a:e${akbar.id}:0$`)));
+    ok('boshliq: avval hodimlar ro\'yxati (ism + soni), vazifa matnlari yo\'q', tx.includes('Men bergan') && /<b>Akbar Karimov<\/b> — \d+ ta/.test(tx) && !tx.includes('Mijozlar bazasini') && findCb(70001, new RegExp(`^sk:a:e${akbar.id}:0$`)));
     await send(cbq(70001, `sk:a:e${akbar.id}:0`));
     tx = lastText(70001);
     ok('hodimni bosdi — faqat uning vazifalari', tx.includes('Akbar Karimov') && tx.includes('Mijozlar bazasini') && !tx.includes('Hodim vazifasi') && findCb(70001, new RegExp(`^sk:c:a:${akbar.id}:${st.id}$`)) && findCb(70001, /^sk:a:t:0$/));
@@ -2193,6 +2346,31 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     ok('ilova: hodim bo\'yicha holat', w.status === 200 && w.data.empName === 'Akbar Karimov' && w.data.tasks.length > 0 && w.data.tasks.every((t) => t.employee.id === Number(akbar.id)));
     await send(cbq(70001, 'sk:a:m:0'));
     ok('boshliq: «faqat meniki»', lastText(70001).includes('Meniki') && lastText(70001).includes('Investor bilan uchrashuv') && !lastText(70001).includes('Mijozlar bazasini'));
+    // 8-okt: boshliqning «Faol» ro'yxati — faqat o'zi bergan; rahbarlar bergani — Panel «📨 Bo'lim rahbarlari bergan»
+    {
+      const access = require('../src/services/access');
+      const boshliq = await access.resolve(70001);
+      const lists = await access.tasksByKind(boshliq, 'active');
+      ok('boshliq jamoa ro\'yxati — faqat o\'zi bergan topshiriqlar', lists.length > 0 && lists.every((t) => Number(t.created_by) === 70001));
+      const bb = await employees.byTgId(20001);
+      const hm = await tasks.create({ employeeId: akbar.id, title: 'Rahbar topshirig\'i 8-okt', dueDate: time.addDays(bugun, 3), createdBy: 20001, source: 'head' });
+      ok('… rahbar bergani boshliq ro\'yxatida yo\'q', !(await access.tasksByKind(boshliq, 'active')).some((t) => Number(t.id) === Number(hm.id)));
+      ok('Panelda «📨 Bo\'lim rahbarlari bergan topshiriqlar» tugmasi', ui.panelKeyboard().reply_markup.inline_keyboard.flat().some((b) => b.callback_data === 'adm:hg'));
+      await send(cbq(70001, 'adm:hg'));
+      tx = lastText(70001);
+      ok('adm:hg — rahbarlar ro\'yxati va soni', tx.includes("BO'LIM RAHBARLARI BERGAN") && tx.includes(bb.full_name) && findCb(70001, new RegExp(`^adm:hgv:${bb.id}$`)));
+      await send(cbq(70001, `adm:hgv:${bb.id}`));
+      tx = lastText(70001);
+      ok('rahbarni bosdi — kimga, nima bergan', tx.includes('bergan topshiriqlari') && tx.includes('Akbar Karimov') && tx.includes("Rahbar topshirig'i 8-okt") && findCb(70001, new RegExp(`^adm:hgc:${bb.id}:${hm.id}$`)) && findCb(70001, /^adm:hg$/));
+      await send(cbq(70001, `adm:hgc:${bb.id}:${hm.id}`));
+      ok('… kartochka, orqaga — rahbarga', lastText(70001).includes("Rahbar topshirig'i 8-okt") && findCb(70001, new RegExp(`^adm:hgv:${bb.id}$`)));
+      await send(cbq(99999, 'adm:hg'));
+      ok('hodim adm:hg ni ocha olmaydi', !lastText(99999).includes("BO'LIM RAHBARLARI BERGAN"));
+      await db.query("UPDATE tasks SET status = 'cancelled' WHERE id = $1", [hm.id]);
+      const mk = sent.length;
+      await flowsS.assignTasks({ telegram: bot.telegram }, boshliq, akbar, ['qalin <matn> sinov'], time.addDays(bugun, 2));
+      ok('yangi topshiriq matni qalin blokda (katta harf)', textTo(mk, Number(akbar.tg_id), /<blockquote>📌 <b>QALIN &lt;MATN&gt; SINOV<\/b><\/blockquote>/));
+    }
     await send(msg(50001, '⏳ Faol'));
     ok('HR: boshliq bergan topshiriq ko\'rinmaydi', lastText(50001).includes('FAOL') && !lastText(50001).includes('Mijozlar bazasini') && !lastText(50001).includes('Investor bilan'));
     await send(msg(20001, '⏳ Faol'));
@@ -2545,11 +2723,28 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     await send(msg(50001, '/yordam_video'));
     ok('HR video yuklay olmaydi', session.get(50001).step !== 'help_video');
     await send(msg(1000, '/yordam_video'));
+    await send(cbq(1000, 'hv:set:employee'));
     await send(video(1000));
-    ok('boshliq /yordam videosini yukladi', Boolean(await require('../src/handlers/common').helpVideo()));
+    ok('boshliq /yordam videosini yukladi (hodimlar)', Boolean(await require('../src/handlers/common').helpVideo('employee', { own: true })));
+    await send(cbq(50001, 'hv:set:staff'));
+    ok('HR rol videosini yuklay olmaydi', session.get(50001).step !== 'help_video');
+    await send(cbq(1000, 'hv:set:staff'));
+    const hvStaff = { ...video(1000) };
+    hvStaff.message = { ...hvStaff.message, video: { ...hvStaff.message.video, file_id: 'STAFF_HELP_VIDEO' } };
+    await send(hvStaff);
+    ok('rahbar/HR videosi alohida saqlandi', ((await require('../src/handlers/common').helpVideo('staff')) || {}).fileId === 'STAFF_HELP_VIDEO');
+    const vidTo = (from, chatId, fid) => sent.slice(from).some((x) => x.method === 'sendVideo' && Number(x.payload.chat_id) === chatId && (!fid || x.payload.video === fid));
     mark = sent.length;
     await send(msg(60021, '/yordam'));
-    ok('/yordam — avval video, keyin matn', sent.slice(mark).some((x) => x.method === 'sendVideo' && Number(x.payload.chat_id) === 60021) && textTo(mark, 60021, /keldim/i));
+    ok('/yordam — avval video, keyin matn', vidTo(mark, 60021, 'VIDEO_FILE_ID') && textTo(mark, 60021, /Keldim/));
+    mark = sent.length;
+    await send(msg(50001, '/yordam'));
+    ok("/yordam — HR o'z videosini oladi", vidTo(mark, 50001, 'STAFF_HELP_VIDEO') && !vidTo(mark, 50001, 'VIDEO_FILE_ID'));
+    mark = sent.length;
+    await send(msg(1000, '/yordam'));
+    ok('/yordam — boshliq videosi yuklanmagan, hodimlarniki chiqmaydi', !vidTo(mark, 1000));
+    await send(cbq(1000, 'hv:del:staff'));
+    ok('rol videosini olib tashlash', !(await require('../src/handlers/common').helpVideo('staff', { own: true })));
 
     // 4. Dam olish kuniga chaqiruv
     let off = time.addDays(bugun, 1);
@@ -2592,15 +2787,1249 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     ok("uy joyi bor agentlarga / ofis hodimlariga bormaydi", !textTo(mark, 99999, /Uy joylashuvingizni/));
     session.clear(60031);
     await send({ update_id: Date.now() % 1e9, message: { message_id: 1, from: USERS[60031], chat: { id: 60031, type: 'private' }, date: Math.floor(Date.now() / 1000), location: { latitude: 41.2, longitude: 69.2 }, venue: { location: { latitude: 41.2, longitude: 69.2 }, title: 'Kafe', address: 'x' } } });
-    ok('xaritadan tanlangan joy (venue) — rad', !employees.homeOf(await employees.byTgId(60031)));
-    session.clear(60031);
+    // 7-okt: tugma shart emas — 📎 → Joylashuv (xaritadan tanlangani ham) uy joyi bo'ladi, bosqich bo'lmasa ham
+    ag = await employees.byTgId(60031);
+    ok("7-okt: xaritadan tanlangan joy (venue) ham uy joyi bo'ldi", Boolean(employees.homeOf(ag)) && lastText(60031).includes('saqlandi'));
+    session.set(60031, { step: 'awaiting_home_location' });
     await send(loc(60031, 41.21, 69.21));
     ag = await employees.byTgId(60031);
-    ok('bosqichsiz yuborilgan joylashuv ham uy joyi bo\'ldi — «saqlandi»', Boolean(employees.homeOf(ag)) && lastText(60031).includes('saqlandi'));
+    ok("bir marta: ikkinchisi qabul qilinmaydi", Math.abs(employees.homeOf(ag).lat - 41.2) < 1e-6 && lastText(60031).includes('allaqachon'));
+    session.clear(60031);
+    mark = sent.length;
+    await send(cbq(1000, `emp:home:${ag.id}`));
+    ok("boshliq tozaladi — agentga «qaytadan yuboring» (📎 ham)", !employees.homeOf(await employees.byTgId(60031)) && textTo(mark, 60031, /tozalandi.*[\s\S]*Joriy joylashuvni yuborish/));
+    session.set(60031, { step: 'self_task_text' });
+    await send(loc(60031, 41.21, 69.21));
+    ag = await employees.byTgId(60031);
+    ok("boshqa bosqichda bo'lsa ham — yangi uy joyi saqlandi", Math.abs(employees.homeOf(ag).lat - 41.21) < 1e-6 && lastText(60031).includes('saqlandi'));
+    session.clear(60031);
+    // bir martalik xabar hamma agentlarga
+    await db.setSetting('home_ask_sent', '');
+    USERS[60032] = { id: 60032, first_name: 'Agent2' };
+    await employees.add({ tgId: 60032, fullName: 'Agent Uysiz', position: 'Agent', role: 'employee' });
+    await employees.setWorkMode((await employees.byTgId(60032)).id, 'field');
+    mark = sent.length;
+    const nAsk = await flows.broadcastHomeAsk({ telegram: bot.telegram });
+    ok("bir martalik xabar: uysizga «yuboring», uyi borga «saqlangan»", nAsk >= 2 && textTo(mark, 60032, /Uy joylashuvingizni yuboring/) && textTo(mark, 60031, /Uy joylashuvingiz saqlangan/) && !textTo(mark, 99999, /Uy joylashuv/));
+    mark = sent.length;
+    ok("ikkinchi marta yuborilmaydi", (await flows.broadcastHomeAsk({ telegram: bot.telegram })) === 0 && !textTo(mark, 60032, /Uy joylashuv/));
+    session.clear(60032);
+    await employees.deactivate((await employees.byTgId(60032)).id);
     mark = sent.length;
     nRem = await flows.remindHomeLocation({ telegram: bot.telegram });
     ok('saqlangandan keyin eslatma bormaydi', !textTo(mark, 60031, /Uy joylashuvingizni/));
     await employees.deactivate(ag.id);
+  }
+
+  // =========================================================================
+  console.log('\n— 38. 6-okt: agent jonli joylashuvi (Live Location) —');
+  {
+    const live = require('../src/services/live');
+    const textTo = (from, chatId, re) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && re.test(x.payload.text || x.payload.caption || ''));
+    const nowS = () => Math.floor(Date.now() / 1000);
+    USERS[60041] = { id: 60041, first_name: 'Jonli', username: 'jonli_agent' };
+    USERS[60042] = { id: 60042, first_name: 'Rahbar', username: 'live_head' };
+    USERS[60043] = { id: 60043, first_name: 'Yoqmagan' };
+    const { department: ld } = await departments.create('Jonli bolim');
+    await employees.add({ tgId: 60042, fullName: 'Jonli Rahbar', position: 'Rahbar', role: 'head', departmentId: ld.id });
+    await employees.add({ tgId: 60041, fullName: 'Jonli Agent', position: 'Agent', role: 'employee', departmentId: ld.id });
+    await employees.add({ tgId: 60043, fullName: 'Yoqmagan Agent', position: 'Agent', role: 'employee', departmentId: ld.id });
+    const HOME = [41.30, 69.20];
+    const FAR = [41.33, 69.25];
+    for (const tgId of [60041, 60043]) {
+      const e = await employees.byTgId(tgId);
+      await employees.setWorkMode(e.id, 'field');
+      await employees.setHome(e.id, HOME[0], HOME[1]);
+      await employees.setWorkEnd(e.id, '23:59');
+      await months.confirm(e.id);
+    }
+    let ag = await employees.byTgId(60041);
+    const liveMsg = (from, id, lat, lon, period, date = nowS()) => ({ update_id: (uid += 1), message: { message_id: id, from: USERS[from], chat: { id: from, type: 'private' }, date, location: { latitude: lat, longitude: lon, live_period: period, horizontal_accuracy: 12 } } });
+    const liveEdit = (from, id, lat, lon, period, date, editDate) => ({ update_id: (uid += 1), edited_message: { message_id: id, from: USERS[from], chat: { id: from, type: 'private' }, date, edit_date: editDate, location: { latitude: lat, longitude: lon, ...(period ? { live_period: period } : {}) } } });
+
+    // Keldim (oddiy joylashuv) → jonli joylashuvni yoqish taklifi
+    mark = sent.length;
+    await send(msg(60041, '/keldim'));
+    await send(loc(60041, FAR[0], FAR[1]));
+    await send(cbq(60041, 'ci:novideo'));
+    session.clear(60041);
+    ok('agent Keldim qildi', await attendance.isCheckedIn(ag.id));
+    ok('Keldimdan keyin — «Jonli joylashuvni yoqing» ko\'rsatmasi', textTo(mark, 60041, /Jonli joylashuvni yoqing/));
+    ok("hodim klaviaturasida «Agentlar qayerda» yo'q, rahbarda bor",
+      !JSON.stringify(ui.kbForEmp(ag)).includes(ui.BTN.agents) && JSON.stringify(ui.kbForEmp(await employees.byTgId(60042))).includes(ui.BTN.agents));
+
+    // jonli joylashuv boshlandi
+    const t0 = nowS() - 900;
+    mark = sent.length;
+    await send(liveMsg(60041, 5001, FAR[0], FAR[1], live.FOREVER, t0));
+    let sh = await live.latest(ag.id);
+    ok('jonli joylashuv qayd etildi (cheksiz)', sh && Number(sh.message_id) === 5001 && !sh.live_until && !sh.stopped_at);
+    ok('agentga «ulandi» javobi', textTo(mark, 60041, /Jonli joylashuv ulandi/));
+    ok('birinchi yo\'l nuqtasi yozildi', (await live.points(ag.id)).length === 1);
+
+    // harakat — Telegram xabarni tahrirlaydi
+    await send(liveEdit(60041, 5001, 41.335, 69.255, live.FOREVER, t0, t0 + 120));
+    await send(liveEdit(60041, 5001, 41.3351, 69.2551, live.FOREVER, t0, t0 + 130));
+    await send(liveEdit(60041, 5001, 41.34, 69.26, live.FOREVER, t0, t0 + 300));
+    const pts = await live.points(ag.id);
+    ok('har harakat — nuqta (10 soniyalik takror yozilmaydi)', pts.length === 3, `nuqtalar: ${pts.length}`);
+    sh = await live.latest(ag.id);
+    ok('oxirgi joy yangilandi', Number(sh.last_lat) === 41.34);
+    ok("yo'l uzunligi hisoblanadi", live.pathLength(pts) > 1000);
+    ok("to'xtash topiladi (bir joyda 20 daq)", live.stops([
+      { at: '2026-10-06T09:00:00+05:00', lat: '41.3', lon: '69.2' }, { at: '2026-10-06T09:10:00+05:00', lat: '41.3001', lon: '69.2001' },
+      { at: '2026-10-06T09:25:00+05:00', lat: '41.35', lon: '69.3' }]).length === 1);
+    ok('Yandex Maps marshrut havolasi (rtext = lat,lon~…)', /^https:\/\/yandex\.uz\/maps\/\?rtext=-?\d+\.\d{5},-?\d+\.\d{5}(~-?\d+\.\d{5},-?\d+\.\d{5})+&rtt=auto$/.test(live.routeUrl(pts)));
+    ok('xaritada havolasi — Yandex (pt = lon,lat)', live.mapLink(40.99, 71.64).includes('https://yandex.uz/maps/?pt=71.640000,40.990000'));
+
+    // ko'ruvchi: bo'lim rahbari
+    mark = sent.length;
+    await send(msg(60042, ui.BTN.agents));
+    ok("rahbar «Agentlar qayerda» — o'z agenti jonli", textTo(mark, 60042, /Jonli Agent<\/b> — 🟢 jonli/));
+    await send(cbq(60042, `lv:e:${ag.id}`));
+    ok("agent kartochkasi — yurgan yo'li", /Bugun yurgan yo'li/.test(lastText(60042)) && /Marshrut/.test(lastText(60042)));
+    mark = sent.length;
+    await send(cbq(60042, `lv:p:${ag.id}`));
+    ok('«Joyini yuborish» — sendLocation', sent.slice(mark).some((x) => x.method === 'sendLocation' && Number(x.payload.chat_id) === 60042));
+    mark = sent.length;
+    await send(msg(99999, ui.BTN.agents));
+    ok('oddiy hodim — ruxsat yo\'q', textTo(mark, 99999, /Faqat boshliq, HR/));
+    await send(cbq(99999, `lv:e:${ag.id}`));
+    ok("oddiy hodim agent kartochkasini ocholmaydi", sent.slice(mark).some((x) => x.method === 'answerCallbackQuery' && /Ruxsat/.test(x.payload.text || '')));
+    const actorHead = await require('../src/services/access').resolve(60042);
+    ok("rahbar — boshqa bo'lim agentini ko'rmaydi", !require('../src/services/access').canSeeLive(actorHead, { ...ag, department_id: 999999 }));
+
+    // ilova API
+    let w = await call(60042, 'GET', '/api/live');
+    ok('ilova: /api/live — rahbar o\'z agentini ko\'radi', w.status === 200 && w.data.rows.some((r) => r.id === ag.id && r.kind === 'live'));
+    w = await call(60042, 'GET', `/api/live/${ag.id}`);
+    ok("ilova: agent yo'li (nuqtalar, masofa)", w.status === 200 && w.data.points.length === 3 && w.data.distanceM > 0 && w.data.home);
+    w = await call(99999, 'GET', `/api/live/${ag.id}`);
+    ok('ilova: oddiy hodim — 403', w.status === 403);
+    w = await call(60042, 'GET', `/api/live/${ag.id}?date=2999-01-01`);
+    ok('ilova: kelajak sana — 400', w.status === 400);
+    w = await call(60042, 'GET', `/api/live?date=${time.addDays(time.today(), -1)}`);
+    ok("ilova: ro'yxat kecha uchun (today=false, agent bor, jonli emas)", w.status === 200 && w.data.today === false && w.data.rows.some((r) => r.id === ag.id && r.kind !== 'live'));
+    w = await call(60042, 'GET', '/api/live?date=2999-01-01');
+    ok("ilova: ro'yxat kelajak sana — 400", w.status === 400);
+    w = await call(60042, 'GET', '/api/me');
+    ok('ilova: /api/me canLive', w.status === 200 && w.data.roles.canLive === true);
+
+    // 30 daq yangilanmadi → rahbarga; keyin tiklandi
+    await db.query('UPDATE live_shares SET last_at = $1 WHERE id = $2', [time.stampOf(nowS() - 40 * 60), sh.id]);
+    mark = sent.length;
+    await live.watch({ telegram: bot.telegram });
+    ok('yangilanmasa — rahbarga ogohlantirish', textTo(mark, 60042, /yangilanmayapti/));
+    ok('… agentga ham', textTo(mark, 60041, /yangilanmayapti/));
+    ok("… agentga: «Telegram'ni oching» va iPhone/Android sozlamasi", textTo(mark, 60041, /Telegram'ni oching[\s\S]*iPhone[\s\S]*Har doim[\s\S]*Android/));
+    ok('yopiq xabar + yo\'riqnoma 4096 dan oshmaydi', (live.blockedText(null) + live.LIVE_PROMPT).length + 400 < 4096 && live.LIVE_PROMPT.includes('Har doim'));
+    mark = sent.length;
+    await live.watch({ telegram: bot.telegram });
+    ok('ogohlantirish bir marta', !textTo(mark, 60042, /yangilanmayapti/));
+    await send(liveEdit(60041, 5001, 41.345, 69.265, live.FOREVER, t0, nowS()));
+    ok('yana yangilansa — «tiklandi»', textTo(mark, 60042, /tiklandi/));
+
+    // agent o'chirdi (live_period yo'q tahrir)
+    mark = sent.length;
+    await send(liveEdit(60041, 5001, 41.345, 69.265, 0, t0, nowS()));
+    sh = await live.latest(ag.id);
+    ok("o'chirdi — qayd etildi", sh.stop_reason === 'stopped' && Boolean(sh.stopped_at));
+    ok("… rahbarga «o'chirdi»", textTo(mark, 60042, /jonli joylashuvni <b>o'chirdi<\/b>/));
+    ok('… agentga «qayta yoqing»', textTo(mark, 60041, /to'xtadi/));
+    ok('holat — 🔴', (await live.statusOf(ag)).kind === 'stopped');
+    const nPts = (await live.points(ag.id)).length;
+    await send(liveEdit(60041, 5001, 41.4, 69.3, live.FOREVER, t0, nowS()));
+    ok("to'xtatilgan xabar tahriri yozilmaydi", (await live.points(ag.id)).length === nPts);
+
+    // qayta yoqdi — 8 soatga (ish tugashigacha yetmaydi)
+    mark = sent.length;
+    await send(liveMsg(60041, 5002, 41.35, 69.27, 60));
+    ok("qayta yoqdi — rahbarga «qayta yoqdi»", textTo(mark, 60042, /qayta yoqdi/));
+    ok("qisqa muddat — agentga «Men o'chirgunimcha» maslahati", textTo(mark, 60041, /yetmaydi/));
+    await db.query('UPDATE live_shares SET live_until = $1 WHERE employee_id = $2 AND message_id = 5002', [time.stampOf(nowS() - 60), ag.id]);
+    mark = sent.length;
+    await live.watch({ telegram: bot.telegram });
+    ok('muddati tugadi — agent va rahbarga', textTo(mark, 60041, /muddati <b>tugadi/) && textTo(mark, 60042, /muddati tugadi/));
+    ok('holat — muddati tugagan', (await live.latest(ag.id)).stop_reason === 'expired');
+
+    // umuman yoqmagan agent — 10 daq dan keyin o'ziga, 30 daq dan keyin rahbarga (bir marta)
+    const ag2 = await employees.byTgId(60043);
+    await attendance.checkIn(ag2, { at: time.stampOf(nowS() - 45 * 60), mode: 'field', lat: FAR[0], lon: FAR[1] });
+    mark = sent.length;
+    await live.watch({ telegram: bot.telegram });
+    ok('yoqmagan agentga eslatma', textTo(mark, 60043, /Jonli joylashuvni yoqing/));
+    ok("rahbarga «jonli joylashuvni yoqmadi»", textTo(mark, 60042, /Yoqmagan Agent<\/b> keldi.*yoqmadi/));
+    mark = sent.length;
+    await live.watch({ telegram: bot.telegram });
+    ok('takror yuborilmaydi', !textTo(mark, 60043, /Jonli joylashuvni yoqing/) && !textTo(mark, 60042, /yoqmadi/));
+
+    // 7-okt: o'chiq bo'lsa — agentga har 10 daqiqada, boshqa hech narsa ishlamaydi
+    await db.query('UPDATE attendance SET live_nudge_at = $1 WHERE employee_id = $2', [time.stampOf(nowS() - 11 * 60), ag2.id]);
+    mark = sent.length;
+    await live.watch({ telegram: bot.telegram });
+    ok('10 daqiqadan keyin agentga yana «Joylashuvni yoqing!»', textTo(mark, 60043, /Joylashuvni yoqing!/) && !textTo(mark, 60042, /yoqmadi/));
+    ok("o'chiq — offFor", await live.offFor(ag2));
+    mark = sent.length;
+    await send(msg(60043, ui.BTN.myTasks));
+    ok("o'chiq — «Topshiriqlarim» yopiq", textTo(mark, 60043, /Jonli joylashuvingiz o'chiq/));
+    mark = sent.length;
+    await send(cbq(60043, 'sk:a:m:0'));
+    ok("o'chiq — inline tugma ham yopiq", sent.slice(mark).some((x) => x.method === 'answerCallbackQuery' && /o'chiq/.test(x.payload.text || '')));
+    w = await call(60043, 'GET', '/api/tasks/my');
+    ok("o'chiq — ilova API 423", w.status === 423 && w.data.code === 'live_off');
+    w = await call(60043, 'GET', '/api/me');
+    ok("o'chiq — /api/me ochiq, liveOff", w.status === 200 && w.data.liveOff === true);
+    mark = sent.length;
+    await send(msg(60043, ui.BTN.checkOut));
+    ok("o'chiq — «Ketdim» ishlaydi", textTo(mark, 60043, /Ishdan ketyapsizmi/));
+    session.clear(60043);
+    ok('ofis hodimi — hech qachon yopilmaydi', !(await live.offFor(await employees.byTgId(99999))));
+    // 8-okt: agent jonli o'rniga oddiy joylashuv yubordi — «Avval Keldim» emas, «bu jonli emas» deyiladi
+    mark = sent.length;
+    await send(loc(60043, FAR[0], FAR[1]));
+    ok("o'chiq — oddiy joylashuv: «Avval Keldim» emas", !textTo(mark, 60043, /Avval «✅ Keldim» tugmasini bosing/));
+    ok("o'chiq — oddiy joylashuv: «jonli emas» tushuntirishi", textTo(mark, 60043, /oddiy \(bir martalik\) joylashuv/) && textTo(mark, 60043, /Jonli joylashuvni ulashish/));
+    mark = sent.length;
+    await send(msg(60043, ui.BTN.checkIn));
+    ok("o'chiq — «Keldim» qayta: «allaqachon kelgansiz»", textTo(mark, 60043, /allaqachon kelgansiz/) && textTo(mark, 60043, /Jonli joylashuvni yoqing/));
+    ok("o'chiq — yopiq xabarda «📵 Jonli joylashuv ishlamayapti» tugmasi", sent.slice(mark).some((x) => Number(x.payload.chat_id) === 60043 && /lv:nl/.test(JSON.stringify(x.payload.reply_markup || {}))));
+    // 8-okt: «📵 Jonli joylashuv ishlamayapti» — sabab → rahbar/HR ga, bugun bot ochiq
+    mark = sent.length;
+    await send(cbq(60043, 'lv:nl'));
+    ok('📵 — sabab so\'raladi', textTo(mark, 60043, /nega ishlamayapti/) && session.get(60043).step === 'live_noloc');
+    mark = sent.length;
+    await send(msg(60043, "Telegram'da jonli joylashuv yo'q"));
+    ok('📵 — agentga «bot ochiq»', textTo(mark, 60043, /Bugun bot sizga ochiq/));
+    ok('📵 — rahbarga sabab bilan', textTo(mark, 60042, /jonli joylashuv ishlamayapti.*\n.*jonli joylashuv yo'q/));
+    ok('📵 — offFor endi false', !(await live.offFor(ag2)));
+    ok('📵 — rahbar ro\'yxatida «sabab bilan»', (await live.statusOf(ag2)).kind === 'excused');
+    mark = sent.length;
+    await send(msg(60043, ui.BTN.myTasks));
+    ok('📵 — «Topshiriqlarim» ochiq', !textTo(mark, 60043, /Jonli joylashuvingiz o'chiq/));
+    mark = sent.length;
+    await live.watch({ telegram: bot.telegram });
+    ok('📵 — cron eslatmasi yo\'q', !textTo(mark, 60043, /Joylashuvni yoqing!/));
+    await db.query('UPDATE attendance SET live_excused_at = NULL, live_excuse = NULL WHERE employee_id = $1', [ag2.id]);
+    await send(liveMsg(60043, 5101, FAR[0], FAR[1], live.FOREVER));
+    mark = sent.length;
+    await send(msg(60043, ui.BTN.myTasks));
+    ok('yoqgandan keyin — bot yana ishlaydi', !textTo(mark, 60043, /Jonli joylashuvingiz o'chiq/) && !(await live.offFor(ag2)));
+    w = await call(60043, 'GET', '/api/tasks/my');
+    ok('yoqgandan keyin — ilova ishlaydi', w.status === 200);
+
+    // ish vaqtidan keyin jonli joylashuvsiz, Ketdim — kuzatuv tugaydi
+    await send(liveMsg(60041, 5003, 41.36, 69.28, live.FOREVER));
+    ok('yangi jonli joylashuv faol', live.isActive(await live.latest(ag.id)));
+    mark = sent.length;
+    await send(msg(60041, '/ketdim'));
+    await send(loc(60041, FAR[0], FAR[1]));
+    await send(msg(60041, 'Mijozlarni aylanib chiqdim'));
+    ok('Ketdim — «kuzatuv tugadi»', textTo(mark, 60041, /Kuzatuv tugadi/));
+    ok('jonli joylashuv to\'xtatildi (checkout)', (await live.latest(ag.id)).stop_reason === 'checkout');
+    const nAfter = (await live.points(ag.id)).length;
+    await send(liveEdit(60041, 5003, 41.5, 69.5, live.FOREVER, nowS() - 10, nowS()));
+    ok('Ketdimdan keyin yo\'l yozilmaydi', (await live.points(ag.id)).length === nAfter);
+    mark = sent.length;
+    await live.watch({ telegram: bot.telegram });
+    ok('ketgan agent haqida ogohlantirish yo\'q', !textTo(mark, 60042, /Jonli Agent/));
+
+    // ofis hodimining jonli joylashuvi kuzatilmaydi
+    const office99 = await employees.byTgId(99999);
+    const before = await db.count('SELECT COUNT(*) AS c FROM live_shares WHERE employee_id = $1', [office99.id]);
+    if (!employees.isField(office99)) {
+      await send(liveMsg(99999, 5004, 41.3, 69.2, live.FOREVER));
+      ok('ofis hodimi — jonli joylashuv kuzatilmaydi', (await db.count('SELECT COUNT(*) AS c FROM live_shares WHERE employee_id = $1', [office99.id])) === before);
+    }
+    for (const tgId of [60041, 60042, 60043]) await employees.deactivate((await employees.byTgId(tgId)).id);
+  }
+
+  // =========================================================================
+  console.log("\n— 39. Ishdan javob so'rash (chiqib kelish / erta ketish) —");
+  {
+    const leaves = require('../src/services/leaves');
+    const flows = require('../src/services/flows');
+    const textTo = (from, chatId, re) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && re.test(x.payload.text || x.payload.caption || ''));
+    USERS[60051] = { id: 60051, first_name: 'Javobchi' };
+    USERS[60052] = { id: 60052, first_name: 'Javob', last_name: 'Rahbar' };
+    USERS[60053] = { id: 60053, first_name: 'Webchi' };
+    const { department: jd } = await departments.create('Javob bolim');
+    await employees.add({ tgId: 60052, fullName: 'Javob Rahbar', position: 'Rahbar', role: 'head', departmentId: jd.id });
+    await employees.add({ tgId: 60051, fullName: 'Javob Hodim', position: 'Hodim', role: 'employee', departmentId: jd.id });
+    await employees.add({ tgId: 60053, fullName: 'Web Javob', position: 'Hodim', role: 'employee', departmentId: jd.id });
+    let jh = await employees.byTgId(60051);
+    let jw = await employees.byTgId(60053);
+    for (const e of [jh, jw]) { await employees.setWorkEnd(e.id, '23:59'); await months.confirm(e.id); }
+    // obyektni qayta o'qiymiz — aks holda work_end eski (null) bo'lib, test soat 18:00 dan keyin yiqiladi
+    jh = await employees.byTgId(60051);
+    jw = await employees.byTgId(60053);
+    ok("menyuda «Javob so'rash» tugmasi", JSON.stringify(ui.kbForEmp(await employees.byTgId(60051))).includes(ui.BTN.leave));
+
+    let mark = sent.length;
+    await send(msg(60051, ui.BTN.leave));
+    ok('Keldimsiz — javob so\'ralmaydi', textTo(mark, 60051, /Avval/) && !findCb(60051, /^jv:k:/));
+    await attendance.checkIn(jh, { at: time.stamp(), mode: 'office' });
+    await send(msg(60051, ui.BTN.leave));
+    ok('vaqt tanlash tugmalari (1–3 soat, bugunga)', findCb(60051, /^jv:k:day$/) && findCb(60051, /^jv:k:60$/));
+    await send(cbq(60051, 'jv:k:day'));
+    ok('sabab so\'raldi (leave_reason)', session.get(60051).step === 'leave_reason' && session.get(60051).leaveKind === 'day');
+    mark = sent.length;
+    await send(msg(60051, 'Shifokorga borishim kerak'));
+    let lr = await leaves.latest(jh.id);
+    ok("so'rov bazada pending", lr && lr.status === 'pending' && lr.kind === 'day' && lr.reason === 'Shifokorga borishim kerak');
+    const jvOk = findCb(60052, /^jv:ok:\d+$/);
+    ok("bo'lim rahbariga — «Javob berish» tugmasi", Boolean(jvOk) && textTo(mark, 60052, /javob so'rayapti/));
+    ok('HR ga — tugmasiz xabar', textTo(mark, 50001, /javob so'rayapti/) && !sent.slice(mark).some((x) => Number(x.payload.chat_id) === 50001 && JSON.stringify(x.payload.reply_markup || {}).includes('jv:ok')));
+    ok('hodimga «yuborildi»', textTo(mark, 60051, /yuborildi/));
+    mark = sent.length;
+    await send(msg(60051, '/javob'));
+    ok("ikkinchi so'rov — «ko'rib chiqilmoqda»", textTo(mark, 60051, /ko'rib chiqilmoqda/));
+    await send(cbq(60051, jvOk));
+    ok("hodim o'ziga javob bera olmaydi", (await leaves.byId(lr.id)).status === 'pending');
+    await send(cbq(50001, jvOk));
+    ok('HR javob bermaydi (faqat ko\'radi)', (await leaves.byId(lr.id)).status === 'pending');
+    mark = sent.length;
+    await send(cbq(60052, jvOk));
+    lr = await leaves.byId(lr.id);
+    ok('rahbar javob berdi → approved', lr.status === 'approved' && Number(lr.decided_by) === 60052 && lr.decided_name === 'Javob Rahbar');
+    ok('hodimga «Javob berildi»', textTo(mark, 60051, /Javob berildi/));
+    await send(cbq(60052, `jv:no:${lr.id}`));
+    ok('qaror bir marta', (await leaves.byId(lr.id)).status === 'approved');
+    if (time.isWorkDay(bugun)) {
+      mark = sent.length;
+      const r = await flows.checkOut({ telegram: bot.telegram }, jh, { note: 'Shifokorga ketdim' });
+      ok("Ketdim — «erta ketdi» o'rniga «javob olgan»", Boolean(r.leave) && textTo(mark, 60052, /javob olgan/) && !textTo(mark, 60052, /erta ketdi/));
+    }
+
+    // ilova: so'rov, holat, rad etish
+    await attendance.checkIn(jw, { at: time.stamp(), mode: 'office' });
+    let w = await call(60053, 'POST', '/api/att/leave', { kind: '5', reason: 'x' });
+    ok("ilova: noto'g'ri vaqt — 400", w.status === 400);
+    w = await call(60053, 'POST', '/api/att/leave', { kind: '60', reason: 'Bankka' });
+    ok("ilova: javob so'rovi", w.status === 200 && (await leaves.latest(jw.id)).kind === '60');
+    w = await call(60053, 'POST', '/api/att/leave', { kind: '60', reason: 'Yana' });
+    ok('ilova: kutilayotgan bor — 400', w.status === 400);
+    w = await call(60053, 'GET', '/api/me');
+    ok('ilova: /api/me — leave pending', w.status === 200 && w.data.attendance.leave && w.data.attendance.leave.status === 'pending');
+    mark = sent.length;
+    await send(cbq(60052, `jv:no:${(await leaves.latest(jw.id)).id}`));
+    ok('rad etildi → hodimga xabar', (await leaves.latest(jw.id)).status === 'rejected' && textTo(mark, 60053, /qabul qilinmadi/));
+    w = await call(60053, 'POST', '/api/att/leave', { kind: '60', reason: 'Qayta' });
+    w = await call(60053, 'GET', '/api/me');
+    mark = sent.length;
+    await send(cbq(1000, `jv:ok:${(await leaves.latest(jw.id)).id}`));
+    ok('boshliq ham javob beradi (1 soat, qaytish vaqti)', (await leaves.latest(jw.id)).status === 'approved' && textTo(mark, 60053, /gacha qayting/));
+    for (const tgId of [60051, 60052, 60053]) await employees.deactivate((await employees.byTgId(tgId)).id);
+  }
+
+  // =========================================================================
+  console.log("\n— 48. 7-okt: «Keldim»siz bot yopiq; «📵 Joylashuv yubora olmayman» —");
+  {
+    const live = require('../src/services/live');
+    const textTo = (from, chatId, re) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && re.test(x.payload.text || x.payload.caption || ''));
+    const wd = time.now().weekday;
+    const hadDay = config.workDaySet.has(wd);
+    config.workDaySet.add(wd);
+    config.checkinRequired = true;
+    USERS[60061] = { id: 60061, first_name: 'Kelmagan' };
+    USERS[60062] = { id: 60062, first_name: 'Joysiz', last_name: 'Agent' };
+    USERS[60063] = { id: 60063, first_name: 'Kech' };
+    USERS[60064] = { id: 60064, first_name: 'Keldi', last_name: 'Rahbar' };
+    const { department: kd } = await departments.create('Keldim bolim');
+    await employees.add({ tgId: 60064, fullName: 'Keldi Rahbar', position: 'Rahbar', role: 'head', departmentId: kd.id });
+    await employees.add({ tgId: 60061, fullName: 'Kelmagan Hodim', position: 'Hodim', role: 'employee', departmentId: kd.id });
+    await employees.add({ tgId: 60062, fullName: 'Joysiz Agent', position: 'Agent', role: 'employee', departmentId: kd.id });
+    await employees.add({ tgId: 60063, fullName: 'Kech Hodim', position: 'Hodim', role: 'employee', departmentId: kd.id });
+    const kh = await employees.byTgId(60061);
+    const ka = await employees.byTgId(60062);
+    const kr = await employees.byTgId(60064);
+    await employees.setWorkMode(ka.id, 'field');
+    await employees.setHome(ka.id, 41.3, 69.2);
+    await employees.setWorkEnd(ka.id, '23:59');
+    for (const tg of [60061, 60062, 60063, 60064]) await months.confirm((await employees.byTgId(tg)).id);
+    await attendance.checkIn(kr, { at: time.stamp(), mode: 'office' });
+
+    ok('Keldimsiz — needsCheckIn', await attendance.needsCheckIn(kh));
+    let mark = sent.length;
+    await send(msg(60061, ui.BTN.myTasks));
+    ok('Keldimsiz — «Topshiriqlarim» yopiq', textTo(mark, 60061, /Avval «✅ Keldim» qiling/));
+    mark = sent.length;
+    await send(msg(60061, '/topshiriqlarim'));
+    ok('Keldimsiz — buyruq ham yopiq', textTo(mark, 60061, /Avval «✅ Keldim» qiling/));
+    mark = sent.length;
+    await send(cbq(60061, 'sk:a:m:0'));
+    ok('Keldimsiz — tugma (callback) yopiq', sent.slice(mark).some((x) => x.method === 'answerCallbackQuery' && /Avval/.test(x.payload.text || '')));
+    let w = await call(60061, 'GET', '/api/tasks/my');
+    ok('Keldimsiz — ilova API 423 no_checkin', w.status === 423 && w.data.code === 'no_checkin');
+    w = await call(60061, 'GET', '/api/me');
+    ok('Keldimsiz — /api/me ochiq, needCheckIn', w.status === 200 && w.data.needCheckIn === true);
+    ok('Keldi qilgan rahbar — ochiq', !(await attendance.needsCheckIn(kr)));
+
+    // Keldim → joylashuv klaviaturasida «Joylashuv yubora olmayman»
+    mark = sent.length;
+    await send(msg(60061, ui.BTN.checkIn));
+    ok('Keldim — «📵 Joylashuv yubora olmayman» tugmasi', sent.slice(mark).some((x) => Number(x.payload.chat_id) === 60061 && JSON.stringify(x.payload.reply_markup || {}).includes(ui.BTN.noLocation)));
+    await send(msg(60061, ui.BTN.noLocation));
+    ok('sabab so\'raladi', /Sababini yozing/.test(lastText(60061)));
+    mark = sent.length;
+    await send(msg(60061, 'GPS ishlamayapti'));
+    const row = await attendance.get(kh.id);
+    ok('joylashuvsiz Keldim qayd etildi', row && row.checked_in && Number(row.checkin_noloc) === 1 && row.checkin_lat === null && /GPS/.test(row.checkin_note));
+    ok('hodimga «joylashuvsiz qayd etildi»', textTo(mark, 60061, /joylashuvsiz/));
+    ok('rahbarga sabab bilan xabar', textTo(mark, 60064, /joylashuvsiz.*[\s\S]*GPS ishlamayapti/));
+    mark = sent.length;
+    await send(msg(60061, ui.BTN.myTasks));
+    ok('Keldimdan keyin — bot ochiq', !textTo(mark, 60061, /Avval «✅ Keldim» qiling/));
+    w = await call(60061, 'GET', '/api/tasks/my');
+    ok('Keldimdan keyin — ilova ochiq', w.status === 200);
+    w = await call(60061, 'GET', '/api/me');
+    ok('ilovada noLocation belgisi', w.data.attendance && w.data.attendance.noLocation === true);
+
+    // bo'sh sabab — qabul qilinmaydi; media sabab — agent, jonli joylashuv talab qilinmaydi
+    await send(msg(60062, ui.BTN.noLocation));
+    await send(voice(60062));
+    const ar = await attendance.get(ka.id);
+    ok('agent — ovozli sabab bilan joylashuvsiz Keldim', ar && ar.checked_in && Number(ar.checkin_noloc) === 1 && ar.checkin_proof_type === 'voice');
+    ok('joylashuvsiz kelgan agent — jonli joylashuv bloklamaydi', !(await live.offFor(ka)));
+
+    // «Kech qolaman» — sabab, bot ochiladi
+    await send(msg(60063, ui.BTN.late));
+    await send(msg(60063, 'Tirbandlik'));
+    mark = sent.length;
+    await send(msg(60063, ui.BTN.myTasks));
+    ok('«Kech qolaman» dan keyin — bot ochiq', !textTo(mark, 60063, /Avval «✅ Keldim» qiling/));
+
+    // dam olish kuni / o'chirilgan sozlama — yopilmaydi
+    config.checkinRequired = false;
+    ok('CHECKIN_REQUIRED=false — yopilmaydi', !(await attendance.needsCheckIn(kh)));
+    if (!hadDay) config.workDaySet.delete(wd);
+    for (const tg of [60061, 60062, 60063, 60064]) await employees.deactivate((await employees.byTgId(tg)).id);
+  }
+
+  // =========================================================================
+  console.log("\n— 49. 8-okt: rahbar jamoa sabablarini ko'radi; kechadan yoniq jonli joylashuv —");
+  {
+    const live = require('../src/services/live');
+    const textTo = (from, chatId, re) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && re.test(x.payload.text || x.payload.caption || ''));
+    const nowS = () => Math.floor(Date.now() / 1000);
+    const wd = time.now().weekday;
+    const hadDay = config.workDaySet.has(wd);
+    config.workDaySet.add(wd);
+    config.checkinRequired = true;
+    USERS[60071] = { id: 60071, first_name: 'Sabab', last_name: 'Rahbar' };
+    USERS[60072] = { id: 60072, first_name: 'Sabab', last_name: 'Hodim' };
+    USERS[60073] = { id: 60073, first_name: 'Kecha', last_name: 'Agent' };
+    const { department: sd } = await departments.create('Sabab bolim');
+    await employees.add({ tgId: 60071, fullName: 'Sabab Rahbar', position: 'Rahbar', role: 'head', departmentId: sd.id });
+    await employees.add({ tgId: 60072, fullName: 'Sabab Hodim', position: 'Hodim', role: 'employee', departmentId: sd.id });
+    await employees.add({ tgId: 60073, fullName: 'Kecha Agent', position: 'Agent', role: 'employee', departmentId: sd.id });
+    for (const tg of [60071, 60072, 60073]) await months.confirm((await employees.byTgId(tg)).id);
+    const sr = await employees.byTgId(60071);
+    const sh = await employees.byTgId(60072);
+    await attendance.checkIn(sr, { at: time.stamp(), mode: 'office' });
+
+    // «Kech qolaman» ovoz bilan — bo'lim rahbariga ovoz boradi, hodimga yorliqda rahbar ismi
+    ok("yorliqda bo'lim rahbari ismi", (await org.recipientsLabel(sh)).startsWith("bo'lim rahbari (Sabab Rahbar)"));
+    ok("tasdiqlovchilar yorlig'i — rahbar yoki boshliq", (await org.recipientsLabel(sh, { approvers: true })).startsWith("bo'lim rahbari (Sabab Rahbar) yoki boshliq"));
+    let mark = sent.length;
+    await send(msg(60072, ui.BTN.late));
+    await send(voice(60072));
+    ok("ovozli «Kech qolaman» — bo'lim rahbariga ovoz", sent.slice(mark).some((x) => x.method === 'sendVoice' && Number(x.payload.chat_id) === 60071));
+    ok("hodimga — «bo'lim rahbari (Sabab Rahbar)…ga yuborildi»", textTo(mark, 60072, /bo'lim rahbari \(Sabab Rahbar\).*yuborildi/));
+
+    // rahbar «Hodimlarim» — bugungi sabab va qayta eshitish tugmasi
+    mark = sent.length;
+    await send(msg(60071, ui.BTN.myTeam));
+    const teamMsg = sent.slice(mark).find((x) => Number(x.payload.chat_id) === 60071 && /MENING JAMOAM/.test(x.payload.text || ''));
+    ok("rahbar jamoasida — «kech qolaman» sababi", Boolean(teamMsg) && /kech qolaman/.test(teamMsg.payload.text));
+    const pf = teamMsg && JSON.stringify(teamMsg.payload.reply_markup).match(/tm:pf:\d+:l/);
+    ok('… sababni eshitish tugmasi', Boolean(pf));
+    mark = sent.length;
+    if (pf) await send(cbq(60071, pf[0]));
+    ok('tugma — ovoz rahbarga qayta yuboriladi', sent.slice(mark).some((x) => x.method === 'sendVoice' && Number(x.payload.chat_id) === 60071));
+    mark = sent.length;
+    if (pf) await send(cbq(60073, pf[0]));
+    ok('oddiy hodim — eshita olmaydi', !sent.slice(mark).some((x) => x.method === 'sendVoice'));
+    mark = sent.length;
+    await send(cbq(60071, `tm:e:${sh.id}`));
+    ok("hodim kartochkasida — «Bugun» va sabab", textTo(mark, 60071, /Bugun:[\s\S]*kech qolaman/));
+
+    // agent: kecha «Ketdim» dan keyin jonli joylashuv yoniq qoldi → bugun Keldim → kuzatuv davom etadi
+    const ka = await employees.byTgId(60073);
+    await employees.setWorkMode(ka.id, 'field');
+    await employees.setHome(ka.id, 41.3, 69.2);
+    await employees.setWorkEnd(ka.id, '23:59');
+    const yday = time.addDays(time.today(), -1);
+    await db.query(
+      `INSERT INTO live_shares (employee_id, work_date, message_id, started_at, live_until, last_at, last_lat, last_lon, stopped_at, stop_reason)
+       VALUES ($1, $2, 7001, $3, NULL, $3, '41.33', '69.25', $3, 'checkout')`,
+      [ka.id, yday, time.stampOf(nowS() - 20 * 3600)],
+    );
+    // Keldimdan oldin harakat — joyi yangilanadi, lekin kuzatuv (yo'l) yozilmaydi
+    await send({ update_id: (uid += 1), edited_message: { message_id: 7001, from: USERS[60073], chat: { id: 60073, type: 'private' }, date: nowS() - 20 * 3600, edit_date: nowS() - 60, location: { latitude: 41.34, longitude: 69.26, live_period: live.FOREVER } } });
+    let ks = await db.one('SELECT * FROM live_shares WHERE employee_id = $1 AND message_id = 7001', [ka.id]);
+    ok("Ketdimdan keyin yoniq — joyi yangilanadi, to'xtagan holatda", ks.stop_reason === 'checkout' && Number(ks.last_lat) === 41.34);
+    const adopted = await live.adopt(ka);
+    ok('Keldimda kechagi yoniq jonli joylashuv olinadi', Boolean(adopted) && !adopted.stopped_at && adopted.work_date === time.today());
+    await attendance.checkIn(ka, { at: time.stamp(), mode: 'field', lat: 41.34, lon: 69.26 });
+    ok("… bot yopilmaydi (offFor = false)", !(await live.offFor(ka)));
+    // o'chirsa — yakuniy
+    await db.query("UPDATE live_shares SET stopped_at = $1, stop_reason = 'checkout' WHERE id = $2", [time.stamp(), adopted.id]);
+    await send({ update_id: (uid += 1), edited_message: { message_id: 7001, from: USERS[60073], chat: { id: 60073, type: 'private' }, date: nowS() - 20 * 3600, edit_date: nowS(), location: { latitude: 41.34, longitude: 69.26 } } });
+    ks = await db.one('SELECT * FROM live_shares WHERE id = $1', [adopted.id]);
+    ok("Ketdimdan keyin o'chirdi — 'stopped'", ks.stop_reason === 'stopped');
+    ok("… endi qayta olinmaydi", !(await live.adopt(ka)));
+    // umuman yubormagan agent — «bot sizdan olmagan» tushuntirishi
+    await db.query('DELETE FROM live_shares WHERE employee_id = $1', [ka.id]);
+    mark = sent.length;
+    await send(msg(60073, ui.BTN.myTasks));
+    ok("yubormagan agent — «bot sizdan bugun … olmagan»", textTo(mark, 60073, /bitta ham jonli joylashuv olmagan/));
+
+    if (!hadDay) config.workDaySet.delete(wd);
+    config.checkinRequired = false;
+    for (const tg of [60071, 60072, 60073]) await employees.deactivate((await employees.byTgId(tg)).id);
+  }
+
+  console.log("\n— 51. 8-okt: ilova JS sintaksisi, /yordam uzunligi —");
+  {
+    const vm = require('vm');
+    let jsOk = true;
+    try { new vm.Script(fs.readFileSync(require('path').join(__dirname, '../src/web/public/app.js'), 'utf8')); } catch (e) { jsOk = false; console.log('   ', e.message); }
+    ok("ilova app.js — sintaksis xatosiz (aks holda ilova «Yuklanmoqda» da qotadi)", jsOk);
+    mark = sent.length;
+    await send(msg(1000, '/yordam'));
+    const helps = sent.slice(mark).filter((x) => Number(x.payload.chat_id) === 1000 && x.payload.text);
+    ok("/yordam (direktor) — har bo'lak 4096 dan qisqa", helps.length >= 2 && helps.every((x) => x.payload.text.length <= 4096));
+  }
+
+  console.log("\n— 50. 8-okt: boshliqqa zaxira sifatida ham keldi-ketdi / Bajardim bormaydi —");
+  {
+    const org = require('../src/services/org');
+    await db.setSetting('boss_attendance', '0');
+    await db.setSetting('boss_done', '0');
+    const bosses = (await employees.bossTgIds()).map(Number);
+    const hrEmp = (await employees.listHr()).find((h) => !h.department_id) || (await employees.listHr())[0];
+    const noBoss = (ids) => !ids.map(Number).some((id) => bosses.includes(id));
+    // bo'limsiz HR — undan boshqa kuzatuvchi yo'q (zaxira — boshliq edi)
+    const hrSolo = { ...hrEmp, department_id: null };
+    ok('bo\'limsiz HR keldi-ketdisi — boshliqqa emas', noBoss(await employees.attendanceWatchersOf(hrSolo)));
+    ok('bo\'limsiz HR kelmaydi/kech qoladi — boshliqqa ma\'lumot emas', noBoss(await org.absenceRecipientsOf(hrSolo)));
+    ok("HR o'zi so'rasa (boshqa HR yo'q) — tasdiq boshliqda", (await org.approversOf(hrSolo)).map(Number).some((id) => bosses.includes(id)));
+    // bo'limsiz oddiy hodim — tasdiq HR ga, boshliqqa emas
+    const solo = (await employees.add({ tgId: 60081, fullName: 'Bolimsiz Hodim', position: 'Hodim', role: 'employee' })).employee;
+    const appr = (await org.approversOf(solo)).map(Number);
+    ok("bo'limsiz hodim kelmaydi — tasdiq tugmasi HR ga", appr.includes(Number(hrEmp.tg_id)) && noBoss(appr));
+    const hrActor = await require('../src/services/access').resolve(hrEmp.tg_id);
+    ok('… HR hal qila oladi', await require('../src/services/access').canDecideExcuse(hrActor, solo));
+    ok('… yorliq — «HR (…)»', (await org.recipientsLabel(solo, { approvers: true })).startsWith('HR ('));
+    const withHead = (await employees.listActive()).find((e) => e.department_id && e.role === 'employee' && (true));
+    if (withHead && (await org.deptApproverIdsOf(withHead)).length) ok("bo'lim rahbari bor hodim — HR hal qilmaydi", !(await require('../src/services/access').canDecideExcuse(hrActor, withHead)));
+    await employees.deactivate(solo.id);
+    ok('bo\'limsiz HR o\'z vazifasi «Bajardim» — boshliqqa emas', noBoss(await employees.doneReviewersOf(hrSolo, { source: 'self', created_by: hrSolo.tg_id })));
+    ok('yorliq — boshliq yozilmaydi', !(await org.recipientsLabel(hrSolo)).includes('boshliq'));
+    // 9-okt: boshliq o'zi bergan topshiriq «Bajardim» i — unga boradi; boshqa direktor bergani — yo'q
+    const boss1 = bosses[0];
+    const rv1 = (await employees.doneReviewersOf(hrSolo, { source: 'admin', created_by: boss1 })).map(Number);
+    ok("9-okt: boshliq bergan topshiriq — faqat o'sha boshliqqa", rv1.includes(boss1) && rv1.filter((id) => bosses.includes(id)).length === 1);
+    ok('9-okt: texnik direktor bergani — boshliqqa emas', noBoss(await employees.doneReviewersOf(hrSolo, { source: 'admin', created_by: 1000 })));
+  }
+
+  console.log("\n— 52. 9-okt: bo'lim rahbari jamoasi vazifalarini ko'radi, «Bajardim» da kim bergani —");
+  {
+    const attendance = require('../src/services/attendance');
+    const emp = await employees.byTgId(99999);
+    const head = (await employees.listHeads()).find((h) => h.department_id && Number(h.department_id) === Number(emp.department_id) && !employees.isHr(h));
+    ok("sinov: hodimning bo'lim rahbari bor", Boolean(head));
+    if (head) {
+      const headTg = Number(head.tg_id);
+      if (!(await attendance.isCheckedIn(emp.id))) {
+        await db.query('DELETE FROM attendance WHERE employee_id = $1 AND work_date = $2', [emp.id, time.today()]);
+        await db.query('INSERT INTO attendance (employee_id, work_date, checked_in) VALUES ($1, $2, $3)', [emp.id, time.today(), time.stamp()]);
+      }
+      const boss = (await employees.bossTgIds())[0];
+      const tA = await tasks.create({ employeeId: emp.id, title: 'Jamoa sinovi faol', dueDate: time.today(), createdBy: boss, source: 'admin' });
+      const tL = await tasks.create({ employeeId: emp.id, title: 'Jamoa sinovi kechikkan', dueDate: time.addDays(time.today(), -2), createdBy: headTg, source: 'head' });
+      const hActor = await require('../src/services/access').resolve(headTg);
+      const sum = (await tasks.summaryFor(hActor, [emp.id])).get(Number(emp.id));
+      ok('summaryFor: faol va kechikkan sanaladi', sum.active >= 2 && sum.late >= 1 && sum.open.some((t) => t.id === tA.id) && sum.open[0].due_date < time.today());
+      await send(msg(headTg, '👥 Hodimlarim'));
+      const tv = lastText(headTg);
+      ok("rahbar «Hodimlarim» — hodim tagida vazifalar: hisob, kechikkan birinchi, «yana N ta»", tv.includes('📋 ⏳') && tv.includes('🔴 Jamoa sinovi kechikkan') && (tv.includes('Jamoa sinovi faol') || /yana \d+ ta/.test(tv)));
+      const other = (await employees.listActive()).find((e) => e.department_id && Number(e.department_id) !== Number(head.department_id) && e.role === 'employee');
+      if (other) ok("… boshqa bo'lim hodimi ko'rinmaydi", !tv.includes(other.full_name));
+      const wl = await call(headTg, 'GET', '/api/employees');
+      const mineRow = wl.data.employees.find((e) => e.id === Number(emp.id));
+      ok('ilova: jamoa ro\'yxatida work (faol/kechikkan)', wl.status === 200 && mineRow && mineRow.work && mineRow.work.active >= 2 && mineRow.work.late >= 1);
+      ok("ilova: rahbarga faqat o'z jamoasi", wl.data.employees.every((e) => e.department && Number(e.department.id) === Number(head.department_id)));
+      // «Bajardim» — rahbarga: kim bergan, qachon
+      await send(cbq(99999, `done:${tA.id}`));
+      const mk = sent.length;
+      await send(photo(99999, 'mana natija'));
+      const toHead = sent.slice(mk).find((x) => Number(x.payload.chat_id) === headTg && /bajardi/.test(x.payload.caption || x.payload.text || ''));
+      const cap = toHead ? (toHead.payload.caption || toHead.payload.text) : '';
+      ok("«Bajardim» rahbarga: topshiriq, kim bergan, javobi", cap.includes('Jamoa sinovi faol') && cap.includes('📌 bergan:') && cap.includes('mana natija'));
+      const tM = await tasks.create({ employeeId: emp.id, title: 'Ovozli sinov', dueDate: time.today(), createdBy: headTg, source: 'head', media: { type: 'voice', fileId: 'VOICE_T' } });
+      await send(cbq(99999, `done:${tM.id}`));
+      const mk2 = sent.length;
+      await send(photo(99999, 'ovozli tayyor'));
+      const toHead2 = sent.slice(mk2).find((x) => Number(x.payload.chat_id) === headTg && JSON.stringify(x.payload.reply_markup || {}).includes(`tk:media:${tM.id}`));
+      ok("media topshiriq — «Topshiriqni ko'rish / eshitish» tugmasi", Boolean(toHead2));
+    }
+  }
+
+  console.log("\n— 53. 10-okt: «🗓 Majlis» — vaqti, 30 daqiqa oldin eslatma, kech qolaman / kelmayman (sabab majburiy) —");
+  {
+    const meetings = require('../src/services/meetings');
+    const flows = require('../src/services/flows');
+    const textTo = (from, chatId, re) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && re.test(x.payload.text || x.payload.caption || ''));
+    USERS[60091] = { id: 60091, first_name: 'Majlis', last_name: 'Bir' };
+    USERS[60092] = { id: 60092, first_name: 'Majlis', last_name: 'Ikki' };
+    const { department: md } = await departments.create('Majlis bolim');
+    await employees.add({ tgId: 60091, fullName: 'Majlis Bir', position: 'Hodim', role: 'employee', departmentId: md.id });
+    await employees.add({ tgId: 60092, fullName: 'Majlis Ikki', position: 'Hodim', role: 'employee', departmentId: md.id });
+    const m1 = await employees.byTgId(60091);
+    const m2 = await employees.byTgId(60092);
+    const bosses = (await employees.bossTgIds()).map(Number);
+
+    ok('menyu: boshliq/direktorda «🗓 Majlis» bor', JSON.stringify(ui.mainKeyboard({ isAdmin: true })).includes(ui.BTN.meeting));
+    ok('menyu: HR da bor, rahbar va hodimda yo\'q', JSON.stringify(ui.mainKeyboard({ isHead: true, isHr: true })).includes(ui.BTN.meeting)
+      && !JSON.stringify(ui.mainKeyboard({ isHead: true })).includes(ui.BTN.meeting) && !JSON.stringify(ui.mainKeyboard({})).includes(ui.BTN.meeting));
+    const headTg = Number((await employees.listHeads()).find((h) => !employees.isHr(h)).tg_id);
+    mark = sent.length;
+    await send(msg(headTg, '/majlis'));
+    ok('bo\'lim rahbari — majlis yoza olmaydi (faqat o\'z majlislari)', !textTo(mark, headTg, /Kimlarni chaqiramiz/));
+
+    // --- direktor yozadi: tanlab → ertaga → 10:00 → mavzu → yuborish
+    await send(msg(1000, ui.BTN.meeting));
+    ok('direktor: «Kimlarni chaqiramiz?»', lastText(1000).includes('Kimlarni chaqiramiz'));
+    await send(cbq(1000, 'mt:pick'));
+    await send(cbq(1000, `mp:t:${m1.id}`));
+    await send(cbq(1000, `mp:t:${m2.id}`));
+    await send(cbq(1000, 'mp:ok'));
+    ok('sana so\'raladi', lastText(1000).includes('qaysi kuni'));
+    await send(cbq(1000, 'mt:d:1'));
+    ok('soat so\'raladi', lastText(1000).includes('soat nechida') && findCb(1000, /^mt:t:1000$/));
+    await send(cbq(1000, 'mt:t:1000'));
+    await send(msg(1000, 'Oylik reja majlisi'));
+    ok('ko\'rib chiqish: vaqt, mavzu, eslatma haqida', /ertaga, <b>10:00<\/b>/.test(lastText(1000)) && lastText(1000).includes('Oylik reja majlisi') && lastText(1000).includes('30 daqiqa oldin'));
+    mark = sent.length;
+    await send(cbq(1000, 'mt:send'));
+    const mt = (await meetings.list({ limit: 1 }))[0];
+    ok('majlis bazada: ertaga 10:00, 2 qatnashchi', mt && mt.meet_date === time.addDays(time.today(), 1) && mt.meet_time === '10:00' && mt.total === 2 && !mt.reminded_at);
+    ok('hodimga xabar + 3 tugma', textTo(mark, 60091, /MAJLIS/) && findCb(60091, new RegExp(`^mr:${mt.id}:late$`)) && findCb(60091, new RegExp(`^mr:${mt.id}:no$`)) && findCb(60091, new RegExp(`^mr:${mt.id}:yes$`)));
+
+    // --- kech qolaman: sabab majburiy (ovoz) → yozgan odam, boshliq, HR
+    await send(cbq(60091, `mr:${mt.id}:late`));
+    ok('kech qolaman — sabab so\'raladi', lastText(60091).includes('Sababini yozing') && session.get(60091).step === 'meeting_reason');
+    await send(msg(60091, ui.BTN.cancel));
+    ok('bekor qilsa — javob yozilmaydi', !(await meetings.member(mt.id, m1.id)).answer);
+    await send(cbq(60091, `mr:${mt.id}:late`));
+    mark = sent.length;
+    await send(voice(60091));
+    let row = await meetings.member(mt.id, m1.id);
+    ok('ovozli sabab — late + media saqlandi', row.answer === 'late' && row.proof_type === 'voice' && row.reason);
+    ok('sabab — direktor (yozgan), boshliq va HR ga, ovoz bilan', sent.slice(mark).some((x) => x.method === 'sendVoice' && Number(x.payload.chat_id) === 1000)
+      && sent.slice(mark).some((x) => x.method === 'sendVoice' && Number(x.payload.chat_id) === 50001)
+      && bosses.every((b) => sent.slice(mark).some((x) => Number(x.payload.chat_id) === b && /kech qoladi/.test(x.payload.caption || x.payload.text || ''))));
+    ok('… bo\'lim rahbariga / boshqa hodimga — yo\'q', countSince(mark, 60092) === 0);
+
+    // kelmayman — matn
+    await send(cbq(60091, `mr:${mt.id}:no`));
+    mark = sent.length;
+    await send(msg(60091, 'Kasalman'));
+    row = await meetings.member(mt.id, m1.id);
+    ok('kelmayman — matn sabab', row.answer === 'no' && row.reason === 'Kasalman' && !row.proof_type && textTo(mark, 1000, /kelmaydi[\s\S]*Kasalman/));
+    // fikrini o'zgartirdi — keladi
+    mark = sent.length;
+    await send(cbq(60091, `mr:${mt.id}:yes`));
+    row = await meetings.member(mt.id, m1.id);
+    ok('«Boraman» — sabab o\'chadi, yozganga «keladi (avval: …)»', row.answer === 'yes' && !row.reason && textTo(mark, 1000, /keladi.*avval/));
+    ok('flows: sababsiz kech qolaman — rad', !(await flows.answerMeeting({ telegram: bot.telegram }, m2, mt, 'late', { reason: ' ' })).ok);
+
+    // --- holat va qayta yuborish
+    await send(cbq(1000, `mt:st:${mt.id}`));
+    ok('«Kim keladi»: 1 keladi, 1 javob bermadi', lastText(1000).includes('✅ 1 keladi') && lastText(1000).includes('❔ 1 javob bermadi'));
+    mark = sent.length;
+    await send(cbq(1000, `mt:re:${mt.id}`));
+    ok('javob bermaganlarga qayta — faqat ikkinchisiga', countSince(mark, 60092) >= 1 && countSince(mark, 60091) === 0);
+
+    // --- 30 daqiqa oldin eslatma: kelmayman deganga emas
+    await meetings.answer(mt.id, m1.id, 'no', { reason: 'Safardaman' });
+    const soon = time.now().plus({ minutes: 25 });
+    await db.query('UPDATE meetings SET meet_date = $1, meet_time = $2, reminded_at = NULL WHERE id = $3', [soon.toFormat('yyyy-MM-dd'), soon.toFormat('HH:mm'), mt.id]);
+    mark = sent.length;
+    const nRem = await flows.remindMeetings({ telegram: bot.telegram });
+    ok('eslatma: 1 majlis, javob bermaganga bordi', nRem === 1 && textTo(mark, 60092, /daqiqadan keyin MAJLIS/));
+    ok('… «Kelmayman» deganga bormadi', countSince(mark, 60091) === 0);
+    ok('… yozgan odamga holat', textTo(mark, 1000, /daqiqadan keyin majlis[\s\S]*kelmaydi/));
+    ok('eslatma bir marta', (await flows.remindMeetings({ telegram: bot.telegram })) === 0);
+    const near = time.now().plus({ minutes: 10 });
+    const quick = await meetings.create({ senderTg: 1000, senderName: 'Direktor', body: 'Tezkor', date: near.toFormat('yyyy-MM-dd'), hhmm: near.toFormat('HH:mm'), target: 'x' });
+    ok('30 daqiqadan kam qolgan majlis — eslatmasiz', Boolean(quick.reminded_at));
+
+    // --- Keldimsiz bot yopiq bo'lsa ham majlisga javob beradi
+    const wd = time.now().weekday;
+    const hadDay = config.workDaySet.has(wd);
+    config.workDaySet.add(wd);
+    config.checkinRequired = true;
+    await db.query('DELETE FROM attendance WHERE employee_id = $1', [m2.id]);
+    await send(cbq(60092, `mr:${mt.id}:late`));
+    ok('Keldimsiz: tugma ochiq', session.get(60092).step === 'meeting_reason');
+    await send(msg(60092, 'Yo\'ldaman, 10 daqiqa'));
+    ok('Keldimsiz: sabab qabul qilindi', (await meetings.member(mt.id, m2.id)).answer === 'late');
+    if (!hadDay) config.workDaySet.delete(wd);
+    config.checkinRequired = false;
+
+    // --- ilova
+    const meApi = await call(60092, 'GET', '/api/me');
+    ok('ilova /api/me — kelayotgan majlis javobi bilan', meApi.status === 200 && meApi.data.meetings.some((x) => x.id === Number(mt.id) && x.answer === 'late'));
+    ok('ilova: hodim majlis ro\'yxatini ko\'rmaydi', (await call(60092, 'GET', `/api/meetings/${mt.id}`)).status === 403);
+    ok('ilova: sababsiz «kelmayman» — 400', (await call(60092, 'POST', `/api/meetings/${mt.id}/answer`, { answer: 'no' })).status === 400);
+    ok('ilova: sabab bilan — 200', (await call(60092, 'POST', `/api/meetings/${mt.id}/answer`, { answer: 'no', reason: 'Mijoz oldida' })).status === 200
+      && (await meetings.member(mt.id, m2.id)).reason === 'Mijoz oldida');
+    const tmr = time.addDays(time.today(), 2);
+    const created = await call(50001, 'POST', '/api/meetings', { to: 'emps', ids: [m1.id], date: tmr, time: '15:30', text: 'HR majlisi' });
+    ok('ilova: HR majlis yozadi', created.status === 200 && created.data.total === 1);
+    ok('ilova: o\'tgan vaqt — 400', (await call(50001, 'POST', '/api/meetings', { to: 'all', date: time.today(), time: '00:00', text: 'x' })).status === 400);
+    ok('ilova: rahbar yoza olmaydi — 403', (await call(headTg, 'POST', '/api/meetings', { to: 'all', date: tmr, time: '15:30', text: 'x' })).status === 403);
+    const one = await call(50001, 'GET', `/api/meetings/${mt.id}`);
+    ok('ilova: HR — qatnashchilar va sabablar', one.status === 200 && one.data.members.some((x) => x.reason === 'Mijoz oldida'));
+
+    // --- bekor qilish
+    mark = sent.length;
+    await send(cbq(1000, `mt:del:${mt.id}`));
+    await send(cbq(1000, `mt:delok:${mt.id}`));
+    ok('bekor qilindi — qatnashchilarga xabar', Boolean((await meetings.byId(mt.id)).cancelled_at) && textTo(mark, 60092, /BEKOR QILINDI/));
+    await send(cbq(60092, `mr:${mt.id}:yes`));
+    ok('bekor qilingan majlisga javob — yozilmaydi', (await meetings.member(mt.id, m2.id)).answer === 'no');
+    await meetings.cancel(created.data.id, 1000);
+    await meetings.cancel(quick.id, 1000);
+    for (const e of [m1, m2]) await employees.deactivate(e.id);
+  }
+
+  console.log("\n— 54. 17-okt: boshliq/direktor — tekshiruv, e'lon va majlis tarixida faqat o'zi bergani —");
+  {
+    const meetings = require('../src/services/meetings');
+    const announcements = require('../src/services/announcements');
+    USERS[60101] = { id: 60101, first_name: 'Tekshir', last_name: 'Hodim' };
+    const { department: rd } = await departments.create('Tekshiruv bolim');
+    await employees.add({ tgId: 60101, fullName: 'Tekshir Hodim', position: 'Hodim', role: 'employee', departmentId: rd.id });
+    const te = await employees.byTgId(60101);
+    const headTg = Number((await employees.listHeads()).find((h) => !employees.isHr(h)).tg_id);
+    const mineT = await tasks.create({ employeeId: te.id, title: 'Boshliq bergan ish', dueDate: bugun, createdBy: 1000, source: 'admin' });
+    const otherT = await tasks.create({ employeeId: te.id, title: 'Rahbar bergan ish', dueDate: bugun, createdBy: headTg, source: 'head' });
+    await tasks.markDone(mineT.id, te.id, { type: 'photo', fileId: 'x' });
+    await tasks.markDone(otherT.id, te.id, { type: 'photo', fileId: 'y' });
+
+    await send(cbq(1000, 'rv:list'));
+    const rv = lastText(1000);
+    ok('bot tekshiruv: boshliq o\'zi berganini ko\'radi', rv.includes('Boshliq bergan ish'));
+    ok('bot tekshiruv: boshqalar bergani ko\'rinmaydi', !rv.includes('Rahbar bergan ish'));
+    await send(cbq(50001, 'rv:list'));
+    ok('bot tekshiruv: HR ikkalasini ko\'radi (o\'zgarmagan)', lastText(50001).includes('Rahbar bergan ish'));
+    const apiRv = await call(1000, 'GET', '/api/review');
+    const ids = apiRv.data.tasks.map((x) => x.id);
+    ok('ilova tekshiruv: faqat o\'zi bergani', ids.includes(Number(mineT.id)) && !ids.includes(Number(otherT.id)));
+    const me = await call(1000, 'GET', '/api/me');
+    ok('ilova /api/me: tekshiruv soni ham shunga mos', me.data.counts.review === apiRv.data.tasks.length);
+    await send(cbq(1000, `rv:view:${otherT.id}`));
+    ok('boshqalar bergani kartochkasi baribir ochiladi (ko\'rib olish mumkin)', to(1000).some((x) => /Rahbar bergan ish/.test(x.payload.caption || x.payload.text || '')));
+    ok('o\'zi bergan topshiriq «Bajardim» — boshliqqa xabar boradi (doneReviewersOf)', (await employees.doneReviewersOf(te, await tasks.byId(mineT.id))).includes(1000));
+    ok('boshqalar bergani «Bajardim» — boshliqqa bormaydi', !(await employees.doneReviewersOf(te, await tasks.byId(otherT.id))).includes(1000));
+
+    // BayLog: E'lon — o'z moduli (services/announcements: created_by, «O'qidim»); BAYOMA'ning e'lon tarixi testlari bu yerda yo'q
+
+    const tmr = time.addDays(bugun, 3);
+    const mb = await meetings.create({ senderTg: 1000, senderName: 'Direktor', body: 'Boshliq majlis 54', date: tmr, hhmm: '15:00', target: 'x' });
+    const mh = await meetings.create({ senderTg: 50001, senderName: 'HR', body: 'HR majlis 54', date: tmr, hhmm: '16:00', target: 'x' });
+    await send(cbq(1000, 'mt:h'));
+    const mhist = JSON.stringify(to(1000).slice(-1));
+    ok('majlis tarixi: boshliq — faqat o\'zi yozgani', mhist.includes('Boshliq majlis 54') && !mhist.includes('HR majlis 54'));
+    await send(cbq(50001, 'mt:h'));
+    ok('majlis tarixi: HR — hammasi', JSON.stringify(to(50001).slice(-1)).includes('HR majlis 54'));
+    const apiMt = await call(1000, 'GET', '/api/meetings');
+    ok('ilova majlislar: boshliq — faqat o\'zi yozgani', apiMt.data.items.every((m) => !/HR majlis 54/.test(m.body || m.text || '')));
+    await meetings.cancel(mb.id, 1000);
+    await meetings.cancel(mh.id, 1000);
+    await employees.deactivate(te.id);
+  }
+
+  console.log("\n— 55. 17-okt: «📆 Davriy eslatma» — har oy / har hafta: eslatma yoki topshiriq —");
+  {
+    const { DateTime } = require('luxon');
+    const recurring = require('../src/services/recurring');
+    const flows = require('../src/services/flows');
+    const B = { telegram: bot.telegram };
+    const textTo = (from, chatId, re) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && re.test(x.payload.text || x.payload.caption || ''));
+    const at = (iso) => DateTime.fromISO(iso, { zone: time.TZ });
+    const fmtR = (d) => (d ? d.toFormat('yyyy-MM-dd HH:mm') : null);
+    const due = (id) => db.query('UPDATE recurring SET next_run_at = $1 WHERE id = $2', [time.now().minus({ seconds: 1 }).toISO(), id]);
+
+    // --- keyingi yuborish vaqti
+    ok('oylik 31-kun → fevralda 28-kun', fmtR(recurring.nextRun({ freq: 'month', days: '31', at_time: '10:00' }, at('2026-02-10T08:00'))) === '2026-02-28 10:00');
+    ok('oylik: shu oyning kuni o\'tgan → keyingi oy', fmtR(recurring.nextRun({ freq: 'month', days: '5', at_time: '10:00' }, at('2026-10-05T10:00'))) === '2026-11-05 10:00');
+    ok('oylik: oxirgi kun (0)', fmtR(recurring.nextRun({ freq: 'month', days: '0', at_time: '18:00' }, at('2026-04-02T08:00'))) === '2026-04-30 18:00');
+    ok('haftalik Du+Ju: chorshanbadan → juma', fmtR(recurring.nextRun({ freq: 'week', days: '1,5', at_time: '16:00' }, at('2026-10-14T09:00'))) === '2026-10-16 16:00');
+    ok('haftalik: juma 16:00 o\'tgan → dushanba', fmtR(recurring.nextRun({ freq: 'week', days: '1,5', at_time: '16:00' }, at('2026-10-16T16:30'))) === '2026-10-19 16:00');
+    ok('matn: «har hafta: Du, Ju — 16:00» / «har oy oxirgi kuni, 18:00»',
+      recurring.scheduleText({ freq: 'week', days: '1,5', at_time: '16:00' }) === 'har hafta: Du, Ju — 16:00' && recurring.scheduleText({ freq: 'month', days: '0', at_time: '18:00' }) === 'har oy oxirgi kuni, 18:00');
+
+    USERS[60111] = { id: 60111, first_name: 'Davriy', last_name: 'Bir' };
+    USERS[60112] = { id: 60112, first_name: 'Davriy', last_name: 'Ikki' };
+    const { department: rd } = await departments.create('Davriy bolim');
+    await employees.add({ tgId: 60111, fullName: 'Davriy Bir', position: 'Hodim', role: 'employee', departmentId: rd.id });
+    await employees.add({ tgId: 60112, fullName: 'Davriy Ikki', position: 'Hodim', role: 'employee', departmentId: rd.id });
+    const r1 = await employees.byTgId(60111);
+    const r2 = await employees.byTgId(60112);
+
+    ok('menyu: boshliq va HR da bor, rahbar va hodimda yo\'q', JSON.stringify(ui.mainKeyboard({ isAdmin: true })).includes(ui.BTN.recurring)
+      && JSON.stringify(ui.mainKeyboard({ isHead: true, isHr: true })).includes(ui.BTN.recurring)
+      && !JSON.stringify(ui.mainKeyboard({ isHead: true })).includes(ui.BTN.recurring) && !JSON.stringify(ui.mainKeyboard({})).includes(ui.BTN.recurring));
+    const headTg = Number((await employees.listHeads()).find((h) => !employees.isHr(h)).tg_id);
+    mark = sent.length;
+    await send(msg(headTg, '/davriy'));
+    ok('bo\'lim rahbari — yoza olmaydi', textTo(mark, headTg, /faqat boshliq va HR/));
+
+    // --- direktor: eslatma, har juma 16:00, bitta hodimga
+    await send(msg(1000, ui.BTN.recurring));
+    ok('direktor: «Nima yuboramiz?»', lastText(1000).includes('Nima yuboramiz'));
+    await send(cbq(1000, 'dv:k:remind'));
+    await send(cbq(1000, `dq:t:${r1.id}`));
+    await send(cbq(1000, 'dq:ok'));
+    ok('davriylik so\'raladi', lastText(1000).includes('Qanchalik tez-tez') && findCb(1000, /^dv:f:week$/));
+    await send(cbq(1000, 'dv:f:week'));
+    await send(cbq(1000, 'dv:wok'));
+    ok('kunsiz davom etib bo\'lmaydi', session.get(1000).rec && !session.get(1000).rec.days);
+    await send(cbq(1000, 'dv:wd:5'));
+    await send(cbq(1000, 'dv:wok'));
+    ok('soat so\'raladi', lastText(1000).includes('Soat nechida') && findCb(1000, /^dv:t:1600$/));
+    await send(cbq(1000, 'dv:t:1600'));
+    await send(msg(1000, 'Haftalik hisobotni yuboring'));
+    ok('ko\'rib chiqish: qachon, kimga, birinchi yuborish', lastText(1000).includes('har hafta: Ju — 16:00') && lastText(1000).includes('Davriy Bir') && lastText(1000).includes('Birinchi yuborish'));
+    await send(cbq(1000, 'dv:save'));
+    let rw = (await recurring.listBy(1000))[0];
+    const nx = rw && at(rw.next_run_at);
+    ok('bazada: remind, week, 5, 16:00, keyingisi — juma 16:00', rw && rw.kind === 'remind' && rw.freq === 'week' && rw.days === '5' && rw.at_time === '16:00'
+      && nx.weekday === 5 && nx.toFormat('HH:mm') === '16:00' && nx > time.now() && (await recurring.members(rw.id)).length === 1);
+    await send(cbq(1000, 'dv:save'));
+    ok('«Saqlash» qayta bosilsa — ikkinchi yozuv yo\'q', (await recurring.listBy(1000)).length === 1);
+
+    // --- vaqti keldi → e'lon + «Tanishdim», yozganga hisobot; bir marta
+    await due(rw.id);
+    mark = sent.length;
+    ok('runRecurring: 1 ta yuborildi', (await flows.runRecurring(B)) === 1);
+    ok("hodimga «📆 ESLATMA» + «👁 O'qidim» (BayLog e'loni)", textTo(mark, 60111, /ESLATMA[\s\S]*Haftalik hisobotni yuboring/) && findCb(60111, /^an:r:\d+$/));
+    ok('… boshqa hodimga bormadi', countSince(mark, 60112) === 0);
+    ok("yozganga hisobot + «Kim o'qidi»", textTo(mark, 1000, /Davriy eslatma yuborildi[\s\S]*1\/1/) && findCb(1000, /^an:v:\d+$/));
+    rw = await recurring.byId(rw.id);
+    ok('run_count 1, keyingisi kelajakda (juma)', Number(rw.run_count) === 1 && at(rw.next_run_at) > time.now() && at(rw.next_run_at).weekday === 5);
+    ok('ikkinchi chaqiruv — hech narsa', (await flows.runRecurring(B)) === 0);
+    const ann = await recurring.lastAnnouncement(rw.id);
+    await send(cbq(60111, `an:r:${ann.id}`));
+    await send(cbq(1000, `an:v:${ann.id}`));
+    ok("«Kim o'qidi» — hodim o'qigan", lastText(1000).includes('Davriy eslatma') && lastText(1000).includes("O'qidi: <b>1 / 1</b>"));
+
+    // bot o'chiq turgan kun — o'tkazib yuboriladi
+    await db.query('UPDATE recurring SET next_run_at = $1 WHERE id = $2', [time.now().minus({ days: 1 }).toISO(), rw.id]);
+    mark = sent.length;
+    ok('kecha o\'tib ketgan — yuborilmaydi, keyingisiga suriladi', (await flows.runRecurring(B)) === 0 && countSince(mark, 60111) === 0
+      && Number((await recurring.byId(rw.id)).run_count) === 1 && at((await recurring.byId(rw.id)).next_run_at) > time.now());
+
+    // --- HR: topshiriq, har oy 31-kuni 09:15, ovoz izohsiz → qisqa mazmun, muddat +3
+    await send(msg(50001, '/davriy'));
+    await send(cbq(50001, 'dv:k:task'));
+    await send(cbq(50001, `dq:t:${r2.id}`));
+    await send(cbq(50001, 'dq:ok'));
+    await send(cbq(50001, 'dv:f:month'));
+    ok('oy kunlari: 1…31 va oxirgi kun', findCb(50001, /^dv:md:31$/) && findCb(50001, /^dv:md:0$/));
+    await send(cbq(50001, 'dv:md:31'));
+    await send(cbq(50001, 'dv:t:type'));
+    await send(msg(50001, '9:15'));
+    await send(voice(50001));
+    ok('izohsiz ovoz — qisqa mazmun so\'raladi', session.get(50001).step === 'rec_title');
+    await send(msg(50001, 'Oylik hisobot'));
+    ok('muddat so\'raladi', findCb(50001, /^dv:o:3$/));
+    await send(cbq(50001, 'dv:o:3'));
+    ok('ko\'rib chiqish: har oy 31-kuni, 09:15 · 3 kun ichida', lastText(50001).includes('har oy 31-kuni, 09:15') && lastText(50001).includes('3 kun ichida'));
+    await send(cbq(50001, 'dv:save'));
+    const rt = (await recurring.listBy(50001))[0];
+    ok('bazada: task, media voice, due_offset 3', rt && rt.kind === 'task' && rt.media_type === 'voice' && rt.body === 'Oylik hisobot' && Number(rt.due_offset) === 3);
+    await due(rt.id);
+    mark = sent.length;
+    await flows.runRecurring(B);
+    const t = (await tasks.openFor(r2.id)).find((x) => x.title === 'Oylik hisobot');
+    ok('hodimga topshiriq: muddat +3 kun, ovoz bilan, HR bergan', t && t.due_date === time.addDays(time.today(), 3) && t.task_media_type === 'voice' && Number(t.created_by) === 50001);
+    ok('… «Yangi topshiriq» xabari + ovoz', textTo(mark, 60112, /Yangi topshiriq/) && sent.slice(mark).some((x) => x.method === 'sendVoice' && Number(x.payload.chat_id) === 60112));
+    ok('HR ga hisobot', textTo(mark, 50001, /Davriy topshiriq berildi[\s\S]*1 kishiga/));
+
+    // --- ro'yxat: har kim faqat o'zinikini
+    await send(cbq(1000, 'dv:l'));
+    ok('direktor ro\'yxati — o\'zinikigina', JSON.stringify(to(1000).slice(-1)).includes('har hafta: Ju') && !JSON.stringify(to(1000).slice(-1)).includes('31-kuni'));
+    await send(cbq(1000, `dv:v:${rt.id}`));
+    ok('boshqaning kartochkasi — ochilmaydi', lastText(1000).includes('Topilmadi'));
+    await send(cbq(50001, `dv:v:${rt.id}`));
+    ok('kartochka: yuborildi 1 marta, keyingi yuborish', lastText(50001).includes('Yuborildi: 1 marta') && lastText(50001).includes('Keyingi yuborish'));
+
+    // --- to'xtatish / davom ettirish / bekor qilish
+    await send(cbq(1000, `dv:p:${rw.id}`));
+    await due(rw.id);
+    mark = sent.length;
+    await flows.runRecurring(B);
+    ok('to\'xtatilgan — yuborilmaydi', Number((await recurring.byId(rw.id)).active) === 0 && countSince(mark, 60111) === 0);
+    await send(cbq(1000, `dv:r:${rw.id}`));
+    ok('davom ettirildi — keyingisi kelajakda', Number((await recurring.byId(rw.id)).active) === 1 && at((await recurring.byId(rw.id)).next_run_at) > time.now());
+    await send(cbq(1000, `dv:del:${rw.id}`));
+    await send(cbq(1000, `dv:delok:${rw.id}`));
+    ok('bekor qilindi — yozuv qoladi, ro\'yxatda yo\'q', Boolean((await recurring.byId(rw.id)).cancelled_at) && !(await recurring.listBy(1000)).length);
+
+    // --- yozgan odam huquqini yo'qotdi → to'xtaydi; ishdan bo'shagan hodimga yuborilmaydi
+    const lost = await recurring.create({ kind: 'remind', freq: 'week', days: [1], atTime: '10:00', body: 'x', target: 'x', createdBy: headTg, creatorName: 'Rahbar', memberIds: [r1.id] });
+    await due(lost.id);
+    mark = sent.length;
+    await flows.runRecurring(B);
+    ok('rahbar yozgani (huquqsiz) — to\'xtatildi, yuborilmadi', Number((await recurring.byId(lost.id)).active) === 0 && countSince(mark, 60111) === 0);
+    await employees.deactivate(r2.id);
+    await due(rt.id);
+    mark = sent.length;
+    await flows.runRecurring(B);
+    ok('ishdan bo\'shagan hodimga — yuborilmaydi', countSince(mark, 60112) === 0);
+    await recurring.cancel(rt.id, 50001);
+    await recurring.cancel(lost.id, 1000);
+    await employees.deactivate(r1.id);
+  }
+
+  console.log("\n— 56. 19-okt: davriy topshiriqni bajarmasa — 1 kun oldin savol, «bajarmadi», ketma-ket hisob, har 2 soatda eslatma —");
+  {
+    const { DateTime } = require('luxon');
+    const recurring = require('../src/services/recurring');
+    const flows = require('../src/services/flows');
+    const B = { telegram: bot.telegram };
+    const textTo = (from, chatId, re) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && re.test(x.payload.text || x.payload.caption || ''));
+    const due = (id) => db.query('UPDATE recurring SET next_run_at = $1 WHERE id = $2', [time.now().minus({ seconds: 1 }).toISO(), id]);
+
+    // savol kuni — keyingi yuborishdan oldingi ish kuni (WORK_DAYS 1-6)
+    ok('savol kuni: dushanbadagi yuborish → shanba', recurring.askDateOf({ next_run_at: '2026-10-19T09:00:00.000+05:00' }) === '2026-10-17');
+    ok('savol kuni: seshanba → dushanba', recurring.askDateOf({ next_run_at: '2026-10-20T09:00:00.000+05:00' }) === '2026-10-19');
+
+    USERS[60121] = { id: 60121, first_name: 'Takror', last_name: 'Hodim' };
+    USERS[60122] = { id: 60122, first_name: 'Takror', last_name: 'Rahbar' };
+    const { department: qd } = await departments.create('Takror bolim');
+    await employees.add({ tgId: 60121, fullName: 'Takror Hodim', position: 'Hodim', role: 'employee', departmentId: qd.id });
+    await employees.add({ tgId: 60122, fullName: 'Takror Rahbar', position: 'Rahbar', role: 'head', departmentId: qd.id });
+    const qe = await employees.byTgId(60121);
+    const r = await recurring.create({ kind: 'task', freq: 'week', days: [1, 2, 3, 4, 5, 6], atTime: '09:00', body: 'Davriy ish 56', dueOffset: 0,
+      target: 'x', createdBy: 1000, creatorName: 'Direktor', memberIds: [qe.id] });
+    const latest = async () => (await db.query('SELECT * FROM tasks WHERE recurring_id = $1 ORDER BY id DESC LIMIT 1', [r.id]))[0];
+
+    await due(r.id);
+    await flows.runRecurring(B);
+    const t1 = await latest();
+    ok('davriy topshiriq — recurring_id bilan yaratildi', t1 && t1.title === 'Davriy ish 56' && Number(t1.recurring_id) === Number(r.id));
+
+    // --- 1 kun oldin savol (keyingi yuborishdan oldingi ish kuni 17:00)
+    await db.query('UPDATE recurring SET next_run_at = $1 WHERE id = $2', [time.now().plus({ days: 3 }).set({ hour: 9, minute: 0 }).toISO(), r.id]);
+    const askNow = DateTime.fromISO(`${recurring.askDateOf(await recurring.byId(r.id))}T17:00`, { zone: time.TZ });
+    mark = sent.length;
+    ok('savol yuborildi (1 ta)', (await flows.askRecurringTasks(B, askNow)) === 1);
+    ok('hodimga: «Bajardingizmi yoki bajarasizmi?» + Bajardim / Bajaraman / Yo\'q',
+      textTo(mark, 60121, /hali bajarilmagan[\s\S]*Davriy ish 56[\s\S]*Bajardingizmi/) && findCb(60121, new RegExp(`^done:${t1.id}$`))
+      && findCb(60121, new RegExp(`^rq:will:${t1.id}$`)) && findCb(60121, new RegExp(`^rq:no:${t1.id}$`)));
+    ok('ikkinchi marta — savol takrorlanmaydi', (await flows.askRecurringTasks(B, askNow)) === 0);
+    ok('boshqa kuni — savol yo\'q', (await recurring.askDue(askNow.minus({ days: 1 }))).every((x) => Number(x.id) !== Number(r.id)));
+
+    mark = sent.length;
+    await send(cbq(60121, `rq:no:${t1.id}`));
+    ok('«❌ Yo\'q» (Keldimsiz ham) — yozgan odamga xabar', textTo(mark, 1000, /Takror Hodim[\s\S]*Yo'q[\s\S]*Davriy ish 56/) && (await tasks.byId(t1.id)).rec_answer === 'no');
+    mark = sent.length;
+    await send(cbq(60121, `rq:no:${t1.id}`));
+    ok('o\'sha javob qayta — yozganga yangi xabar yo\'q', countSince(mark, 1000) === 0);
+    await send(cbq(60121, `rq:will:${t1.id}`));
+    ok('javobni o\'zgartirdi «⏳ Bajaraman» — yozganga xabar', textTo(mark, 1000, /Bajaraman/) && (await tasks.byId(t1.id)).rec_answer === 'will');
+    mark = sent.length;
+    await send(cbq(60125, `rq:no:${t1.id}`));
+    ok('begona odam javob bera olmaydi', (await tasks.byId(t1.id)).rec_answer === 'will' && countSince(mark, 1000) === 0);
+
+    // --- keyingisi keldi, eski bajarilmagan → «bajarmadi» (1-marta), rahbarga hali yo'q
+    await due(r.id);
+    mark = sent.length;
+    await flows.runRecurring(B);
+    const t2 = await latest();
+    ok('eski — missed, yangisi yaratildi', (await tasks.byId(t1.id)).rec_result === 'missed' && Number(t2.id) !== Number(t1.id) && !t2.rec_result);
+    ok('yozgan odamga: «bajarilmadi» · 1-marta · javobi Bajaraman', textTo(mark, 1000, /Davriy topshiriq bajarilmadi[\s\S]*Takror Hodim[\s\S]*1-marta[\s\S]*Bajaraman/));
+    ok('1-marta — bo\'lim rahbariga bormaydi', countSince(mark, 60122) === 0);
+
+    // --- har 2 soatda: hali bajarilmagan — hodimga
+    mark = sent.length;
+    await flows.nagRecurringMissed(B);
+    ok('eslatma hodimga + Bajardim tugmasi', textTo(mark, 60121, /Bajarilmagan davriy topshiriq/) && findCb(60121, new RegExp(`^done:${t1.id}$`)));
+    ok('… yozgan odamga hali yo\'q (tekshiruvda emas)', countSince(mark, 1000) === 0);
+
+    // --- yana bajarmadi → ketma-ket 2, bo'lim rahbariga ham
+    await due(r.id);
+    mark = sent.length;
+    await flows.runRecurring(B);
+    const t3 = await latest();
+    ok('ketma-ket 2 — yozganga', (await recurring.streak(r.id, qe.id)) === 2 && textTo(mark, 1000, /ketma-ket <b>2<\/b>-marta/));
+    ok('ketma-ket 2 — bo\'lim rahbariga ham', textTo(mark, 60122, /qayta-qayta bajarilmayapti[\s\S]*Takror Hodim/));
+    ok('… savolsiz o\'tgani — «javob bermadi» deb yozilmaydi', !textTo(mark, 1000, /javob bermadi/));
+    await send(cbq(1000, `dv:v:${r.id}`));
+    ok('kartochkada: 🔴 ketma-ket 2', lastText(1000).includes('Takror Hodim — ketma-ket 2'));
+
+    // --- bajardi (tekshiruvda) → eslatma yozganga; qabul qilindi / bekor → to'xtaydi
+    await tasks.markDone(t1.id, qe.id, { type: 'photo', fileId: 'p56' });
+    mark = sent.length;
+    await flows.nagRecurringMissed(B);
+    ok('tekshiruvda — yozgan odamga «qabul qiling» + rv:view', textTo(mark, 1000, /tekshiruvingizni kutmoqda[\s\S]*Davriy ish 56/) && findCb(1000, new RegExp(`^rv:view:${t1.id}$`)));
+    const nagKb = JSON.stringify(sent.slice(mark).filter((x) => Number(x.payload.chat_id) === 60121).map((x) => x.payload.reply_markup));
+    ok('… hodimga — faqat bajarilmagan ikkinchisi', textTo(mark, 60121, /Bajarilmagan davriy/) && nagKb.includes(`"done:${t2.id}"`) && !nagKb.includes(`"done:${t1.id}"`));
+    await tasks.accept(t1.id, 1000);
+    await tasks.cancel(t2.id, 1000);
+    mark = sent.length;
+    ok('qabul qilindi va bekor qilindi — eslatma to\'xtadi', (await flows.nagRecurringMissed(B)) === 0 && countSince(mark, 60121) === 0 && countSince(mark, 1000) === 0);
+
+    // --- vaqtida bajarsa — hisob nolga qaytadi
+    await tasks.markDone(t3.id, qe.id, { type: 'photo', fileId: 'p56b' });
+    await due(r.id);
+    mark = sent.length;
+    await flows.runRecurring(B);
+    ok('vaqtida bajardi — «bajarilmadi» xabari yo\'q, hisob 0', !textTo(mark, 1000, /bajarilmadi/) && (await recurring.streak(r.id, qe.id)) === 0 && (await tasks.byId(t3.id)).rec_result === 'ok');
+    await send(cbq(1000, `dv:v:${r.id}`));
+    ok('kartochkada: ✅', lastText(1000).includes('✅ Takror Hodim'));
+
+    // --- oddiy (davriy bo'lmagan) topshiriq bu oqimga kirmaydi
+    const plain = await tasks.create({ employeeId: qe.id, title: 'Oddiy ish 56', dueDate: time.addDays(bugun, -2), createdBy: 1000, source: 'admin' });
+    mark = sent.length;
+    await flows.nagRecurringMissed(B);
+    ok('oddiy muddati o\'tgan topshiriq — 2 soatlik eslatmaga kirmaydi', !textTo(mark, 60121, /Oddiy ish 56/));
+    await tasks.cancel(plain.id, 1000);
+    for (const t of await db.query("SELECT id FROM tasks WHERE recurring_id = $1 AND status IN ('active', 'done')", [r.id])) await tasks.cancel(t.id, 1000);
+    await recurring.cancel(r.id, 1000);
+    await employees.deactivate(qe.id);
+    await employees.deactivate((await employees.byTgId(60122)).id);
+  }
+
+  // =========================================================================
+  console.log('\n— 57. 20-okt: Keldim darhol qayd etiladi, «Keldi deb belgilash», HR pul kiritadi —');
+  {
+    const access = require('../src/services/access');
+    const textTo = (from, chatId, re) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && re.test(x.payload.text || x.payload.caption || ''));
+    USERS[60141] = { id: 60141, first_name: 'Ofis', last_name: 'Hodim57' };
+    USERS[60142] = { id: 60142, first_name: 'Videosiz', last_name: 'Hodim57' };
+
+    // --- 1. «Keldim»: lokatsiya kelishi bilan DARHOL qayd etiladi, video keyin qo'shiladi
+    await employees.add({ tgId: 60141, fullName: 'Ofis Hodim 57', position: 'Operator', role: 'employee' });
+    const of1 = await employees.byTgId(60141);
+    await months.confirm(of1.id);
+    mark = sent.length;
+    await send(msg(60141, '✅ Keldim'));
+    await send(loc(60141, 41.3112, 69.2798));
+    ok('1) lokatsiya bilan DARHOL qayd etildi (video kutilmaydi)', await attendance.isCheckedIn(of1.id));
+    ok('1) hodimga «qayd etildi» + video so\'rovi', textTo(mark, 60141, /qayd etildi/) && session.get(60141).step === 'awaiting_checkin_video');
+    ok('1) HR ga darhol «keldi» xabari, video kutilayotgani belgisi bilan', textTo(mark, 50001, /keldi/) && textTo(mark, 50001, /video/i));
+    const a1pre = await attendance.get(of1.id);
+    ok('1) yozuvda hali video yo\'q', Boolean(a1pre && a1pre.checked_in) && !a1pre.checkin_proof_file_id);
+    mark = sent.length;
+    await send(videoNote(60141));
+    const a1 = await attendance.get(of1.id);
+    ok('1) video keyin yozuvga qo\'shildi', a1.checkin_proof_type === 'video_note' && a1.checkin_proof_file_id === 'VN_FILE_ID');
+    ok('1) HR ga video bordi', sent.slice(mark).some((s) => s.method === 'sendVideoNote' && Number(s.payload.chat_id) === 50001));
+    ok('1) bosqich tozalandi', session.get(60141).step !== 'awaiting_checkin_video');
+    ok('1) kelish vaqti o\'zgarmadi (video emas, lokatsiya vaqti)', Boolean(a1pre) && a1.checked_in === a1pre.checked_in);
+
+    // --- 2. video kelmasa ham kun «keldi» bo'lib qoladi (yo'qolmaydi)
+    await employees.add({ tgId: 60142, fullName: 'Videosiz Hodim 57', position: 'Operator', role: 'employee' });
+    const of2 = await employees.byTgId(60142);
+    await months.confirm(of2.id);
+    await send(msg(60142, '✅ Keldim'));
+    await send(loc(60142, 41.3112, 69.2798));
+    session.clear(60142); // video yubormadi — bosqich tugadi
+    const a2 = await attendance.get(of2.id);
+    ok('2) video yubormasa ham kelgan kun saqlanib qoldi', Boolean(a2 && a2.checked_in) && !a2.checkin_proof_file_id);
+
+    // --- 3. «✅ Keldi deb belgilash» — o'tkazib yuborilgan kunni rahbar/direktor to'g'rilaydi
+    const dPrev = time.addDays(bugun, -1);
+    const dTyped = `${dPrev.slice(8, 10)}.${dPrev.slice(5, 7)}`;
+    await send(cbq(1000, `emp:${of2.id}`));
+    ok('3) kartochkada «Keldi deb belgilash» tugmasi', Boolean(findCb(1000, new RegExp(`^emp:present:${of2.id}$`))));
+    await send(cbq(1000, `emp:present:${of2.id}`));
+    ok('3) sana so\'raldi', session.get(1000).step === 'present_date');
+    await send(msg(1000, dTyped));
+    ok('3) soat so\'raldi', session.get(1000).step === 'present_time');
+    await send(msg(1000, '08:45'));
+    ok('3) izoh so\'raldi', session.get(1000).step === 'present_note');
+    mark = sent.length;
+    await send(msg(1000, 'Telefoni ishlamadi'));
+    const a3 = await attendance.get(of2.id, dPrev);
+    ok('3) kun «keldi» bo\'lib yozildi — vaqtida', Boolean(a3 && a3.checked_in) && Number(a3.late_minutes) === 0);
+    ok('3) soat va kim belgilagani saqlandi', Boolean(a3) && String(a3.checked_in).slice(11, 16) === '08:45' && Number(a3.marked_by) === 1000 && a3.marked_note === 'Telefoni ishlamadi');
+    ok('3) hodimga xabar bordi', textTo(mark, 60142, /belgila/i));
+    ok('3) davomatda vaqtida kelgan kun bo\'lib hisoblanadi', attendance.dayStatus(a3, dPrev, bugun, of2) !== 'absent');
+
+    // huquq: hodim o'zi belgilay olmaydi, direktor — oladi
+    const actorEmp = await access.resolve(60142);
+    const actorBoss = await access.resolve(1000);
+    ok('3) hodim belgilash huquqiga ega emas', !access.canMarkPresent(actorEmp, of1));
+    ok('3) direktor belgilay oladi', access.canMarkPresent(actorBoss, of1));
+    await send(cbq(60142, `emp:present:${of1.id}`));
+    ok('3) hodim tugmani bossa — rad etiladi', session.get(60142).step !== 'present_date');
+
+    // ilova
+    let w57 = await call(1000, 'POST', `/api/employees/${of1.id}/present`, { date: dPrev, time: '09:10', note: 'ilovadan' });
+    const a3b = await attendance.get(of1.id, dPrev);
+    ok('3) ilova: keldi deb belgilandi', w57.status === 200 && Boolean(a3b && a3b.checked_in) && a3b.marked_note === 'ilovadan');
+    w57 = await call(60142, 'POST', `/api/employees/${of1.id}/present`, { date: dPrev });
+    ok('3) ilova: hodimga — 403', w57.status === 403);
+
+    // --- 5. HR oklad va KPI summasini kiritadi (tasdiqlash baribir direktorda)
+    await send(cbq(50001, 'sal:list'));
+    ok('5) HR «Oyliklar» ro\'yxatini ko\'radi', /OYLIKLAR/.test(lastText(50001)));
+    await send(cbq(50001, `sal:s:${of1.id}`));
+    ok('5) HR ga oklad so\'rovi', session.get(50001).step === 'edit_salary');
+    await send(msg(50001, '2 500 000'));
+    ok('5) HR oklad yozdi', Number((await employees.byId(of1.id)).salary) === 2500000);
+    await send(cbq(50001, `sal:f:${of1.id}`));
+    await send(msg(50001, '700000'));
+    ok('5) HR KPI summasini yozdi', Number((await employees.byId(of1.id)).bonus_fund) === 700000);
+    await send(cbq(50001, `kpi:fund:${of1.id}:${month}`));
+    ok('5) HR oy KPI fondini kiritadi', session.get(50001).step === 'kpi_fund');
+    await send(msg(50001, '800000'));
+    ok('5) oy KPI fondi saqlandi', Number((await kpi.get(of1.id, month)).bonus_fund) === 800000);
+    // 21-okt: HR hammasini o'zi bajaradi — tasdiq so'ramaydi
+    await send(cbq(50001, `kpi:custom:${of1.id}:${month}`));
+    ok('5) HR qo\'shimcha mezonni kiritadi', session.get(50001).step === 'kpi_custom');
+    await send(msg(50001, '80'));
+    ok('5) mezon saqlandi', Number((await kpi.get(of1.id, month)).custom_pct) === 80);
+    await send(cbq(50001, `kpi:score:${of1.id}:${month}`));
+    await send(cbq(50001, `kpi:sc:${of1.id}:${month}:7`));
+    ok('5) HR boshliq bahosini qo\'yadi', Number((await kpi.get(of1.id, month)).head_score) === 7);
+    if (session.get(50001).step === 'head_note') await send(msg(50001, ui.BTN.skip));
+    await send(cbq(50001, `kpi:note:${of1.id}:${month}`));
+    await send(msg(50001, 'HR izohi'));
+    ok('5) HR izoh yozadi', (await kpi.get(of1.id, month)).note === 'HR izohi');
+    // o'tgan oyni HR o'zi tasdiqlaydi (joriy oy tugamagani uchun tasdiqlanmaydi)
+    const pm = time.prevMonth();
+    await kpi.compute(of1, pm);
+    mark = sent.length;
+    await send(cbq(50001, `kpi:ok:${of1.id}:${pm}`));
+    ok('5) HR KPI ni O\'ZI TASDIQLAYDI (21-okt)', (await kpi.get(of1.id, pm)).status === 'confirmed');
+    ok('5) hodimga natija xabari bordi', sent.slice(mark).some((x) => Number(x.payload.chat_id) === 60141));
+    await send(cbq(50001, `kpi:reopen:${of1.id}:${pm}`));
+    ok('5) HR qayta ochadi', (await kpi.get(of1.id, pm)).status === 'draft');
+    await send(cbq(50001, `kpi:ex:${of1.id}:${pm}`));
+    ok('5) HR bonusdan chiqarish sababini yozadi', session.get(50001).step === 'kpi_exclude_note');
+    await send(msg(50001, 'Sinov muddati'));
+    ok('5) HR bonusdan chiqardi', (await kpi.get(of1.id, pm)).status === 'excluded');
+    // ilova: HR KPI ni tahrirlaydi va tasdiqlaydi
+    w57 = await call(50001, 'PATCH', `/api/kpi/${month}/${of1.id}`, { customPct: 55 });
+    ok('5) ilova: HR KPI maydonlarini o\'zgartiradi', w57.status === 200 && Number((await kpi.get(of1.id, month)).custom_pct) === 55);
+    w57 = await call(50001, 'POST', `/api/kpi/${pm}/${of1.id}/decide`, { status: 'draft' });
+    ok('5) ilova: HR qarorni o\'zgartiradi', w57.status === 200 && (await kpi.get(of1.id, pm)).status === 'draft');
+    w57 = await call(50001, 'PATCH', `/api/employees/${of1.id}`, { salary: 3000000 });
+    ok('5) ilova: HR oklad yozadi', w57.status === 200 && Number((await employees.byId(of1.id)).salary) === 3000000);
+
+    await employees.deactivate(of1.id);
+    await employees.deactivate(of2.id);
+  }
+
+  // =========================================================================
+  console.log('\n— 58. 20-okt: ⚠️ Ogohlantirish (intizom) —');
+  {
+    const warnings = require('../src/services/warnings');
+    const access = require('../src/services/access');
+    const textTo = (from, chatId, re) => sent.slice(from).some((x) => Number(x.payload.chat_id) === chatId && re.test(x.payload.text || x.payload.caption || ''));
+    USERS[60151] = { id: 60151, first_name: 'Ogoh', last_name: 'Hodim' };
+    USERS[60152] = { id: 60152, first_name: 'Ogoh', last_name: 'Rahbar' };
+    USERS[60153] = { id: 60153, first_name: 'Boshqa', last_name: 'Bolim' };
+    const { department: wd } = await departments.create('Ogohlantirish bolim');
+    const { department: wd2 } = await departments.create('Ogohlantirish bolim 2');
+    await employees.add({ tgId: 60152, fullName: 'Ogoh Rahbar', position: 'Rahbar', role: 'head', departmentId: wd.id });
+    await employees.add({ tgId: 60151, fullName: 'Ogoh Hodim', position: 'Hodim', role: 'employee', departmentId: wd.id });
+    await employees.add({ tgId: 60153, fullName: 'Boshqa Bolim', position: 'Hodim', role: 'employee', departmentId: wd2.id });
+    const wh = await employees.byTgId(60151);
+    const wr = await employees.byTgId(60152);
+    const wo = await employees.byTgId(60153);
+
+    ok('rahbar menyusida «Ogohlantirish» tugmasi', JSON.stringify(ui.kbForEmp(wr)).includes(ui.BTN.warn));
+    ok('oddiy hodim menyusida yo\'q', !JSON.stringify(ui.kbForEmp(wh)).includes(ui.BTN.warn));
+
+    // --- rahbar o'z bo'limi hodimini ogohlantiradi
+    await send(msg(60152, ui.BTN.warn));
+    ok('o\'z bo\'limi hodimlari ro\'yxati', Boolean(findCb(60152, new RegExp(`^wn:e:${wh.id}$`))));
+    ok('boshqa bo\'lim hodimi ro\'yxatda yo\'q', !findCb(60152, new RegExp(`^wn:e:${wo.id}$`)));
+    await send(cbq(60152, `wn:e:${wh.id}`));
+    ok('ogohlantirish matni so\'raldi', session.get(60152).step === 'warn_text');
+    await send(msg(60152, 'Intizom yaxshi emas — vaqtida keling'));
+    ok('yuborishdan oldin tasdiq so\'raldi', Boolean(findCb(60152, /^wn:send$/)));
+    mark = sent.length;
+    await send(cbq(60152, 'wn:send'));
+    ok('hodimga ogohlantirish bordi', textTo(mark, 60151, /OGOHLANTIRISH/) && textTo(mark, 60151, /Intizom yaxshi emas/));
+    ok('yuboruvchiga tasdiq', textTo(mark, 60152, /yuborildi/i));
+    const list1 = await warnings.listFor(wh.id);
+    const w1 = list1[0];
+    ok('bazada saqlandi (kim, nima, tanishmagan)', Boolean(w1) && w1.body === 'Intizom yaxshi emas — vaqtida keling' && Number(w1.from_tg) === 60152 && !w1.seen_at);
+    ok('arxiv guruhiga nusxa', textTo(mark, -100777, /OGOHLANTIRISH|ogohlantir/i));
+
+    // --- hodim «Tanishdim» bosadi
+    ok('hodimda «Tanishdim» tugmasi', Boolean(findCb(60151, new RegExp(`^wn:ok:${w1.id}$`))));
+    mark = sent.length;
+    await send(cbq(60151, `wn:ok:${w1.id}`));
+    ok('tanishdi — bazada va yuboruvchiga xabar', Boolean((await warnings.byId(w1.id)).seen_at) && textTo(mark, 60152, /tanishdi/i));
+    mark = sent.length;
+    await send(cbq(60151, `wn:ok:${w1.id}`));
+    ok('ikkinchi marta bosilsa — takror xabar yo\'q', !textTo(mark, 60152, /tanishdi/i));
+
+    // --- 2-ogohlantirish: boshliqqa ham boradi
+    await send(msg(60152, ui.BTN.warn));
+    await send(cbq(60152, `wn:e:${wh.id}`));
+    await send(msg(60152, 'Yana kech keldingiz'));
+    mark = sent.length;
+    await send(cbq(60152, 'wn:send'));
+    ok('takroriy ogohlantirish — boshliqqa ham xabar', textTo(mark, 70001, /Ogoh Hodim/));
+    ok('xabarda nechanchi ogohlantirish ekani ko\'rsatilgan', textTo(mark, 60151, /2-ogohlantirish|2 ta/i));
+    ok('hodimda 2 ta ogohlantirish', (await warnings.countFor(wh.id)) === 2);
+
+    // --- media bilan
+    await send(msg(60152, ui.BTN.warn));
+    await send(cbq(60152, `wn:e:${wh.id}`));
+    await send(voice(60152));
+    ok('ovozli ogohlantirish — tasdiq so\'raldi', Boolean(findCb(60152, /^wn:send$/)));
+    mark = sent.length;
+    await send(cbq(60152, 'wn:send'));
+    ok('hodimga ovoz bordi', sent.slice(mark).some((x) => x.method === 'sendVoice' && Number(x.payload.chat_id) === 60151));
+
+    // --- huquq
+    const aEmp = await access.resolve(60151);
+    const aHead = await access.resolve(60152);
+    const aHr = await access.resolve(50001);
+    ok('hodim ogohlantira olmaydi', !access.canWarn(aEmp, wo));
+    ok('rahbar — faqat o\'z bo\'limini', access.canWarn(aHead, wh) && !access.canWarn(aHead, wo));
+    ok('HR — hammani', access.canWarn(aHr, wh) && access.canWarn(aHr, wo));
+    ok('o\'ziga ogohlantirish yo\'q', !access.canWarn(aHead, wr));
+    mark = sent.length;
+    await send(msg(60151, ui.BTN.warn));
+    ok('hodim tugmani yozsa — rad etiladi', !findCb(60151, /^wn:e:/));
+
+    // --- ro'yxat
+    await send(cbq(60152, 'wn:l'));
+    ok('yuborilgan ogohlantirishlar ro\'yxati', lastText(60152).includes('Ogoh Hodim') && lastText(60152).includes('Intizom'));
+
+    // --- bo'lim rahbari «Hodimlarim» kartochkasidan foydalanadi (Panel faqat direktorda)
+    await send(cbq(60152, `tm:e:${wh.id}`));
+    ok('rahbar kartochkasida «Keldi deb belgilash»', Boolean(findCb(60152, new RegExp(`^emp:present:${wh.id}$`))));
+    ok('rahbar kartochkasida «Ogohlantirish»', Boolean(findCb(60152, new RegExp(`^wn:e:${wh.id}$`))));
+    const dW = time.addDays(bugun, -2);
+    await send(cbq(60152, `emp:present:${wh.id}`));
+    ok('rahbar sana so\'rovini oldi', session.get(60152).step === 'present_date');
+    await send(msg(60152, `${dW.slice(8, 10)}.${dW.slice(5, 7)}`));
+    await send(msg(60152, '09:00'));
+    mark = sent.length;
+    await send(msg(60152, 'Lokatsiya ketmadi'));
+    const aW = await attendance.get(wh.id, dW);
+    ok('rahbar o\'z bo\'limi hodimini keldi deb belgiladi', Boolean(aW && aW.checked_in) && Number(aW.marked_by) === 60152);
+    // boshqa bo'lim hodimiga — yo'q
+    await send(cbq(60152, `emp:present:${wo.id}`));
+    ok('rahbar boshqa bo\'lim hodimini belgilay olmaydi', session.get(60152).step !== 'present_date');
+
+    for (const tg of [60151, 60152, 60153]) await employees.deactivate((await employees.byTgId(tg)).id);
   }
 
   await new Promise((r) => webSrv.close(r));

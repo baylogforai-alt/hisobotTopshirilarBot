@@ -28,7 +28,10 @@
  *  extra_days     — dam olish kuniga chaqiruv (summa; o'sha kuni Keldim → worked_at)
  *  kpi_extras     — qo'shimcha KPI qatorlari (summa × asos foizi; bir martalik yoki har oy) — CRM'dan kiritiladi
  *  task_replies   — qaytarilgan topshiriq bo'yicha hodim ↔ tekshiruvchi yozishmasi (matn yoki media)
+ *  live_shares    — agentning Telegram jonli joylashuvi (har bir «Live Location» xabari) + live_points (yo'l nuqtalari)
  *  chats          — «💬 Savol-javob»: chat (boshlovchi, kimlar bilan, rejim) + chat_members + chat_messages
+ *  meetings       — «🗓 Majlis» (sana, soat, mavzu) + meeting_members (javob: yes/late/no, sabab, media)
+ *  recurring      — «📆 Davriy eslatma» (har oy / har hafta: eslatma yoki topshiriq) + recurring_members
  */
 
 const tables = (pk, big) => `
@@ -110,7 +113,13 @@ CREATE TABLE IF NOT EXISTS tasks (
   ack_note      TEXT,
   start_time    TEXT,
   start_notified_at TEXT,
-  late_forced   INTEGER NOT NULL DEFAULT 0
+  late_forced   INTEGER NOT NULL DEFAULT 0,
+  recurring_id  INTEGER,
+  rec_ask_at    TEXT,
+  rec_answer    TEXT,
+  rec_answer_at TEXT,
+  rec_result    TEXT,
+  rec_result_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_emp_status ON tasks(employee_id, status);
@@ -148,6 +157,14 @@ CREATE TABLE IF NOT EXISTS attendance (
   checkout_note  TEXT,
   late_excused_at TEXT,
   late_excused_by ${big},
+  live_nudge_at  TEXT,
+  live_alert_at  TEXT,
+  checkin_noloc  INTEGER NOT NULL DEFAULT 0,
+  live_excused_at TEXT,
+  live_excuse    TEXT,
+  marked_by      ${big},
+  marked_at      TEXT,
+  marked_note    TEXT,
   UNIQUE (employee_id, work_date)
 );
 
@@ -276,7 +293,8 @@ CREATE TABLE IF NOT EXISTS announcements (
   recipients    INTEGER NOT NULL DEFAULT 0,
   delivered     INTEGER NOT NULL DEFAULT 0,
   to_group      INTEGER NOT NULL DEFAULT 0,
-  created_at    TEXT    NOT NULL
+  created_at    TEXT    NOT NULL,
+  recurring_id  INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS announcement_recipients (
@@ -345,6 +363,97 @@ CREATE TABLE IF NOT EXISTS kpi_extras (
   removed_by   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_kpi_extras_emp ON kpi_extras(employee_id);
+CREATE TABLE IF NOT EXISTS leave_requests (
+  id            ${pk},
+  employee_id   INTEGER NOT NULL REFERENCES employees(id),
+  work_date     TEXT    NOT NULL,
+  kind          TEXT    NOT NULL,
+  reason        TEXT,
+  proof_type    TEXT,
+  proof_file_id TEXT,
+  status        TEXT    NOT NULL DEFAULT 'pending',
+  decided_by    ${big},
+  decided_name  TEXT,
+  decided_at    TEXT,
+  created_at    TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_leave_requests_emp_date ON leave_requests(employee_id, work_date);
+
+CREATE TABLE IF NOT EXISTS meetings (
+  id           ${pk},
+  sender_tg    ${big}  NOT NULL,
+  sender_name  TEXT,
+  body         TEXT,
+  media_type   TEXT,
+  file_id      TEXT,
+  file_name    TEXT,
+  meet_date    TEXT    NOT NULL,
+  meet_time    TEXT    NOT NULL,
+  target       TEXT,
+  created_at   TEXT    NOT NULL,
+  reminded_at  TEXT,
+  cancelled_at TEXT,
+  cancelled_by ${big}
+);
+CREATE INDEX IF NOT EXISTS idx_meetings_date ON meetings(meet_date);
+
+CREATE TABLE IF NOT EXISTS meeting_members (
+  id            ${pk},
+  meeting_id    INTEGER NOT NULL REFERENCES meetings(id),
+  employee_id   INTEGER NOT NULL REFERENCES employees(id),
+  delivered     INTEGER NOT NULL DEFAULT 0,
+  answer        TEXT,
+  reason        TEXT,
+  proof_type    TEXT,
+  proof_file_id TEXT,
+  answered_at   TEXT,
+  UNIQUE (meeting_id, employee_id)
+);
+
+CREATE TABLE IF NOT EXISTS recurring (
+  id           ${pk},
+  kind         TEXT    NOT NULL,
+  freq         TEXT    NOT NULL,
+  days         TEXT    NOT NULL,
+  at_time      TEXT    NOT NULL,
+  body         TEXT,
+  media_type   TEXT,
+  file_id      TEXT,
+  file_name    TEXT,
+  due_offset   INTEGER NOT NULL DEFAULT 0,
+  target       TEXT,
+  created_by   ${big}  NOT NULL,
+  creator_name TEXT,
+  created_at   TEXT    NOT NULL,
+  active       INTEGER NOT NULL DEFAULT 1,
+  next_run_at  TEXT,
+  last_run_at  TEXT,
+  run_count    INTEGER NOT NULL DEFAULT 0,
+  cancelled_at TEXT,
+  cancelled_by ${big}
+);
+
+CREATE TABLE IF NOT EXISTS recurring_members (
+  id           ${pk},
+  recurring_id INTEGER NOT NULL REFERENCES recurring(id),
+  employee_id  INTEGER NOT NULL REFERENCES employees(id),
+  UNIQUE (recurring_id, employee_id)
+);
+
+CREATE TABLE IF NOT EXISTS warnings (
+  id            ${pk},
+  employee_id   INTEGER NOT NULL,
+  from_tg       ${big} NOT NULL,
+  from_name     TEXT,
+  body          TEXT,
+  media_type    TEXT,
+  file_id       TEXT,
+  file_name     TEXT,
+  created_at    TEXT NOT NULL,
+  seen_at       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_warnings_emp ON warnings(employee_id);
 
 CREATE TABLE IF NOT EXISTS task_replies (
   id          ${pk},
@@ -391,6 +500,34 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   file_name   TEXT,
   created_at  TEXT    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS live_shares (
+  id           ${pk},
+  employee_id  INTEGER NOT NULL REFERENCES employees(id),
+  work_date    TEXT    NOT NULL,
+  message_id   ${big}  NOT NULL,
+  started_at   TEXT    NOT NULL,
+  live_until   TEXT,
+  last_at      TEXT    NOT NULL,
+  last_lat     TEXT,
+  last_lon     TEXT,
+  stopped_at   TEXT,
+  stop_reason  TEXT,
+  gap_alert_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_live_shares_emp_date ON live_shares(employee_id, work_date);
+
+CREATE TABLE IF NOT EXISTS live_points (
+  id           ${pk},
+  employee_id  INTEGER NOT NULL REFERENCES employees(id),
+  share_id     INTEGER,
+  work_date    TEXT    NOT NULL,
+  at           TEXT    NOT NULL,
+  lat          TEXT    NOT NULL,
+  lon          TEXT    NOT NULL,
+  acc          INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_live_points_emp_date ON live_points(employee_id, work_date);
 
 CREATE TABLE IF NOT EXISTS sessions (
   key        TEXT PRIMARY KEY,
@@ -479,6 +616,27 @@ const MIGRATIONS = [
   col('kpi_monthly', 'extra_days', 'INTEGER NOT NULL DEFAULT 0'),
   col('kpi_monthly', 'required_days', 'INTEGER'),
   col('kpi_monthly', 'tasks_gate_pct', 'INTEGER'),
+  // 6-okt-2026: agent jonli joylashuvi — yoqmagan agentga eslatma / rahbarga ogohlantirish (kuniga bir marta)
+  col('attendance', 'live_nudge_at', 'TEXT'),
+  col('attendance', 'live_alert_at', 'TEXT'),
+  // 7-okt-2026: «📵 Joylashuv yubora olmayman» — Keldim joylashuvsiz, sabab bilan
+  col('attendance', 'checkin_noloc', 'INTEGER NOT NULL DEFAULT 0'),
+  // 8-okt-2026: «📵 Jonli joylashuv ishlamayapti» — Keldimdan keyin, sabab bilan; o'sha kuni jonli joylashuv talab qilinmaydi
+  col('attendance', 'live_excused_at', 'TEXT'),
+  col('attendance', 'live_excuse', 'TEXT'),
+  // 20-okt-2026: «✅ Keldi deb belgilash» — o'tkazib yuborilgan kunni rahbar/direktor qo'lda qayd etadi
+  col('attendance', 'marked_by', 'INTEGER', 'BIGINT'),
+  col('attendance', 'marked_at', 'TEXT'),
+  col('attendance', 'marked_note', 'TEXT'),
+  // 17-okt-2026: «📆 Davriy eslatma» — e'lon qaysi davriy eslatmadan yuborilgani
+  col('announcements', 'recurring_id', 'INTEGER'),
+  // 19-okt-2026: davriy topshiriq — 1 kun oldin savol (rec_ask_at, rec_answer will|no), keyingisi kelganda natija (rec_result missed|ok|skip)
+  col('tasks', 'recurring_id', 'INTEGER'),
+  col('tasks', 'rec_ask_at', 'TEXT'),
+  col('tasks', 'rec_answer', 'TEXT'),
+  col('tasks', 'rec_answer_at', 'TEXT'),
+  col('tasks', 'rec_result', 'TEXT'),
+  col('tasks', 'rec_result_at', 'TEXT'),
 ];
 
 /**

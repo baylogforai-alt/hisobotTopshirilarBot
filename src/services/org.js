@@ -17,6 +17,7 @@ const setBossName = (name) => db.setSetting(BOSS_KEY, String(name).trim().slice(
 
 /** Rahbar bergan topshiriq nusxasi direktor/HR ga boradimi (standart — ha). Faqat direktor o'zgartiradi */
 const HEAD_COPY_KEY = 'head_task_copy';
+// BayLog: standart YOQIQ (BAYOMA'da 7-okt dan o'chiq) — Panel «📤 Rahbar topshiriq nusxasi» bilan o'zgaradi
 const headTaskCopy = async () => (await db.getSetting(HEAD_COPY_KEY)) !== '0';
 const setHeadTaskCopy = (on) => db.setSetting(HEAD_COPY_KEY, on ? '1' : '0');
 
@@ -78,12 +79,23 @@ const setOwnTasksOnly = async (tgId, on) => {
   await db.setSetting(OWN_TASKS_KEY, [...q].join(','));
 };
 
-/** Sozlama o'chiq bo'lsa — boshliq(lar)ni chiqarib tashlaydi; hech kim qolmasa — o'zgarishsiz (xabar yo'qolmasin) */
-const withoutHiddenBoss = async (ids) => {
+/**
+ * Boshliq «Bajardim» (bajarilgan topshiriq, isbot bilan) xabarlarini oladimi. BayLog'da standart — HA (Jaxongir tekshiradi;
+ * BAYOMA'da standart yo'q). Odilxonga baribir bormaydi — jim rejim. Panel → «✅ Boshliqqa «Bajardim»»
+ */
+const BOSS_DONE_KEY = 'boss_done';
+const bossSeesDone = async () => (await db.getSetting(BOSS_DONE_KEY)) !== '0';
+const setBossSeesDone = (on) => db.setSetting(BOSS_DONE_KEY, on ? '1' : '0');
+
+/**
+ * Sozlama o'chiq bo'lsa — boshliq(lar)ni chiqarib tashlaydi. keepIfEmpty — hech kim qolmasa o'zgarishsiz
+ * (faqat qaror tugmalari uchun: aks holda hal qiladigan odam qolmaydi; 8-okt — ma'lumot xabarlari boshliqqa zaxira sifatida ham bormaydi)
+ */
+const withoutHiddenBoss = async (ids, { keepIfEmpty = false } = {}) => {
   if (await bossSeesAttendance()) return ids;
   const bosses = new Set((await require('./employees').listAdmins()).map((e) => Number(e.tg_id)));
   const rest = ids.filter((id) => !bosses.has(Number(id)));
-  return rest.length ? rest : ids;
+  return rest.length || !keepIfEmpty ? rest : ids;
 };
 
 /** Kelmaslik/kechikish xabarini oladiganlar (tg_id lar), hodimning o'zidan tashqari */
@@ -95,17 +107,26 @@ const absenceRecipientsOf = async (emp) => {
   return withoutHiddenBoss([...ids]);
 };
 
+/** Hodimning bo'lim rahbarlari (HR emas, o'zidan tashqari) — tg_id lar */
+const deptApproverIdsOf = async (emp) => {
+  const employees = require('./employees');
+  const hr = new Set((await employees.listHr()).map((h) => Number(h.tg_id)));
+  return (await employees.deptHeadIdsOf(emp)).map(Number).filter((id) => !hr.has(id) && id !== Number(emp.tg_id));
+};
+
 /**
- * Sababli qilish (kelmayman / kechikish) tugmalari kimga: bo'lim rahbari + boshliq (5-okt qarori — HR faqat ko'radi),
- * hodimning o'zidan tashqari. Bo'lim rahbari bo'lmasa — boshliq.
+ * Sababli qilish (kelmayman / kechikish / javob so'rash) tugmalari kimga: bo'lim rahbari (5-okt qarori).
+ * 8-okt: bo'lim rahbari bo'lmasa — HR (boshliq emas); HR ning o'zi so'rasa (boshqa HR yo'q) — boshliq.
+ * Boshliq Panelda keldi-ketdini yoqsa — unga ham.
  */
 const approversOf = async (emp) => {
   const employees = require('./employees');
-  const hr = new Set((await employees.listHr()).map((h) => Number(h.tg_id)));
-  const heads = (await employees.deptHeadIdsOf(emp)).map(Number).filter((id) => !hr.has(id));
-  const ids = new Set([...heads, ...(await employees.bossTgIds()).map(Number)]);
-  ids.delete(Number(emp.tg_id));
-  return dropQuiet(await withoutHiddenBoss([...ids]), { keepIfEmpty: true });
+  let ids = await deptApproverIdsOf(emp);
+  if (!ids.length) ids = (await employees.listHr()).map((h) => Number(h.tg_id)).filter((id) => id !== Number(emp.tg_id));
+  const set = new Set(ids);
+  if (!set.size || (await bossSeesAttendance())) for (const id of await employees.bossTgIds()) set.add(Number(id));
+  set.delete(Number(emp.tg_id));
+  return dropQuiet([...set], { keepIfEmpty: true });
 };
 
 /** Texnik direktorlar (ADMIN_IDS, rahbariyatda yo'q) — faqat ma'lumot oladi, tasdiqlash tugmalarisiz */
@@ -118,15 +139,28 @@ const infoOnlyIds = async (exclude = []) => {
   return (await notify.adminIds()).map(Number).filter((id) => !top.has(id) && !ex.has(id));
 };
 
-/** "HR (…) va direktor (…)" — hodimga tasdiq matni uchun; approvers — "boshliq (…) yoki HR (…)" */
+/**
+ * Hodimga «kimga yuborildi» matni: "bo'lim rahbari (Abdulhay), HR (Abbos)" — xabar haqiqatda kimga borsa, shular
+ * (8-okt: bo'lim rahbari yozilmagani uchun «rahbarga bormayapti» deb o'ylashgan). approvers — "bo'lim rahbari (…) yoki boshliq (…)"
+ */
 const recipientsLabel = async (emp = null, { approvers = false } = {}) => {
   const employees = require('./employees');
   const hr = (await employees.listHr()).filter((h) => !emp || Number(h.id) !== Number(emp.id));
+  const hrIds = new Set(hr.map((h) => Number(h.tg_id)));
+  const heads = [];
+  if (emp) {
+    for (const id of await employees.deptHeadIdsOf(emp)) {
+      const h = hrIds.has(Number(id)) ? null : await employees.byTgId(id);
+      if (h) heads.push(h.full_name);
+    }
+  }
   const boss = await bossName();
-  const hrText = hr.map((h) => h.full_name).join(', ');
-  if (hr.length && !(await bossSeesAttendance())) return `HR (${hrText})`;
-  if (approvers) return `bo'lim rahbari yoki boshliq (${boss})`;
-  return hr.length ? `HR (${hrText}) va boshliq (${boss})` : `boshliq (${boss})`;
+  const headText = heads.length ? `bo'lim rahbari (${heads.join(', ')})` : null;
+  if (approvers) return headText ? `${headText} yoki boshliq (${boss})` : hr.length ? `HR (${hr.map((h) => h.full_name).join(', ')})` : `boshliq (${boss})`;
+  const parts = [headText, hr.length ? `HR (${hr.map((h) => h.full_name).join(', ')})` : null].filter(Boolean);
+  if (await bossSeesAttendance()) parts.push(`boshliq (${boss})`);
+  if (!parts.length) return 'rahbariyat';
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} va ${parts[parts.length - 1]}` : parts[0];
 };
 
 /**
@@ -139,4 +173,4 @@ const actorName = (ctx) => {
   return [f.first_name, f.last_name].filter(Boolean).join(' ').trim() || 'Direktor';
 };
 
-module.exports = { quietIds, isQuiet, setQuiet, dropQuiet, isOwnTasksOnly, setOwnTasksOnly, infoOnlyIds, actorName, bossName, setBossName, headTaskCopy, setHeadTaskCopy, hrSeesBossTasks, setHrSeesBossTasks, bossSeesAttendance, setBossSeesAttendance, headSeesMoney, setHeadSeesMoney, absenceRecipientsOf, approversOf, recipientsLabel };
+module.exports = { quietIds, isQuiet, setQuiet, dropQuiet, isOwnTasksOnly, setOwnTasksOnly, infoOnlyIds, actorName, bossName, setBossName, headTaskCopy, setHeadTaskCopy, hrSeesBossTasks, setHrSeesBossTasks, bossSeesAttendance, setBossSeesAttendance, bossSeesDone, setBossSeesDone, headSeesMoney, setHeadSeesMoney, absenceRecipientsOf, approversOf, deptApproverIdsOf, recipientsLabel };

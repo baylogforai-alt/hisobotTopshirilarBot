@@ -18,6 +18,8 @@ process.env.LATE_GRACE_MINUTES = '10';
 process.env.WORK_DAYS = '1-6';
 process.env.ANNOUNCE_DONE = 'true';
 process.env.CRM_API_SECRET = 'test-secret';
+// «Keldim»siz bot yopiq (BAYOMA, 7-okt) — bu fayldagi eski oqimlar uni hisobga olmaydi; qulf smoke-bayoma.js da sinaladi
+process.env.CHECKIN_REQUIRED = 'false';
 
 const fs = require('fs');
 for (const f of ['./data/smoke-test.db', './data/smoke-test.db-wal', './data/smoke-test.db-shm']) fs.rmSync(f, { force: true });

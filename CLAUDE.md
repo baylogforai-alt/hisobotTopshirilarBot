@@ -295,3 +295,31 @@ Foydalanuvchi: «kunlik zaxira boshliqqa (Odilxon) bormasligi shart; Odilxonga f
 Foydalanuvchi: «haftalik hisobotlar ham Odilxonga bormasin». Dushanba `weekly-report` endi `jobs.weeklyReport(bot)` (eksport, testlanadi):
 matn ham, Excel ham `org.dropQuiet(seeAllIds, {keepIfEmpty: true})` ga — jim rejimdagilarga (Odilxon) yo'q, Jaxongir va HR oladi; hech kim qolmasa — baribir.
 Smoke +1 («haftalik hisobot: ...»). `npm test` — 190/190 + 772/772. BAYOMA va Mandi botlarida haftalik hisobot yo'q.
+
+## 21. 26-okt-2026: BAYOMA (6–21-okt, `b439a7b..15d8f69`, 58 commit) yangiliklari ko'chirildi (⬜ deploy qilinmagan)
+Foydalanuvchi: «BayLog hisobot boti BAYOMA bilan bir xil bo'lsin; BAYOMA'da davriy eslatma bor, bizda yo'q» → tanlov: «BAYOMA'da bor, BayLog'da yo'q hammasi».
+Usul avvalgidek: har fayl `git merge-file` (ours / base BAYOMA `b439a7b` / BAYOMA `15d8f69`), 44 konflikt qo'lda. Yangi modullar to'g'ridan nusxa.
+Zaxira — shu branchning ota commiti (`6605829`). **Keyingi ko'chirish uchun base = BAYOMA `15d8f69`.**
+
+**Ko'chirilganlar:** 📆 Davriy eslatma (`/davriy`, `dv:*`; har oy / har hafta eslatma yoki topshiriq, bajarmasa 17:00 savol, ketma-ket hisob, 2 soatlik eslatma;
+cron `recurring-run/ask/nag`) · 🗓 Majlis (`/majlis`, `mt:*`, `mr:*`, 30 daqiqa oldin eslatma) · ⚠️ Ogohlantirish (`/ogohlantirish`, `wn:*`, jadval `warnings`) ·
+🚪 Javob so'rash (`/javob`, `jv:*`, `leave_requests`) · 📡 agent jonli joylashuvi + «Agentlar qayerda» (`/agentlar`, `lv:*`, `live_shares/live_points`, `edited_message`, cron `live-watch`;
+jonli joylashuvi o'chiq agentga bot yopiq — `live.guard`) · ⛔️ **«Keldim»siz bot yopiq** (`attendance.guard`, `CHECKIN_REQUIRED`, standart **true**; boshliq ozod;
+«📵 Joylashuv yubora olmayman» + sabab) · Keldim lokatsiya kelishi bilan **darhol qayd**, video keyin · «✅ Keldi deb belgilash» (`emp:present`) ·
+🪪 Beyjik eslatmasi (`/beyjik`, `bj:*`) · rahbar/direktor agent uy joyini belgilaydi (`fh:`) · uy joylashuvi tugmasiz · /yordam video har rolga ·
+Hodimlarim: rahbar jamoa sabablari va vazifalari · «Bajardim» xabarida kim bergan + topshiriq media · Panel «📨 Bo'lim rahbarlari bergan», «✅ Boshliqqa «Bajardim»» (`adm:bdn`) ·
+kartochkada «📨 Bergan topshiriqlari» · **HR oylik va KPI ni to'liq o'zi yuritadi** (`guardPay`) · Yandex xarita havolalari va ilova xaritasi · eslatmalar doim 17:00 va 18:00 ham ·
+bo'lim rahbari yo'q hodimning kelmayman/kechikish/javob so'rash tasdig'i — HR ga (+ boshliq, chunki BayLog'da `BOSS_SEES_ATTENDANCE` yoqiq).
+
+**BayLog'da boshqacha qoldirildi:**
+- 📢 E'lon — BayLog'niki («👁 O'qidim» `an:r`, «Kim o'qidi» `an:v`). Davriy eslatma shu orqali yuboriladi: `announcements.send(..., {recurringId})`, ustun `announcements.recurring_id`,
+  sarlavha «📆 ESLATMA». BAYOMA'ning `an:ok/an:st` va e'lon tarixini boshliqqa cheklash — yo'q.
+- `boss_done` standarti **yoqiq** (`org.bossSeesDone`: `!== '0'`) — Jaxongir tekshiradi; BAYOMA'da o'chiq. `head_task_copy` standarti ham **yoqiq** (BAYOMA'da 7-okt dan o'chiq).
+- Boshliq ro'yxatlarida (holat, Tekshiruv, majlis tarixi) «faqat o'zi bergani» — `BOSS_OWN_LISTS` (standart **false**); Odilxon uchun avvalgidek `own_tasks_ids`.
+- Config: `FIELD_MIN_DISTANCE_M` 1000, `OFFICE_CHECKIN_VIDEO=false`, `MONTH_START_REQUIRED=false`, `KPI_MODE=score` — o'zgarmadi. `LIVE_GAP_MIN` (30), `CHECKIN_REQUIRED` qo'shildi.
+- `attendance.guard` dan qo'shimcha o'tadi: «kelyapsizmi?» javobi (`intent:`), `/ishga_keldim`. Jim rejim (`dropQuiet`) — `approversOf` va muddati o'tganlar xabarida saqlandi.
+
+**Testlar:** `npm test` — **190/190 + 1166/1166**, handler xatosi 0; Postgres'da ham (lokal PG 17) — 184/184 + 1166/1166. Eski (`6605829`) sxemali PG baza yangi kod
+migratsiyasidan keyin yangi bazaga **aynan teng** (367 ustun). `smoke.js` da `CHECKIN_REQUIRED=false` (eski oqimlar; qulf `smoke-bayoma.js` da sinaladi);
+`smoke-bayoma.js` BAYOMA standartlari bilan: `BOSS_OWN_LISTS=true`, settings `head_task_copy`/`boss_done` = '0'.
+**Deploydan keyin bir marta:** `flows.broadcastHomeAsk` — uy joyi yo'q hudud agentlariga «uy joylashuvini yuboring», borlariga «saqlangan» xabari (settings `home_ask_sent`).
