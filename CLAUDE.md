@@ -290,3 +290,8 @@ Foydalanuvchi: «kunlik zaxira boshliqqa (Odilxon) bormasligi shart; Odilxonga f
 - Deploy (23-okt): asosiy papkada boshqa sessiyaning commit qilinmagan IaC ishi bor (`railway.json` o'chirilgan, `.railway/`, CLAUDE.md) — lokal `master` ga tegilmadi,
   worktree'dan `git push origin HEAD:main` + `railway up --detach -p 1f7a7f70-a8f5-427d-a874-2b50bc60baf4 -e production -s missiya-bot` (asosiy papka endi `railway link` qilinmagan).
   Prod zaxirani (`railway ssh … pg_dump`) auto-mode rad etadi — foydalanuvchi o'zi oladi. ⚠️ Lokal `master` GitHub `main` dan orqada (6e09523 + shu commit yo'q).
+
+## 20. 26-okt-2026: Haftalik hisobot Odilxonga bormaydi (commit `9794e2d`, ⬜ deploy qilinmagan)
+Foydalanuvchi: «haftalik hisobotlar ham Odilxonga bormasin». Dushanba `weekly-report` endi `jobs.weeklyReport(bot)` (eksport, testlanadi):
+matn ham, Excel ham `org.dropQuiet(seeAllIds, {keepIfEmpty: true})` ga — jim rejimdagilarga (Odilxon) yo'q, Jaxongir va HR oladi; hech kim qolmasa — baribir.
+Smoke +1 («haftalik hisobot: ...»). `npm test` — 190/190 + 772/772. BAYOMA va Mandi botlarida haftalik hisobot yo'q.
