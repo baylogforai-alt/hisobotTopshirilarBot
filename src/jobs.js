@@ -33,7 +33,7 @@ const dailyReport = require('./handlers/dailyReport');
  *   end−30 daq   report-nudge    — kunlik hisobot topshirmaganlarga eslatma
  *   end          daily-report    — guruhga kun yakuni (itemli), direktor/HR ga batafsil; hodimlarga ertangi reja so'rovi
  *   end:45       plan-nudge      — ertangi kunga rejasi yo'q hodimlarga eslatma
- *   dushanba     weekly-report   — o'tgan hafta jamoa hisoboti + Excel → direktorga
+ *   dushanba     weekly-report   — o'tgan hafta jamoa hisoboti + Excel → direktor/HR (jim rejimdagilarga — Odilxon — yo'q)
  *   25-kun 10:00 score-nudge     — boshliqlarga: joriy oyni baholang
  *   1-kun 09:00  month-start     — hammaga «yangi ish oyi boshlandi» + tasdiqlash tugmasi
  *   1-kun 09:20  monthly-kpi     — o'tgan oy KPI + oylik Excel → direktor/HR; boshliqlarga baholash eslatmasi
@@ -52,6 +52,33 @@ const schedule = (name, expr, fn) => {
   return cron.schedule(expr, async () => {
     try { await fn(); } catch (err) { console.error(`[jobs] ${name} xatosi:`, err); }
   }, { timezone: config.timezone });
+};
+
+/**
+ * O'tgan hafta jamoa hisoboti + Excel — direktorlar va HR ga.
+ * 26-okt: jim rejimdagilarga (Odilxon) bormaydi; hech kim qolmasa — baribir (hisobot yo'qolmasin).
+ */
+const weeklyReport = async (bot) => {
+  const anchor = time.addDays(time.startOfWeek(time.today()), -1);
+  const from = time.startOfWeek(anchor);
+  const to = time.endOfWeek(anchor);
+  const ids = await require('./services/org').dropQuiet(await notify.seeAllIds(), { keepIfEmpty: true });
+  const text = await period.teamReport(from, to);
+  for (const id of ids) {
+    await notify.toUser(bot, id, `🔔 <b>HAFTALIK AVTOMATIK HISOBOT</b>\n\n${text}`);
+    await tg.throttle();
+  }
+  const full = await excel.buildTeamPeriod(from, to);
+  let hrFile = null; // HR ga — boshliq sozlamasiga qarab boshliq/direktor topshiriqlarisiz
+  for (const id of ids) {
+    const viewer = await require('./services/access').resolve(id);
+    let file = viewer.hrSeesBoss ? full : hrFile || (hrFile = await excel.buildTeamPeriod(from, to, { viewer }));
+    if (viewer.ownTasksOnly) file = await excel.buildTeamPeriod(from, to, { viewer });
+    await notify.docToUser(bot, id, file.buffer, file.filename, `📥 <b>O'tgan hafta</b> — ${time.prettyRange(from, to)} (Excel)`);
+    await tg.throttle();
+  }
+  await logRun('weekly-report', `${from} → ${to}`);
+  return ids;
 };
 
 /** Rahbarlarga o'z bo'limi, direktorlar va HR ga hamma. noBoss — davomat hisobotlari boshliqqa bormaydi */
@@ -231,24 +258,8 @@ const start = (bot) => {
     await logRun('plan-nudge', `${nudged} ta hodim`);
   });
 
-  // Har dushanba: o'tgan hafta hisoboti + Excel — direktorga
-  schedule('weekly-report', `10 ${config.workStartHour} * * 1`, async () => {
-    const anchor = time.addDays(time.startOfWeek(time.today()), -1);
-    const from = time.startOfWeek(anchor);
-    const to = time.endOfWeek(anchor);
-    const text = await period.teamReport(from, to);
-    await notify.toSeeAll(bot, `🔔 <b>HAFTALIK AVTOMATIK HISOBOT</b>\n\n${text}`);
-    const full = await excel.buildTeamPeriod(from, to);
-    let hrFile = null; // HR ga — boshliq sozlamasiga qarab boshliq/direktor topshiriqlarisiz
-    for (const id of await notify.seeAllIds()) {
-      const viewer = await require('./services/access').resolve(id);
-      let file = viewer.hrSeesBoss ? full : hrFile || (hrFile = await excel.buildTeamPeriod(from, to, { viewer }));
-      if (viewer.ownTasksOnly) file = await excel.buildTeamPeriod(from, to, { viewer });
-      await notify.docToUser(bot, id, file.buffer, file.filename, `📥 <b>O'tgan hafta</b> — ${time.prettyRange(from, to)} (Excel)`);
-      await tg.throttle();
-    }
-    await logRun('weekly-report', `${from} → ${to}`);
-  });
+  // Har dushanba: o'tgan hafta hisoboti + Excel — direktor/HR ga
+  schedule('weekly-report', `10 ${config.workStartHour} * * 1`, () => weeklyReport(bot));
 
   schedule('score-nudge', '0 10 25 * *', async () => {
     const m = time.month();
@@ -315,4 +326,4 @@ const start = (bot) => {
   console.log('[jobs] Rejalashtiruvchi ishga tushdi.');
 };
 
-module.exports = { start, tick, inSlot, remindTick, preStartIntent };
+module.exports = { start, tick, inSlot, remindTick, preStartIntent, weeklyReport };

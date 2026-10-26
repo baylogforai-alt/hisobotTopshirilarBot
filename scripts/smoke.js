@@ -573,6 +573,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await notify.docToAdmins(bot, Buffer.from('x'), 'zaxira.json.gz', 'zaxira');
     const docs = sent.slice(zMark).filter((s) => s.method === 'sendDocument').map((s) => Number(s.payload.chat_id));
     ok("kunlik zaxira: jim rejimdagi boshliqqa bormaydi, boshqa adminga boradi", !docs.includes(1000) && docs.includes(30001), JSON.stringify(docs));
+    // 26-okt: haftalik hisobot ham (matn va Excel) jim rejimdagi boshliqqa bormaydi
+    const wMark = sent.length;
+    await require('../src/jobs').weeklyReport(bot);
+    const wTo = sent.slice(wMark).filter((s) => s.method === 'sendMessage' || s.method === 'sendDocument').map((s) => Number(s.payload.chat_id));
+    ok("haftalik hisobot: jim rejimdagi boshliqqa bormaydi, boshqa adminga boradi", wTo.length > 0 && !wTo.includes(1000) && wTo.includes(30001), JSON.stringify(wTo));
     await org.setQuiet(1000, false);
     await employees.setRole(sardor.id, 'employee');
 
