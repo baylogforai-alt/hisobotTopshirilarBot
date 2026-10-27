@@ -291,12 +291,12 @@ Foydalanuvchi: «kunlik zaxira boshliqqa (Odilxon) bormasligi shart; Odilxonga f
   worktree'dan `git push origin HEAD:main` + `railway up --detach -p 1f7a7f70-a8f5-427d-a874-2b50bc60baf4 -e production -s missiya-bot` (asosiy papka endi `railway link` qilinmagan).
   Prod zaxirani (`railway ssh … pg_dump`) auto-mode rad etadi — foydalanuvchi o'zi oladi. ⚠️ Lokal `master` GitHub `main` dan orqada (6e09523 + shu commit yo'q).
 
-## 20. 26-okt-2026: Haftalik hisobot Odilxonga bormaydi (commit `9794e2d`, ⬜ deploy qilinmagan)
+## 20. 26-okt-2026: Haftalik hisobot Odilxonga bormaydi (commit `9794e2d`, ✅ 27-okt 21-bo'lim bilan deploy)
 Foydalanuvchi: «haftalik hisobotlar ham Odilxonga bormasin». Dushanba `weekly-report` endi `jobs.weeklyReport(bot)` (eksport, testlanadi):
 matn ham, Excel ham `org.dropQuiet(seeAllIds, {keepIfEmpty: true})` ga — jim rejimdagilarga (Odilxon) yo'q, Jaxongir va HR oladi; hech kim qolmasa — baribir.
 Smoke +1 («haftalik hisobot: ...»). `npm test` — 190/190 + 772/772. BAYOMA va Mandi botlarida haftalik hisobot yo'q.
 
-## 21. 26-okt-2026: BAYOMA (6–21-okt, `b439a7b..15d8f69`, 58 commit) yangiliklari ko'chirildi (⬜ deploy qilinmagan)
+## 21. 26-okt-2026: BAYOMA (6–21-okt, `b439a7b..15d8f69`, 58 commit) yangiliklari ko'chirildi (✅ 27-okt 09:32 deploy, `45b00e6`; 20-bo'lim — haftalik hisobot ham shu bilan chiqdi)
 Foydalanuvchi: «BayLog hisobot boti BAYOMA bilan bir xil bo'lsin; BAYOMA'da davriy eslatma bor, bizda yo'q» → tanlov: «BAYOMA'da bor, BayLog'da yo'q hammasi».
 Usul avvalgidek: har fayl `git merge-file` (ours / base BAYOMA `b439a7b` / BAYOMA `15d8f69`), 44 konflikt qo'lda. Yangi modullar to'g'ridan nusxa.
 Zaxira — shu branchning ota commiti (`6605829`). **Keyingi ko'chirish uchun base = BAYOMA `15d8f69`.**
@@ -323,3 +323,7 @@ bo'lim rahbari yo'q hodimning kelmayman/kechikish/javob so'rash tasdig'i — HR 
 migratsiyasidan keyin yangi bazaga **aynan teng** (367 ustun). `smoke.js` da `CHECKIN_REQUIRED=false` (eski oqimlar; qulf `smoke-bayoma.js` da sinaladi);
 `smoke-bayoma.js` BAYOMA standartlari bilan: `BOSS_OWN_LISTS=true`, settings `head_task_copy`/`boss_done` = '0'.
 **Deploydan keyin bir marta:** `flows.broadcastHomeAsk` — uy joyi yo'q hudud agentlariga «uy joylashuvini yuboring», borlariga «saqlangan» xabari (settings `home_ask_sent`).
+Deploy (27-okt): worktree'dan `git push origin HEAD:main` + `railway up --detach -p 1f7a7f70-a8f5-427d-a874-2b50bc60baf4 -e production -s missiya-bot` → SUCCESS, `/health` 200,
+logda yangi cron'lar (task-start, meeting-remind, recurring-run/ask/nag, home-location, live-watch) va «ishga tushdi»; rolling deployda bir marta 409 (kutilgan).
+Prod zaxira deploydan oldin olinmadi (auto-mode `railway ssh` ni rad etadi; migratsiya faqat qo'shuvchi — CREATE TABLE IF NOT EXISTS / ADD COLUMN).
+⚠️ Lokal `master` hamon GitHub `main` dan orqada — asosiy papkada boshqa sessiyaning IaC ishi bor, tegilmadi.
