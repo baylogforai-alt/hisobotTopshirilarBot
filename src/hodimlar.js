@@ -10,7 +10,8 @@
  */
 const HODIMLAR = [
   // Odilxon — kompaniya asoschisi, BayLog boshlig'i (role=admin → davomat/KPI yo'q, hamma huquq). Jaxongir aka (CEO) — bazada, fixes.js
-  { tgId: 8726834955, fullName: 'Odilxon', position: 'Boshliq', role: 'admin' },
+  // 29-okt-2026: yangi akkaunt; formerTgId — eski akkaunt bazada bo'lsa qo'shilmaydi (fixes.js profilni ko'chiradi)
+  { tgId: 9123028176, formerTgId: 8726834955, fullName: 'Odilxon', position: 'Boshliq', role: 'admin' },
   { tgId: 8254184544, fullName: 'Samandar', position: 'Sotuv menejeri' },
   { tgId: 5934117099, fullName: 'Akbarali', position: 'Marketolog' },
   { tgId: 7963610051, fullName: 'Durdona', position: 'Operator' },

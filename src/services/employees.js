@@ -68,7 +68,7 @@ const add = async ({ tgId, fullName, position = null, role = 'employee', departm
 const ensureMany = async (list) => {
   const added = [];
   for (const h of list) {
-    if (await byTgId(h.tgId)) continue;
+    if ((await byTgId(h.tgId)) || (h.formerTgId && (await byTgId(h.formerTgId)))) continue;
     const { employee } = await add(h);
     added.push(employee);
   }
