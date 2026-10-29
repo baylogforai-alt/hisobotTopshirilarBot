@@ -63,10 +63,12 @@ const FIXES = [
   { id: 'chiqar-jaxongir-20261029', action: 'deactivate', match: (e) => Number(e.tg_id) === 219861348 },
   // 29-okt-2026: Odilxon yangi akkauntda (9123028176) — direktor (role=admin); eski akkaunt (8726834955) botdan chiqadi, profil ko'chadi
   { id: 'odilxon-yangi-tg-20261029', action: 'transfer', to: ODILXON_TG, match: (e) => Number(e.tg_id) === 8726834955 },
+  // 29-okt-2026: eski Odilxon akkaunti (8726834955) rolling deployda eski konteyner seed'i bilan qayta qo'shilib qoldi — chiqariladi
+  { id: 'chiqar-odilxon-eski-20261029', action: 'deactivate', match: (e) => Number(e.tg_id) === 8726834955 },
 ];
 
 const run = async () => {
-  const all = await employees.listAll();
+  let all = await employees.listAll();
   for (const f of FIXES) {
     if (await db.getSetting(`fix:${f.id}`)) continue;
     const hits = all.filter((e) => Number(e.active) === 1 && f.match(e));
@@ -92,6 +94,7 @@ const run = async () => {
     if (f.name) await employees.rename(e.id, f.name);
     await db.setSetting(`fix:${f.id}`, `${e.id} ${e.full_name}`);
     console.log(`[fix] ${f.id}: ${e.full_name} (${e.tg_id}) → ${f.action}`);
+    all = await employees.listAll(); // keyingi fix yangilangan ro'yxatni ko'rsin (transfer tg_id ni o'zgartiradi)
   }
   const roster = await employees.listAll();
   console.log('👥 Hodimlar:\n' + roster.map((e) => `   ${Number(e.active) ? '✓' : '⛔'} ${e.role.padEnd(8)} ${e.tg_id}  ${e.full_name}${e.position ? ` — ${e.position}` : ''}`).join('\n'));
