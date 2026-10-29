@@ -58,11 +58,19 @@ const setQuiet = async (tgId, on) => {
   if (on) q.add(Number(tgId)); else q.delete(Number(tgId));
   await db.setSetting(QUIET_KEY, [...q].join(','));
 };
-/** Jim rejimdagilarni chiqaradi. keepIfEmpty — hech kim qolmasa o'zgarishsiz (qaror kerak bo'lgan xabar yo'qolmasin) */
-const dropQuiet = async (ids, { keepIfEmpty = false } = {}) => {
+/**
+ * Jim rejimdagilarni chiqaradi. keepIfEmpty — hech kim qolmasa o'zgarishsiz (qaror kerak bo'lgan xabar yo'qolmasin).
+ * 29-okt: kimdir chiqarilsa — o'rniga ADMIN_IDS (texnik direktor, hodim bo'lishi mumkin) oladi; `self` — xabar egasi, unga emas.
+ */
+const dropQuiet = async (ids, { keepIfEmpty = false, self = null } = {}) => {
   const q = await quietIds();
   if (!q.size) return ids;
   const rest = ids.filter((id) => !q.has(Number(id)));
+  if (rest.length < ids.length) {
+    for (const id of config.adminIds) {
+      if (!q.has(Number(id)) && Number(id) !== Number(self) && !rest.some((x) => Number(x) === Number(id))) rest.push(Number(id));
+    }
+  }
   return rest.length || !keepIfEmpty ? rest : ids;
 };
 
@@ -126,7 +134,7 @@ const approversOf = async (emp) => {
   const set = new Set(ids);
   if (!set.size || (await bossSeesAttendance())) for (const id of await employees.bossTgIds()) set.add(Number(id));
   set.delete(Number(emp.tg_id));
-  return dropQuiet([...set], { keepIfEmpty: true });
+  return dropQuiet([...set], { keepIfEmpty: true, self: emp.tg_id });
 };
 
 /** Texnik direktorlar (ADMIN_IDS, rahbariyatda yo'q) — faqat ma'lumot oladi, tasdiqlash tugmalarisiz */

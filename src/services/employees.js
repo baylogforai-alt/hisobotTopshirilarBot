@@ -206,7 +206,7 @@ const reviewersOf = async (emp) => {
   for (const id of await bossTgIds()) ids.add(Number(id));
   for (const h of await listHr()) ids.add(Number(h.tg_id));
   ids.delete(Number(emp.tg_id));
-  return require('./org').dropQuiet([...ids]);
+  return require('./org').dropQuiet([...ids], { self: emp.tg_id });
 };
 
 /** Hodimning bo'lim rahbarlari (o'zidan tashqari) — tg_id lar */
@@ -229,7 +229,7 @@ const attendanceWatchersOf = async (emp) => {
   ids.delete(Number(emp.tg_id));
   if (await require('./org').bossSeesAttendance()) for (const id of await bossTgIds()) ids.add(Number(id));
   ids.delete(Number(emp.tg_id));
-  return require('./org').dropQuiet([...ids]);
+  return require('./org').dropQuiet([...ids], { self: emp.tg_id });
 };
 
 /**
@@ -254,7 +254,7 @@ const doneReviewersOf = async (emp, task = null) => {
   ids.delete(Number(emp.tg_id));
   // jim rejimdagilar — o'zi bergan topshiriqdan tashqari; hech kim qolmasa o'zgarishsiz (qabul qiladigan odam qolsin)
   const giver = task && task.created_by && task.source !== 'self' && Number(task.created_by) !== Number(emp.tg_id) ? Number(task.created_by) : null;
-  const rest = await require('./org').dropQuiet([...ids].filter((id) => id !== giver));
+  const rest = await require('./org').dropQuiet([...ids].filter((id) => id !== giver), { self: emp.tg_id });
   const out = giver ? [...rest, giver] : rest;
   return out.length ? out : [...ids];
 };

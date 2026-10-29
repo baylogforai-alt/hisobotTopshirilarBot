@@ -561,6 +561,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     ok("jim rejim: o'zi bergan topshiriq bajarilsa — direktorga keladi", own.includes(1000));
     const onlyBoss = await employees.doneReviewersOf(bobur, { created_by: 20001, source: 'self' });
     ok("jim rejim: boshqa tekshiruvchi bo'lmasa — baribir direktorga (qabul qiladigan odam qolsin)", onlyBoss.includes(1000));
+    const config = require('../src/config');
+    // 29-okt: jim rejimdagi boshliq o'rniga ADMIN_IDS dagi texnik direktor (hodim bo'lishi mumkin) oladi, o'z xabarini emas
+    config.adminIds.push(77777, Number(akbar.tg_id));
+    const dep = await employees.doneReviewersOf(bobur, { created_by: 20001, source: 'self' });
+    const depAw = await employees.attendanceWatchersOf(akbar);
+    const depAp = await org.approversOf(bobur);
+    ok("jim rejim: boshliq o'rniga ADMIN_IDS oladi (Bajardim, tasdiq)", dep.includes(77777) && !dep.includes(1000) && depAp.includes(77777) && !depAp.includes(1000), JSON.stringify([dep, depAp]));
+    ok("jim rejim: ADMIN_IDS hodim o'z keldi-ketdisini olmaydi", depAw.includes(77777) && !depAw.includes(Number(akbar.tg_id)) && !depAw.includes(1000), JSON.stringify(depAw));
+    config.adminIds.splice(config.adminIds.indexOf(77777), 2);
     await send(cbq(1000, 'adm:qt:0'));
     ok("jim rejim: o'chirildi", !(await org.isQuiet(1000)) && (await employees.reviewersOf(akbar)).includes(1000));
   }
