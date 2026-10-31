@@ -4,23 +4,31 @@ const db = require('../db');
 const time = require('../time');
 
 /**
- * «📆 DAVRIY ESLATMA» — boshliq/direktor yoki HR yozadi: har oy (kun + soat) yoki har hafta (kun(lar) + soat).
+ * «📆 DAVRIY ESLATMA» — boshliq/direktor yoki HR yozadi: har kun (ish kunlari + soat), har oy (kun + soat) yoki har hafta (kun(lar) + soat).
  *   kind: 'remind' — e'lon bo'lib boradi («👀 Tanishdim»); 'task' — har safar yangi topshiriq (muddat = yuborilgan kun + due_offset).
- *   freq: 'month' — days = '5' (0 = oyning oxirgi kuni; 29–31 qisqa oyda oxirgi kunga tushadi); 'week' — days = '1,5' (luxon: Du=1 … Ya=7).
+ *   freq: 'day' — days = '' (har ish kuni, WORK_DAYS — o'sha paytdagi sozlama bo'yicha); 'month' — days = '5' (0 = oyning oxirgi kuni; 29–31 qisqa oyda oxirgi kunga tushadi); 'week' — days = '1,5' (luxon: Du=1 … Ya=7).
  * next_run_at — keyingi yuborish (ISO, Toshkent); cron har daqiqa (flows.runRecurring). claim() — bir marta (ikki marta yuborilmaydi).
  * Hech narsa o'chirilmaydi: to'xtatish — active=0, bekor qilish — cancelled_at.
  */
 
 const KINDS = ['remind', 'task'];
-const FREQS = ['month', 'week'];
+const FREQS = ['day', 'month', 'week'];
 
 const parseDays = (days) => String(days || '').split(',').map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n <= 31);
 
 /** Keyingi yuborish payti — after dan keyin (qat'iy). luxon DateTime yoki null */
 const nextRun = ({ freq, days, at_time: at }, after = time.now()) => {
   const [h, m] = String(at || '').split(':').map(Number);
+  if (!Number.isInteger(h) || !Number.isInteger(m)) return null;
+  if (freq === 'day') {
+    for (let i = 0; i <= 8; i += 1) {
+      const d = after.startOf('day').plus({ days: i }).set({ hour: h, minute: m });
+      if (time.isWorkDay(d.toFormat('yyyy-MM-dd')) && d > after) return d;
+    }
+    return null;
+  }
   const list = parseDays(days);
-  if (!list.length || !Number.isInteger(h) || !Number.isInteger(m)) return null;
+  if (!list.length) return null;
   if (freq === 'week') {
     for (let i = 0; i <= 7; i += 1) {
       const d = after.startOf('day').plus({ days: i }).set({ hour: h, minute: m });
@@ -37,20 +45,21 @@ const nextRun = ({ freq, days, at_time: at }, after = time.now()) => {
   return null;
 };
 
-/** «har oy 5-kuni» / «har oy oxirgi kuni» / «har hafta: Du, Ju» */
+/** «har kuni (ish kunlari)» / «har oy 5-kuni» / «har oy oxirgi kuni» / «har hafta: Du, Ju» */
 const daysText = (r) => {
+  if (r.freq === 'day') return 'har kuni (ish kunlari)';
   const list = parseDays(r.days);
   if (r.freq === 'week') return `har hafta: ${list.map((d) => time.UZ_SHORT[d - 1]).join(', ')}`;
   return `har oy ${list[0] === 0 ? 'oxirgi kuni' : `${list[0]}-kuni`}`;
 };
-/** «har oy 5-kuni, 10:00» / «har hafta: Du, Ju — 16:00» */
-const scheduleText = (r) => `${daysText(r)}${r.freq === 'week' ? ' —' : ','} ${r.at_time}`;
+/** «har kuni (ish kunlari) — 09:00» / «har oy 5-kuni, 10:00» / «har hafta: Du, Ju — 16:00» */
+const scheduleText = (r) => `${daysText(r)}${r.freq === 'month' ? ',' : ' —'} ${r.at_time}`;
 
 const byId = (id) => db.one('SELECT * FROM recurring WHERE id = $1', [Number(id)]);
 
 const create = async ({ kind, freq, days, atTime, body = null, media = null, dueOffset = 0, target, createdBy, creatorName, memberIds }) => {
   if (!KINDS.includes(kind) || !FREQS.includes(freq)) throw new Error(`recurring: noto'g'ri tur ${kind}/${freq}`);
-  const daysStr = [...new Set(days.map(Number))].sort((a, b) => a - b).join(',');
+  const daysStr = freq === 'day' ? '' : [...new Set(days.map(Number))].sort((a, b) => a - b).join(',');
   const next = nextRun({ freq, days: daysStr, at_time: atTime });
   const rows = await db.query(
     `INSERT INTO recurring (kind, freq, days, at_time, body, media_type, file_id, file_name, due_offset, target, created_by, creator_name, created_at, next_run_at)

@@ -3572,6 +3572,10 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     ok('haftalik: juma 16:00 o\'tgan → dushanba', fmtR(recurring.nextRun({ freq: 'week', days: '1,5', at_time: '16:00' }, at('2026-10-16T16:30'))) === '2026-10-19 16:00');
     ok('matn: «har hafta: Du, Ju — 16:00» / «har oy oxirgi kuni, 18:00»',
       recurring.scheduleText({ freq: 'week', days: '1,5', at_time: '16:00' }) === 'har hafta: Du, Ju — 16:00' && recurring.scheduleText({ freq: 'month', days: '0', at_time: '18:00' }) === 'har oy oxirgi kuni, 18:00');
+    // 31-okt: har kun — ish kunlari (WORK_DAYS 1-6), yakshanba o'tkazib yuboriladi
+    ok('har kun: shanba 09:00 dan → shanba 10:00', fmtR(recurring.nextRun({ freq: 'day', days: '', at_time: '10:00' }, at('2026-10-31T09:00'))) === '2026-10-31 10:00');
+    ok("har kun: shanba 10:00 o'tgan → dushanba (yakshanba yo'q)", fmtR(recurring.nextRun({ freq: 'day', days: '', at_time: '10:00' }, at('2026-10-31T10:30'))) === '2026-11-02 10:00');
+    ok('matn: «har kuni (ish kunlari) — 09:00»', recurring.scheduleText({ freq: 'day', days: '', at_time: '09:00' }) === 'har kuni (ish kunlari) — 09:00');
 
     USERS[60111] = { id: 60111, first_name: 'Davriy', last_name: 'Bir' };
     USERS[60112] = { id: 60112, first_name: 'Davriy', last_name: 'Ikki' };
@@ -3623,6 +3627,28 @@ const countSince = (mark, chatId, method = null) => sent.slice(mark).filter((s) 
     rw = await recurring.byId(rw.id);
     ok('run_count 1, keyingisi kelajakda (juma)', Number(rw.run_count) === 1 && at(rw.next_run_at) > time.now() && at(rw.next_run_at).weekday === 5);
     ok('ikkinchi chaqiruv — hech narsa', (await flows.runRecurring(B)) === 0);
+
+    // --- 31-okt: «🔂 Har kun» — kun so'ralmaydi, darhol soat
+    await send(msg(1000, ui.BTN.recurring));
+    await send(cbq(1000, 'dv:k:remind'));
+    await send(cbq(1000, `dq:t:${r2.id}`));
+    await send(cbq(1000, 'dq:ok'));
+    ok('«🔂 Har kun» tugmasi bor', findCb(1000, /^dv:f:day$/));
+    await send(cbq(1000, 'dv:f:day'));
+    ok("har kun: kun so'ralmaydi, darhol soat", lastText(1000).includes('Soat nechida') && lastText(1000).includes('har kuni (ish kunlari)'));
+    await send(cbq(1000, 'dv:t:0900'));
+    await send(msg(1000, 'Kunlik rejani yozing'));
+    ok("har kun: ko'rib chiqishda «har kuni (ish kunlari) — 09:00»", lastText(1000).includes('har kuni (ish kunlari) — 09:00') && lastText(1000).includes('Davriy Ikki'));
+    await send(cbq(1000, 'dv:save'));
+    const rDay = (await recurring.listBy(1000)).find((x) => x.freq === 'day');
+    const nDay = rDay && at(rDay.next_run_at);
+    ok("bazada: day, days bo'sh, keyingisi — ish kuni 09:00", rDay && rDay.days === '' && rDay.at_time === '09:00' && nDay > time.now()
+      && time.isWorkDay(nDay.toFormat('yyyy-MM-dd')) && nDay.toFormat('HH:mm') === '09:00');
+    await due(rDay.id);
+    mark = sent.length;
+    ok('har kun: vaqti keldi → 1 ta yuborildi', (await flows.runRecurring(B)) === 1 && textTo(mark, 60112, /ESLATMA[\s\S]*Kunlik rejani yozing/));
+    ok("har kun: keyingisi — keyingi ish kuni", (() => { const n = at(recurring.nextRun(rDay).toISO()); return time.isWorkDay(n.toFormat('yyyy-MM-dd')); })());
+    await recurring.cancel(rDay.id, 1000); // keyingi testlar uchun ro'yxat avvalgidek
     const ann = await recurring.lastAnnouncement(rw.id);
     await send(cbq(60111, `an:r:${ann.id}`));
     await send(cbq(1000, `an:v:${ann.id}`));

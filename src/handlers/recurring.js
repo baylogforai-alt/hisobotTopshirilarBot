@@ -16,9 +16,9 @@ const { DateTime } = require('luxon');
 const { esc, cb, inline } = ui;
 
 /**
- * «📆 Davriy eslatma» — boshliq/direktor va HR: har oy (kun + soat) yoki har hafta (kun(lar) + soat) hodim(lar)ga
+ * «📆 Davriy eslatma» — boshliq/direktor va HR: har kun (ish kunlari + soat), har oy (kun + soat) yoki har hafta (kun(lar) + soat) hodim(lar)ga
  * eslatma (e'lon, «👀 Tanishdim») yoki topshiriq (har safar yangi, muddat bilan). Yuborish — flows.runRecurring (cron recurring-run).
- *   dv:start · dv:k:<remind|task> · dq:* (tanlash, picker) · dv:f:<month|week> · dv:md:<0-31> · dv:wd:<1-7>, dv:wok
+ *   dv:start · dv:k:<remind|task> · dq:* (tanlash, picker) · dv:f:<day|month|week> · dv:md:<0-31> · dv:wd:<1-7>, dv:wok
  *   dv:t:<HHMM|type> · dv:o:<0|1|3|7> (topshiriq muddati) · dv:save · dv:x
  *   dv:l (ro'yxat) · dv:v:<id> (kartochka) · dv:m:<id> (media) · dv:p/r:<id> (to'xtatish / davom) · dv:del/delok:<id> (bekor)
  *   bosqichlar rec_pick (inline), rec_time, rec_text, rec_title, rec_confirm
@@ -47,7 +47,7 @@ const start = async (ctx) => {
   const mine = await recurring.listBy(ctx.from.id);
   return render(
     ctx,
-    '📆 <b>DAVRIY ESLATMA</b>\n\nHar oy (masalan 5-kuni 10:00 da) yoki har hafta (masalan har juma 16:00 da) hodimga avtomatik boradi.\n\n' +
+    '📆 <b>DAVRIY ESLATMA</b>\n\nHar kuni (ish kunlari, masalan 09:00 da), har hafta (masalan har juma 16:00 da) yoki har oy (masalan 5-kuni 10:00 da) hodimga avtomatik boradi.\n\n' +
       "📨 <b>Eslatma</b> — xabar, hodim «👁 O'qidim» bosadi.\n📌 <b>Topshiriq</b> — har safar yangi topshiriq (Bajardim + isbot, KPI ga kiradi).\n\nNima yuboramiz?",
     inline([
       [cb('📨 Eslatma', 'dv:k:remind'), cb('📌 Topshiriq', 'dv:k:task')],
@@ -75,7 +75,7 @@ const peoplePick = picker.create({
 const askFreq = (ctx) => {
   const r = rec(ctx);
   return render(ctx, `${KIND_HEAD[r.kind]}\n👥 Kimga: <b>${esc(r.target)}</b> — ${r.ids.length} kishi\n\n🔁 <b>Qanchalik tez-tez?</b>`, inline([
-    [cb('📅 Har oy', 'dv:f:month'), cb('🗓 Har hafta', 'dv:f:week')],
+    [cb('🔂 Har kun', 'dv:f:day'), cb('🗓 Har hafta', 'dv:f:week'), cb('📅 Har oy', 'dv:f:month')],
     [cb(ui.BTN.cancel, 'dv:x')],
   ]));
 };
@@ -288,10 +288,12 @@ const register = (bot) => {
     return peoplePick.show(ctx, { reset: true });
   });
   peoplePick.register(bot);
-  bot.action(/^dv:f:(month|week)$/, async (ctx) => {
+  bot.action(/^dv:f:(day|month|week)$/, async (ctx) => {
     if (!canRec(ctx)) return deny(ctx);
     if (!rec(ctx) || !rec(ctx).ids) return ctx.answerCbQuery('Eskirgan tugma');
     await ctx.answerCbQuery();
+    // har kun — kun tanlanmaydi, darhol soat (ish kunlari — WORK_DAYS bo'yicha)
+    if (ctx.match[1] === 'day') { setRec(ctx, { freq: 'day', days: [], week: [] }); return askTime(ctx); }
     setRec(ctx, { freq: ctx.match[1], days: null, week: [] });
     return ctx.match[1] === 'month' ? askMonthDay(ctx) : askWeek(ctx);
   });
