@@ -54,6 +54,7 @@ const BTN = {
   stDone: '✅ Bajarilgan',
   visit: '📍 Hududga keldim',
   agents: '📡 Agentlar qayerda',
+  prices: '💲 Narxlar',
   cancel: '❌ Bekor qilish',
   skip: "⏭ O'tkazib yuborish",
 };
@@ -61,7 +62,7 @@ const BTN = {
 const LINE = '━'.repeat(18);
 
 /** Rolga va ish turiga qarab asosiy klaviatura (isField — hudud agenti: «Hududga keldim» tugmasi) */
-const mainKeyboard = ({ isAdmin = false, isHead = false, isField = false, isHr = false, isViewer = false, isBoss = false } = {}) => {
+const mainKeyboard = ({ isAdmin = false, isHead = false, isField = false, isHr = false, isViewer = false, isBoss = false, isPrice = false } = {}) => {
   const rows = isBoss ? [] : [[BTN.checkIn, BTN.checkOut]];
   if (isField && !isBoss) rows.push([BTN.visit]);
   rows.push([BTN.myTasks, BTN.done], [BTN.stActive, BTN.stFix], [BTN.stReview, BTN.stDone], isBoss ? [BTN.selfTask, BTN.myReport] : [BTN.selfTask, BTN.dailyReport]);
@@ -72,6 +73,7 @@ const mainKeyboard = ({ isAdmin = false, isHead = false, isField = false, isHr =
   else if (isHr) rows.push([BTN.journal, BTN.announce], [BTN.myTeam, BTN.reports], [BTN.kpi, BTN.attView], [BTN.score, BTN.agents], [BTN.meeting, BTN.recurring], [BTN.warn, BTN.myReport]);
   else if (isHead) rows.push([BTN.myTeam, BTN.myDept], [BTN.score, BTN.announce], [BTN.agents, BTN.warn], [BTN.myReport]);
   else rows.push([BTN.myReport]);
+  if (isPrice) rows.push([BTN.prices]);
   if (isViewer && !isAdmin && !isHr) rows.push([BTN.attView]);
   // boshliq (direktor, role='admin' hodim) — hodim emas: kech qolaman / kelmayman / oylik yo'q
   // HR — eslatma sozlamalari yo'q (faqat boshliq boshqaradi)
@@ -86,9 +88,11 @@ const isBossEmp = (emp) => Boolean(emp && emp.role === 'admin');
 const kbFor = (ctx) => mainKeyboard({
   isAdmin: ctx.state.isAdmin, isHead: ctx.state.isHead, isField: isFieldEmp(ctx.state.employee),
   isHr: flag(ctx.state.employee, 'is_hr'), isViewer: flag(ctx.state.employee, 'can_view_att'), isBoss: isBossEmp(ctx.state.employee),
+  isPrice: Boolean(ctx.state.isAdmin) || flag(ctx.state.employee, 'is_hr') || flag(ctx.state.employee, 'is_declarant') || flag(ctx.state.employee, 'can_ask_price'),
 });
 const kbForEmp = (emp) => mainKeyboard({
   isAdmin: emp.role === 'admin', isHead: emp.role === 'head', isField: isFieldEmp(emp), isHr: flag(emp, 'is_hr'), isViewer: flag(emp, 'can_view_att'), isBoss: isBossEmp(emp),
+  isPrice: emp.role === 'admin' || flag(emp, 'is_hr') || flag(emp, 'is_declarant') || flag(emp, 'can_ask_price'),
 });
 
 /** noLoc — Keldimda «📵 Joylashuv yubora olmayman» (sabab bilan) */

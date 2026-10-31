@@ -112,6 +112,8 @@ const employeeCard = async (ctx, id) => {
     ...(e.role !== 'employee' || employees.isHr(e) ? [[cb('📨 Bergan topshiriqlari (kimga, nima)', `emp:given:${e.id}`)]] : []),
     [cb('✏️ Ism', `emp:name:${e.id}`), cb('💼 Lavozim', `emp:pos:${e.id}`), cb("🏢 Bo'lim", `emp:dept:${e.id}`)],
     [cb(Number(e.is_hr) ? '🧑‍💼 HR: ha' : "🧑‍💼 HR: yo'q", `emp:hr:${e.id}:${Number(e.is_hr) ? 0 : 1}`), cb('👥 Jamoasi', `tm:m:${e.id}`)],
+    [cb(Number(e.is_declarant) ? '📑 Deklarant: ha' : "📑 Deklarant: yo'q", `emp:dc:${e.id}:${Number(e.is_declarant) ? 0 : 1}`),
+      cb(Number(e.can_ask_price) ? "💲 Narx so'ray oladi: ha" : "💲 Narx so'ray oladi: yo'q", `emp:ap:${e.id}:${Number(e.can_ask_price) ? 0 : 1}`)],
     [cb("🧭 Yo'nalishlari", `ed:${e.id}`), cb(employees.isViewer(e) ? '👁 Davomat nazorati: ha' : "👁 Davomat nazorati: yo'q", `vw:grant:${e.id}`)],
     [cb('🎖 Rol', `emp:role:${e.id}`), cb('🏙 Filial', `emp:branch:${e.id}`), cb(employees.isFlexible(e) ? '🕊 Erkin: ha' : "🕊 Erkin: yo'q", `emp:flex:${e.id}:${employees.isFlexible(e) ? 0 : 1}`)],
     [cb('💵 Oklad', `emp:salary:${e.id}`), cb('🏆 KPI summasi', `emp:fund:${e.id}`), cb('🕘 Ish boshlanishi', `emp:start:${e.id}`)],
@@ -935,6 +937,18 @@ const register = (bot) => {
     if (on) await flows.hrNotice(botOf(ctx), await employees.byId(e.id));
     return employeeCard(ctx, e.id);
   });
+  // deklarant / narx so'rash bayrog'i — faqat direktor (guard); hodimga xabar yuborilmaydi
+  const flagAction = (re, col, set) => bot.action(re, async (ctx) => {
+    if (!(await guard(ctx))) return;
+    const e = await employees.byId(ctx.match[1]);
+    if (!e) return ctx.answerCbQuery('Topilmadi');
+    if (!ctx.match[2] || Number(Boolean(Number(e[col]))) === Number(ctx.match[2])) return stale(ctx, e.id);
+    await employees[set](e.id, ctx.match[2] === '1');
+    await ctx.answerCbQuery('Saqlandi');
+    return employeeCard(ctx, e.id);
+  });
+  flagAction(/^emp:dc:(\d+)(?::([01]))?$/, 'is_declarant', 'setDeclarant');
+  flagAction(/^emp:ap:(\d+)(?::([01]))?$/, 'can_ask_price', 'setCanAskPrice');
   bot.action(/^emp:video:(\d+)(?::([01]))?$/, async (ctx) => {
     if (!(await guard(ctx))) return;
     const e = await employees.byId(ctx.match[1]);

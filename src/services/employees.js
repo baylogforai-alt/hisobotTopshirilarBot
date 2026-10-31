@@ -147,6 +147,13 @@ const personIcon = (e) => (Number(e.is_hr) === 1 ? '🧑‍💼' : e.role === 'a
 /** Davomat nazoratchisi: hamma hodimning kelgan-ketgani, davomat % va KPI % — topshiriqlarsiz. HR / direktor beradi */
 const isViewer = (emp) => Boolean(emp && emp.active && Number(emp.can_view_att) === 1);
 const setViewer = (id, on) => db.query('UPDATE employees SET can_view_att = $1 WHERE id = $2', [on ? 1 : 0, Number(id)]);
+/** Deklarant — narx so'rovlariga javob beradi (faqat direktor belgilaydi) */
+const isDeclarant = (emp) => Boolean(emp && emp.active && Number(emp.is_declarant) === 1);
+const setDeclarant = (id, on) => db.query('UPDATE employees SET is_declarant = $1 WHERE id = $2', [on ? 1 : 0, Number(id)]);
+/** Narx so'rashi mumkin hodim (rahbarlar — HR / direktor — bayroqsiz so'ray oladi) */
+const canAskPrice = (emp) => Boolean(emp && emp.active && Number(emp.can_ask_price) === 1);
+const setCanAskPrice = (id, on) => db.query('UPDATE employees SET can_ask_price = $1 WHERE id = $2', [on ? 1 : 0, Number(id)]);
+const listDeclarants = () => db.query(`${SELECT} WHERE e.active = 1 AND e.is_declarant = 1 ORDER BY lower(e.full_name)`);
 /** Telegram lichkasiga havola (HTML) */
 const contactHtml = (e) => {
   const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -277,7 +284,7 @@ const mention = (e) => (e.username ? `@${e.username}` : e.full_name);
 module.exports = {
   ROLES, byTgId, byId, listActive, listStaff, isBoss, isStaff, listAll, listByDepartment, listWithoutDepartment, listAdmins, listHeads,
   add, ensureMany, deactivate, activate, setRole, setPosition, rename, setDepartment, setBonusFund, setWorkStart, parseWorkStart, startMinutesOf, setWorkEnd, workEndOf, endMinutesOf, setFlexible, isFlexible,
-  isHr, setHr, listHr, wantsDoneNotify, setNotifyDone, attendanceWatchersOf, doneReviewersOf, isViewer, setViewer, contactHtml, titleOf, personIcon, teamOf, listUnmanaged,
+  isHr, setHr, listHr, wantsDoneNotify, setNotifyDone, attendanceWatchersOf, doneReviewersOf, isViewer, setViewer, isDeclarant, setDeclarant, canAskPrice, setCanAskPrice, listDeclarants, contactHtml, titleOf, personIcon, teamOf, listUnmanaged,
   setBranch, setWorkMode, isField, setHome, clearHome, homeOf, setVideoRequired, needsCheckinVideo, setSalary, modeLabel,
   touchUsername, isAdminId, isAdmin, isHead, canManage, reviewersOf, deptHeadIdsOf, bossTgIds, isTop, roleLabel, mention,
 };

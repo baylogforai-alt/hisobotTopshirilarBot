@@ -82,6 +82,8 @@ CREATE TABLE IF NOT EXISTS employees (
   remind_pending TEXT,
   can_view_att   INTEGER NOT NULL DEFAULT 0,
   notify_done    INTEGER NOT NULL DEFAULT 0,
+  is_declarant   INTEGER NOT NULL DEFAULT 0,
+  can_ask_price  INTEGER NOT NULL DEFAULT 0,
   created_at     TEXT    NOT NULL
 );
 
@@ -455,6 +457,44 @@ CREATE TABLE IF NOT EXISTS warnings (
 
 CREATE INDEX IF NOT EXISTS idx_warnings_emp ON warnings(employee_id);
 
+CREATE TABLE IF NOT EXISTS price_requests (
+  id                  ${pk},
+  requester_id        INTEGER NOT NULL,
+  declarant_id        INTEGER NOT NULL,
+  description         TEXT NOT NULL,
+  media_type          TEXT,
+  media_file_id       TEXT,
+  due_at              TEXT,
+  status              TEXT NOT NULL DEFAULT 'open',
+  price               TEXT,
+  price_note          TEXT,
+  created_at          TEXT NOT NULL,
+  priced_at           TEXT,
+  cancelled_at        TEXT,
+  cancelled_by        INTEGER,
+  asked_at            TEXT,
+  last_reminded_at    TEXT,
+  overdue_notified_at TEXT,
+  asked_nudged_at     TEXT,
+  parent_id           INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_decl ON price_requests(declarant_id, status);
+CREATE INDEX IF NOT EXISTS idx_price_req ON price_requests(requester_id, status);
+
+CREATE TABLE IF NOT EXISTS price_request_msgs (
+  id            ${pk},
+  request_id    INTEGER NOT NULL,
+  author_id     INTEGER NOT NULL,
+  kind          TEXT NOT NULL,
+  text          TEXT,
+  media_type    TEXT,
+  media_file_id TEXT,
+  created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_msgs ON price_request_msgs(request_id);
+
 CREATE TABLE IF NOT EXISTS task_replies (
   id          ${pk},
   task_id     INTEGER NOT NULL REFERENCES tasks(id),
@@ -637,6 +677,9 @@ const MIGRATIONS = [
   col('tasks', 'rec_answer_at', 'TEXT'),
   col('tasks', 'rec_result', 'TEXT'),
   col('tasks', 'rec_result_at', 'TEXT'),
+  // 31-okt-2026: deklarant va narx so'rovi ruxsati
+  col('employees', 'is_declarant', 'INTEGER NOT NULL DEFAULT 0'),
+  col('employees', 'can_ask_price', 'INTEGER NOT NULL DEFAULT 0'),
 ];
 
 /**

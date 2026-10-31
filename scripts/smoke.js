@@ -769,6 +769,31 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await send(cbq(20001, `rv:okm:${mt0.id},${mt1.id}`, { message_id: 7, chat: { id: 20001, type: 'private' }, photo: [{ file_id: 'x' }], caption: 'c', date: 0 }));
   ok('«Hammasini qabul» — qolgani ham qabul', (await tasks.byId(mt1.id)).status === 'accepted');
 
+  // --- 💲 Narx so'rovlari ---
+  USERS[50001] = { id: 50001, first_name: 'Dilshod', username: 'dilshod' };
+  USERS[50002] = { id: 50002, first_name: 'Samandar', username: 'samandar' };
+  await employees.add({ tgId: 50001, fullName: 'Dilshod Deklarant', position: 'Deklarant' });
+  await employees.add({ tgId: 50002, fullName: 'Samandar', position: 'Sotuv menejeri' });
+  const dil = await employees.byTgId(50001);
+  const sam = await employees.byTgId(50002);
+  const kbText = (chatId) => JSON.stringify(to(chatId).slice(-1)[0].payload.reply_markup || {});
+  await send(msg(50002, '/menu'));
+  ok("narx: bayroqsiz hodimda «💲 Narxlar» yo'q", !kbText(50002).includes('💲 Narxlar'));
+  await send(cbq(1000, `emp:dc:${dil.id}:1`));
+  await send(cbq(1000, `emp:ap:${sam.id}:1`));
+  ok('narx: kartochkada deklarant yoqildi', employees.isDeclarant(await employees.byId(dil.id)));
+  ok("narx: kartochkada «narx so'ray oladi» yoqildi", employees.canAskPrice(await employees.byId(sam.id)));
+  await send(cbq(1000, `emp:dc:${dil.id}:1`));
+  ok("narx: eskirgan tugma (qayta :1) holatni o'zgartirmaydi", employees.isDeclarant(await employees.byId(dil.id)));
+  await send(cbq(30001, `emp:dc:${dil.id}:0`));
+  ok("narx: hodim kartochkani o'zgartira olmaydi", employees.isDeclarant(await employees.byId(dil.id)));
+  await send(msg(50001, '/menu'));
+  await send(msg(50002, '/menu'));
+  ok('narx: ruxsatlilarda «💲 Narxlar» bor', kbText(50001).includes('💲 Narxlar') && kbText(50002).includes('💲 Narxlar'));
+  ok('narx: listDeclarants', (await employees.listDeclarants()).map((e) => e.id).join() === String(dil.id));
+  ok("narx: Samandar fix ro'yxatda", require('../src/fixes').FIXES.some((f) => f.id === 'samandar-narx-20261031' && f.action === 'askPrice' && f.match({ tg_id: 8254184544 })));
+  ok('narx: jadvallar bor', (await db.count('SELECT COUNT(*) AS c FROM price_requests')) === 0 && (await db.count('SELECT COUNT(*) AS c FROM price_request_msgs')) === 0);
+
   await sleep(50);
   await db.close();
   console.log(`\n${failed ? '❌' : '🎉'} ${passed} o'tdi, ${failed} yiqildi · handler xatolari: ${errors.length}`);

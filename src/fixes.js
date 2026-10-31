@@ -65,6 +65,8 @@ const FIXES = [
   { id: 'odilxon-yangi-tg-20261029', action: 'transfer', to: ODILXON_TG, match: (e) => Number(e.tg_id) === 8726834955 },
   // 29-okt-2026: eski Odilxon akkaunti (8726834955) rolling deployda eski konteyner seed'i bilan qayta qo'shilib qoldi — chiqariladi
   { id: 'chiqar-odilxon-eski-20261029', action: 'deactivate', match: (e) => Number(e.tg_id) === 8726834955 },
+  // 31-okt-2026: Samandar (sotuv menejeri) narx so'ray oladi — «💲 Narxlar» bo'limi
+  { id: 'samandar-narx-20261031', action: 'askPrice', match: (e) => Number(e.tg_id) === 8254184544 },
 ];
 
 const run = async () => {
@@ -86,6 +88,7 @@ const run = async () => {
     }
     if (f.action === 'quiet') await require('./services/org').setQuiet(e.tg_id, true);
     if (f.action === 'ownTasks') await require('./services/org').setOwnTasksOnly(e.tg_id, true);
+    if (f.action === 'askPrice') await employees.setCanAskPrice(e.id, true);
     if (f.action === 'position') await employees.setPosition(e.id, f.position);
     if (f.action === 'transfer') {
       await transferTg(e, f.to);
