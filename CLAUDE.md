@@ -48,6 +48,7 @@ src/services/
                       buildMyReport (+hisobotlar soni), buildMonthTable (+📝), buildEmployeeTasks
   excel.js            buildMonthly (5 varaq), buildEmployeeMonth (4), buildDay (3), buildEmployeePeriod (6), buildTeamPeriod (6), buildEmployeeHistory, buildTeamSummary
   crmFeed.js          snapshot(): tasks (active/done + bugun accepted), attendance (+lateMinutes, excused, dailyReport), totals
+  priceRequests.js    💲 narx so'rovlari: create/inbox/mine/allOpen/setPrice/ask/answer/cancel (holat o'tishi `WHERE status IN … RETURNING id` → false = eskirgan)/history/forPeriod/stats/dueForReminder/overdue/askedStale
 src/handlers/
   common.js           attachEmployee + trackUsage (ctx.state.logged bo'lmasa 'use' yoziladi) + notRegistered + yordam
   attendance.js       BAYOMA + intent:yes/no, activity marks, guruh e'lonlari, Ketdim → dailyReport.askReport (hisobot yo'q bo'lsa)
@@ -59,6 +60,7 @@ src/handlers/
   hr.js               hr:* arxiv (render/guard umumiy), 7/30 kun period.employeeReport orqali
   period.js           pr:* (preset, kalendar, qo'lda sana, kim, ko'rish, Excel), /oraliq
   excelMenu.js        xl:* (davr → kim → fayl), xlme:* hodim
+  price.js            💲 Narxlar (`pq:*`, /narx): so'rov sehrgari, deklarant ro'yxati/kartochka, narx/savol/javob, bekor/qayta so'rash, tarix+qidiruv, statistika/«barcha ochiq»/Excel, `nag` (eslatma)
 src/jobs.js           pre-start-intent (start−5), morning-group (start), morning-call (0,30), morning-digest, overdue-alert, reminder (har N soat),
                       report-nudge (end−30), daily-report (end: guruh + direktor + hodimlarga reja), plan-nudge (end:45), weekly-report (Du 9:10),
                       score-nudge (25-kun), monthly-kpi (1-kun 9:20, + oylik davr hisoboti matni), backup (23:50, SQLite) / backup-export (23:50, Postgres → direktorga JSON)
@@ -327,3 +329,18 @@ Deploy (27-okt): worktree'dan `git push origin HEAD:main` + `railway up --detach
 logda yangi cron'lar (task-start, meeting-remind, recurring-run/ask/nag, home-location, live-watch) va «ishga tushdi»; rolling deployda bir marta 409 (kutilgan).
 Prod zaxira deploydan oldin olinmadi (auto-mode `railway ssh` ni rad etadi; migratsiya faqat qo'shuvchi — CREATE TABLE IF NOT EXISTS / ADD COLUMN).
 ⚠️ Lokal `master` hamon GitHub `main` dan orqada — asosiy papkada boshqa sessiyaning IaC ishi bor, tegilmadi.
+
+## 25. 31-okt-2026: 💲 Deklarant va narx so'rovlari (⛔ deploy qilinmagan — Railway trial tugagan, §24)
+Foydalanuvchi: yukka narx kerak bo'lsa ruxsatli hodim (Samandar) deklarantga so'rov yuboradi; narx berilmaguncha deklarantga ish vaqtida har soat eslatma. Dizayn: `docs/superpowers/specs/2026-10-31-deklarant-narx-sorovi-design.md`, reja shu yerda `plans/`.
+- **Rollar:** `employees.is_declarant` («📑 Deklarant») va `can_ask_price` («💲 Narx so'ray oladi»; MIGRATIONS `col`, standart 0). Hodim kartochkasida `emp:dc:<id>:<0|1>`, `emp:ap:<id>:<0|1>` — faqat direktor (`render.guard`).
+  `employees.isDeclarant/canAskPrice/setDeclarant/setCanAskPrice/listDeclarants`. «Rahbar» (`isAdmin || isHr`) bayroqsiz so'ray oladi, hammasini ko'radi, bekor qila oladi. Samandar: `fixes.js` `samandar-narx-20261031` (tg_id 8254184544 → `can_ask_price=1`, bir marta).
+- **Kirish:** asosiy menyuda «💲 Narxlar» (`BTN.prices`, `ui.isPrice`) va `/narx` — faqat deklarant / ruxsatli / rahbarga. Faqat deklarant bo'lsa menyu o'rniga darhol «Narx kutilmoqda» ro'yxati.
+- **Oqim:** sessiya `pq_pick` (deklarant) → `pq_desc` (≤2000) → `pq_media` (ixtiyoriy, bitta) → `pq_due` (1h/3h/today/tomorrow/none) → `pq_confirm` → deklarantga «NARX SO'ROVI №N» (+media) `💲 Narx berish` / `❓ Savol bor` / `📥 Barcha so'rovlar`.
+  Deklarant: narx (`pq_price` → `pq_price_note`, «Izohsiz») → so'rovchiga + `🔄 Qayta so'rash`; savol (`pq_question`, holat `asked`) → so'rovchiga `💬 Javob berish` (`pq_answer`, holat yana `open`). Bekor (`pq:x`, so'rovchi/rahbar), qayta so'rash (`pq:r`, `parent_id`).
+- **Callback `pq:`:** `menu new d:<emp> sk due:<k> send x0 in[:<sahifa>] my[:<sahifa>] v:<id> p:<id> q:<id> a:<id> x:<id> r:<id> h hs st:<7|30> all xl:<7|30>`. Faqat tayinlangan deklarant narx/savol beradi, faqat so'rovchi javob beradi; begona/eskirgan tugma — rad, holat o'zgarmaydi. `attendance.guard` `pq:` ga ham amal qiladi (`OPEN_CB` ga qo'shilmagan).
+- **Rahbarga:** `pq:h` tarix + qidiruv (`pq_search`, LOWER LIKE), `pq:st` statistika (7/30 kun, deklarant bo'yicha), `pq:all` barcha ochiq (nofaol deklarant ⚠️, 3500 belgidan oshsa qirqiladi), `pq:xl` Excel (`excel.buildPriceRequests`).
+- **Jadvallar:** `price_requests` (status open|asked|priced|cancelled, `*_id` — employee id, `last_reminded_at/overdue_notified_at/asked_nudged_at`, `parent_id`; indekslar declarant+status, requester+status), `price_request_msgs` (savol/javob). Activity: `price_ask/price_given/price_question/price_answer/price_cancel`. `fixes.js TG_COLUMNS` o'zgarmadi.
+- **Eslatma:** cron `price-nag` (`*/5 6-21`, ish kuni), `price.nag(bot, now)` ish vaqti ichida tekshiradi: `open` so'rovlar bo'yicha har `PRICE_REMIND_MIN` (env, standart 60) daqiqada deklarantga BITTA ro'yxat xabar; muddat o'tsa so'rovchiga + faol deklarantga bir marta; `asked` da so'rovchiga bir marta «javob bering».
+- **Testlar:** `npm test` — smoke.js 256 (255 ✅ + 1 yiqildi), smoke-bayoma.js 1174 (1167 ✅ + 7 yiqildi), handler xatosi 0. Yiqilganlari bugungi dam olish kuni (yakshanba) tufayli oldindan bor edi: «ofisdan — qabul qilindi»; bayoma: dayStatus/bugungi holat/digest/intent. Postgres 17 da smoke.js: 249 ✅ + shu 1.
+- **Doirada yo'q:** mijoz javobi, KPI, Web App, CRM feed, deklarantni boshqasiga o'tkazish (bekor + qayta so'rash).
+- **Deploy:** `node --check` barcha `src/*.js` (§11), keyin §24 bo'yicha tarif tanlangach. Yangi jadval/ustunlar faqat qo'shuvchi migratsiya.
