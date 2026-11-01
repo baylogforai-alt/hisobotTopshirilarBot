@@ -45,6 +45,7 @@ const COMMANDS = [
   { command: 'majlis', description: 'Majlis (vaqti bilan; kech qolaman / kelmayman)' },
   { command: 'davriy', description: 'Davriy eslatma: har oy / har hafta (boshliq, HR)' },
   { command: 'ogohlantirish', description: 'Intizom ogohlantirishi (rahbar, HR, direktor)' },
+  { command: 'narx', description: 'Narx sorovlari' },
   { command: 'faol', description: 'Faol topshiriqlar (jarayonda)' },
   { command: 'korib_chiqish', description: "Qaytarilgan — tuzatilayotgan topshiriqlar" },
   { command: 'kutilmoqda', description: 'Tekshiruvni kutayotganlar' },

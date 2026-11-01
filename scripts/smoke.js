@@ -826,6 +826,50 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('narx svc: askedStale + markAskedNudged', prStale === String(r3.id) && (await pr.askedStale(prLater, 30)).length === 0 && (await pr.dueForReminder(prLater, 60)).length === 0);
   ok('narx svc: countMine/allOpen/mine', (await pr.countMine(sam.id)) === 1 && (await pr.allOpen()).map((r) => r.id).join() === String(r3.id) && (await pr.mine(sam.id))[0].declarant_name === 'Dilshod Deklarant');
 
+  // --- 💲 Narx so'rovlari: bot oqimi (handlers/price.js) ---
+  // r1 (priced) / r2 (cancelled) / r3 (asked) — servis testlaridan; oqim testlari uchun hammasini yopamiz
+  await pr.cancel(r3.id, sam.id);
+  await send(msg(30001, '💲 Narxlar'));
+  ok("narx oqim: ruxsatsiz hodimga bo'lim yopiq", lastText(30001).includes('ochiq emas'));
+  // so'rov: Samandar
+  await send(msg(50002, '💲 Narxlar')); await send(cbq(50002, 'pq:new'));
+  ok('narx oqim: deklarant ro\'yxati (o\'zi yo\'q)', Boolean(findCb(50002, new RegExp(`^pq:d:${dil.id}$`))) && !findCb(50002, new RegExp(`^pq:d:${sam.id}$`)));
+  await send(cbq(50002, `pq:d:${dil.id}`)); await send(msg(50002, 'Mijoz Karim: 50 kg kosmetika'));
+  await send(photo(50002, '')); await send(cbq(50002, 'pq:due:3h'));
+  mark = sent.length; await send(cbq(50002, 'pq:send'));
+  const q1 = (await pr.mine(sam.id))[0];
+  ok('narx oqim: so\'rov yaratildi (rasm + muddat)', q1 && q1.media_file_id === 'BIG_FILE_ID' && q1.due_at && q1.status === 'open');
+  ok('narx oqim: deklarantga rasm + 3 tugma', sent.slice(mark).some((s) => s.method === 'sendPhoto' && Number(s.payload.chat_id) === 50001
+    && ['pq:p:', 'pq:q:', 'pq:in'].every((k) => JSON.stringify(s.payload.reply_markup).includes(k))));
+  // ro'yxat
+  await send(msg(50001, '💲 Narxlar'));
+  ok('narx oqim: deklarant darhol ro\'yxatni ko\'radi', lastText(50001).includes('Karim') && Boolean(findCb(50001, new RegExp(`^pq:v:${q1.id}$`))));
+  // savol → javob
+  await send(cbq(50001, `pq:q:${q1.id}`)); mark = sent.length; await send(msg(50001, 'Qaysi brend?'));
+  ok('narx oqim: savol so\'rovchiga + «Javob berish»', allText(50002, mark).includes('Qaysi brend?') && Boolean(findCb(50002, new RegExp(`^pq:a:${q1.id}$`))));
+  ok('narx oqim: holat asked', (await pr.byId(q1.id)).status === 'asked');
+  await send(cbq(50002, `pq:a:${q1.id}`)); mark = sent.length; await send(msg(50002, 'Nivea'));
+  ok('narx oqim: javob deklarantga, holat open', allText(50001, mark).includes('Nivea') && (await pr.byId(q1.id)).status === 'open');
+  // begona
+  await send(cbq(30001, `pq:p:${q1.id}`));
+  ok('narx oqim: begona narx bera olmaydi', session.get(30001).step !== 'pq_price');
+  // narx
+  await send(cbq(50001, `pq:p:${q1.id}`)); await send(msg(50001, '320$')); mark = sent.length; await send(msg(50001, '⏭ O\'tkazib yuborish'));
+  ok('narx oqim: narx so\'rovchiga + «Qayta so\'rash»', allText(50002, mark).includes('320$') && Boolean(findCb(50002, new RegExp(`^pq:r:${q1.id}$`))) && (await pr.byId(q1.id)).status === 'priced');
+  mark = sent.length; await send(cbq(50001, `pq:p:${q1.id}`));
+  ok('narx oqim: eskirgan «Narx berish» — sessiya ochilmaydi, xabar yo\'q', session.get(50001).step !== 'pq_price' && countSince(mark, 50002) === 0);
+  // qayta so'rash
+  await send(cbq(50002, `pq:r:${q1.id}`)); await send(cbq(50002, 'pq:due:none')); await send(cbq(50002, 'pq:send'));
+  const q2 = (await pr.mine(sam.id))[0];
+  ok('narx oqim: qayta so\'rash — parent_id, tavsif/media nusxa', q2.parent_id === q1.id && q2.description === q1.description && q2.media_file_id === 'BIG_FILE_ID' && q2.due_at === null);
+  // bekor
+  await send(cbq(30001, `pq:x:${q2.id}`));
+  ok('narx oqim: begona bekor qila olmaydi', (await pr.byId(q2.id)).status === 'open');
+  mark = sent.length; await send(cbq(50002, `pq:x:${q2.id}`));
+  ok('narx oqim: bekor → deklarantga xabar', (await pr.byId(q2.id)).status === 'cancelled' && allText(50001, mark).includes('bekor'));
+  mark = sent.length; await send(cbq(50002, `pq:x:${q2.id}`));
+  ok('narx oqim: ikkinchi bekor — xabar yo\'q', countSince(mark, 50001) === 0);
+
   await sleep(50);
   await db.close();
   console.log(`\n${failed ? '❌' : '🎉'} ${passed} o'tdi, ${failed} yiqildi · handler xatolari: ${errors.length}`);

@@ -29,6 +29,7 @@ const meetingHandler = require('./handlers/meeting');
 const recurringHandler = require('./handlers/recurring');
 const chatHandler = require('./handlers/chat');
 const warnHandler = require('./handlers/warn');
+const priceHandler = require('./handlers/price');
 const statusHandler = require('./handlers/status');
 const extraHandler = require('./handlers/extra');
 const liveHandler = require('./handlers/live');
@@ -104,6 +105,13 @@ const STEP_HANDLERS = {
   // 20-okt: «✅ Keldi deb belgilash» — bo'lim rahbari ham (huquq handlerda: access.canMarkPresent)
   // 20-okt: «⚠️ Ogohlantirish» (intizom) — rahbar, HR, direktor
   warn_text: { warn: true, run: (ctx) => warnHandler.handleText(ctx) },
+  // 31-okt: 💲 narx so'rovlari — huquq handler ichida (deklarant / so'rovchi / rahbar)
+  pq_desc: { run: (ctx) => priceHandler.handleDesc(ctx) },
+  pq_media: { run: (ctx, skip) => priceHandler.handleMedia(ctx, { skip }) },
+  pq_price: { run: (ctx) => priceHandler.handlePrice(ctx) },
+  pq_price_note: { run: (ctx, skip) => priceHandler.handlePriceNote(ctx, { skip }) },
+  pq_question: { run: (ctx) => priceHandler.handleQuestion(ctx) },
+  pq_answer: { run: (ctx) => priceHandler.handleAnswer(ctx) },
   present_date: { present: true, run: (ctx) => adminHandler.handleEmpText(ctx, 'present_date') },
   present_time: { present: true, run: (ctx) => adminHandler.handleEmpText(ctx, 'present_time') },
   present_note: { present: true, run: (ctx) => adminHandler.handleEmpText(ctx, 'present_note') },
@@ -151,6 +159,7 @@ const createBot = () => {
   recurringHandler.register(bot);
   chatHandler.register(bot);
   warnHandler.register(bot);
+  priceHandler.register(bot); // media: pq_media / pq_question / pq_answer bosqichida, aks holda next()
   tasksHandler.register(bot); // media: done_proof / assign_text / self_task_text bosqichida, aks holda next()
   dailyReportHandler.register(bot); // rasm: daily_report_text bosqichida hisobot
   statusHandler.register(bot);
@@ -193,7 +202,7 @@ const createBot = () => {
     if (s.step === 'visit_proof') return ctx.reply(`🎥 Video yoki 🎙 audio yuboring (izohni video ostiga yozing) yoki «${ui.BTN.cancel}».`, ui.cancelKeyboard());
     if (s.step === 'announce_confirm' || s.step === 'meeting_confirm' || s.step === 'rec_confirm') return ctx.reply("⬆️ «📤 Yuborish» yoki «❌ Bekor qilish» ni bosing.");
     if (s.step === 'worktime_confirm' || s.step === 'announce_pick' || s.step === 'done_pick') return ctx.reply('⬆️ Yuqoridagi tugmalardan tanlang.');
-    if (s.step === 'self_task_due' || s.step === 'assign_due' || s.step === 'self_task_time' || s.step === 'assign_time' || s.step === 'add_dept' || s.step === 'add_role' || s.step === 'add_confirm' || s.step === 'assign_pick' || s.step === 'return_late' || s.step === 'return_due' || s.step === 'xc_confirm' || s.step === 'meeting_date_pick' || s.step === 'meeting_time_pick' || s.step === 'rec_pick') {
+    if (s.step === 'self_task_due' || s.step === 'assign_due' || s.step === 'self_task_time' || s.step === 'assign_time' || s.step === 'add_dept' || s.step === 'add_role' || s.step === 'add_confirm' || s.step === 'assign_pick' || s.step === 'return_late' || s.step === 'return_due' || s.step === 'xc_confirm' || s.step === 'meeting_date_pick' || s.step === 'meeting_time_pick' || s.step === 'rec_pick' || s.step === 'pq_pick' || s.step === 'pq_due' || s.step === 'pq_confirm') {
       return ctx.reply('⬆️ Yuqoridagi tugmalardan tanlang (yoki /menu).');
     }
     if (skip) return ctx.reply('Hozir hech narsa kutilmayapti.', ui.kbFor(ctx));
