@@ -19,10 +19,17 @@ const OPEN = "('open','asked')";
 
 /** So'rov + so'rovchi va deklarant ma'lumotlari */
 const SELECT = `SELECT r.*, rq.full_name AS requester_name, rq.tg_id AS requester_tg,
-    d.full_name AS declarant_name, d.tg_id AS declarant_tg, d.active AS declarant_active
+    d.full_name AS declarant_name, d.tg_id AS declarant_tg, d.active AS declarant_active, d.is_declarant AS declarant_flag
   FROM price_requests r
   JOIN employees rq ON rq.id = r.requester_id
   JOIN employees d ON d.id = r.declarant_id`;
+
+/** Ertaga — keyingi ISH kuni (dam olish kuniga tushmaydi); sana yyyy-MM-dd */
+const nextWorkDate = (now) => {
+  let d = time.addDays(now.toFormat('yyyy-MM-dd'), 1);
+  for (let i = 0; i < 7 && !time.isWorkDay(d); i += 1) d = time.addDays(d, 1);
+  return d;
+};
 
 /** Muddat kaliti → ISO (yoki null = muddatsiz). Noma'lum kalit → undefined */
 const dueAtFor = (key, now = time.now()) => {
@@ -30,7 +37,7 @@ const dueAtFor = (key, now = time.now()) => {
     case '1h': return now.plus({ minutes: 60 }).toISO();
     case '3h': return now.plus({ minutes: 180 }).toISO();
     case 'today': return time.stampAt(now.toFormat('yyyy-MM-dd'), employees.workEndOf(null));
-    case 'tomorrow': return time.stampAt(now.plus({ days: 1 }).toFormat('yyyy-MM-dd'), employees.workEndOf(null));
+    case 'tomorrow': return time.stampAt(nextWorkDate(now), employees.workEndOf(null));
     case 'none': return null;
     default: return undefined;
   }
@@ -158,13 +165,26 @@ const stats = async (from, to, now = time.now()) => {
   }));
 };
 
+/** So'rovchilar bo'yicha so'rovlar soni (davrda yaratilgan), ko'pidan kamiga */
+const byRequester = async (from, to) => {
+  const by = new Map();
+  for (const r of await forPeriod(from, to)) {
+    if (!by.has(r.requester_id)) by.set(r.requester_id, { requesterId: r.requester_id, name: r.requester_name, total: 0 });
+    by.get(r.requester_id).total += 1;
+  }
+  return [...by.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+};
+
 // ---- Eslatma (cron) so'rovlari ----
 
-/** Narx kutilayotgan (open) so'rovlar: oxirgi eslatmadan `minutes` o'tgan, deklarant faol */
+/**
+ * Narx kutilayotgan (open) so'rovlar: oxirgi eslatmadan `minutes` o'tgan, deklarant faol va bayroqli.
+ * Qaytgan qator bo'yicha deklarant aniqlanadi — unga BARCHA ochiq so'rovlari bitta ro'yxatda yuboriladi (qarang: handlers/price.js nag).
+ */
 const dueForReminder = (nowIso, minutes) => {
   const cutoff = DateTime.fromISO(nowIso, { zone: time.TZ }).minus({ minutes: Number(minutes) }).toISO();
   return db.query(
-    `${SELECT} WHERE r.status = 'open' AND d.active = 1 AND COALESCE(r.last_reminded_at, r.created_at) <= $1
+    `${SELECT} WHERE r.status = 'open' AND d.active = 1 AND d.is_declarant = 1 AND COALESCE(r.last_reminded_at, r.created_at) <= $1
      ORDER BY r.declarant_id, r.id`,
     [cutoff],
   );
@@ -210,5 +230,5 @@ const countMine = (requesterId) =>
 
 module.exports = {
   dueAtFor, create, byId, inbox, mine, allOpen, setPrice, ask, answer, cancel, messages, history, forPeriod, stats,
-  dueForReminder, markReminded, overdue, markOverdue, askedStale, markAskedNudged, countInbox, countMine,
+  byRequester, dueForReminder, markReminded, overdue, markOverdue, askedStale, markAskedNudged, countInbox, countMine,
 };
