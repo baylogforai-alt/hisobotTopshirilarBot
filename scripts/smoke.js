@@ -798,6 +798,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const t0 = time.now().set({ hour: 10, minute: 0, second: 0, millisecond: 0 });
   ok('narx svc: dueAtFor', pr.dueAtFor('1h', t0) === t0.plus({ minutes: 60 }).toISO() && pr.dueAtFor('none', t0) === null
     && pr.dueAtFor('today', t0).startsWith(`${t0.toFormat('yyyy-MM-dd')}T${employees.workEndOf(null)}`));
+  {
+    // «Ertaga» dam olish kuniga tushmasin: ertasi ish kuni bo'lmagan kunni topamiz
+    const ymd = (d) => d.toFormat('yyyy-MM-dd');
+    let eve = t0;
+    for (let i = 0; i < 14 && time.isWorkDay(time.addDays(ymd(eve), 1)); i += 1) eve = eve.plus({ days: 1 });
+    if (time.isWorkDay(time.addDays(ymd(eve), 1))) {
+      ok('narx svc: dueAtFor tomorrow (dam olish kuni yo\'q — o\'tkazildi)', true);
+    } else {
+      let nextWork = time.addDays(ymd(eve), 1);
+      while (!time.isWorkDay(nextWork)) nextWork = time.addDays(nextWork, 1);
+      ok('narx svc: dueAtFor tomorrow — dam olish kunidan keyingi ish kuni', pr.dueAtFor('tomorrow', eve).startsWith(`${nextWork}T${employees.workEndOf(null)}`));
+    }
+    let weekday = t0;
+    while (!time.isWorkDay(time.addDays(ymd(weekday), 1))) weekday = weekday.plus({ days: 1 });
+    ok('narx svc: dueAtFor tomorrow — ertasi ish kuni bo\'lsa ertaga', pr.dueAtFor('tomorrow', weekday).startsWith(`${time.addDays(ymd(weekday), 1)}T${employees.workEndOf(null)}`));
+  }
   const r1 = await pr.create({ requesterId: sam.id, declarantId: dil.id, description: 'Mijoz Ali: 20 quti telefon g\'ilofi', dueAt: pr.dueAtFor('3h', t0) });
   const r2 = await pr.create({ requesterId: sam.id, declarantId: dil.id, description: 'Mijoz Vali: mebel 2 t' });
   ok('narx svc: inbox tartibi (muddatlisi birinchi)', (await pr.inbox(dil.id)).map((r) => r.id).join() === `${r1.id},${r2.id}`);
@@ -813,7 +829,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('narx svc: stats', prSt.length === 1 && prSt[0].total === 2 && prSt[0].priced === 1 && prSt[0].avgMinutes !== null);
   ok('narx svc: countInbox 0', (await pr.countInbox(dil.id)) === 0);
   const r3 = await pr.create({ requesterId: sam.id, declarantId: dil.id, description: 'Mijoz Sher: kiyim 1 t', dueAt: pr.dueAtFor('1h', t0) });
-  const prLater = time.now().plus({ hours: 5 }).toISO();
+  const prLater = [time.now().plus({ hours: 5 }), t0.plus({ hours: 5 })].reduce((x, y) => (y > x ? y : x)).toISO(); // soatga bog'liq emas: r3 muddati (t0+1h) har doim o'tgan bo'ladi
   ok('narx svc: dueForReminder (open, faol deklarant)', (await pr.dueForReminder(prLater, 60)).map((r) => r.id).join() === String(r3.id) && (await pr.dueForReminder(time.stamp(), 60)).length === 0);
   await pr.markReminded([r3.id], prLater);
   ok('narx svc: markReminded oraliqni suradi', (await pr.dueForReminder(prLater, 60)).length === 0);
@@ -895,6 +911,45 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('narx eslatma: nofaol deklarantga yo\'q', countSince(mark, 50001) === 0);
   await employees.activate(dil.id);
 
+  // bitta deklarant — bitta ro'yxat: so'rovlar turli vaqtda yaratilgan bo'lsa ham eslatma umumiy soatda ketadi
+  USERS[50004] = { id: 50004, first_name: 'Ravshan', username: 'ravshan' };
+  await employees.add({ tgId: 50004, fullName: 'Ravshan Deklarant', position: 'Deklarant' });
+  const rav = await employees.byTgId(50004);
+  await employees.setDeclarant(rav.id, true);
+  const stag = [];
+  for (const [label, ago] of [['X', 70], ['Y', 50], ['Z', 30]]) {
+    const s = await pr.create({ requesterId: sam.id, declarantId: rav.id, description: `${label} stagger` });
+    await db.query('UPDATE price_requests SET created_at = $1 WHERE id = $2', [at10.minus({ minutes: ago }).toISO(), s.id]);
+    stag.push(s);
+  }
+  const ravMsgs = (m) => sent.slice(m).filter((s) => Number(s.payload.chat_id) === 50004 && (s.payload.text || '').length);
+  const listsAll = (text) => stag.every((s) => text.includes(`№${s.id}`));
+  mark = sent.length; await price.nag(bot, at10);
+  ok('narx eslatma: turli vaqtda yaratilganlar — bitta xabar, hammasi ro\'yxatda', ravMsgs(mark).length === 1 && listsAll(ravMsgs(mark)[0].payload.text));
+  mark = sent.length; await price.nag(bot, at10.plus({ minutes: 20 }));
+  const n20 = ravMsgs(mark).length;
+  mark = sent.length; await price.nag(bot, at10.plus({ minutes: 40 }));
+  ok('narx eslatma: +20 va +40 daqiqada takror yo\'q', n20 === 0 && ravMsgs(mark).length === 0);
+  mark = sent.length; await price.nag(bot, at10.plus({ minutes: 61 }));
+  ok('narx eslatma: +61 daqiqada yana bitta xabar, hammasi ro\'yxatda', ravMsgs(mark).length === 1 && listsAll(ravMsgs(mark)[0].payload.text));
+  // shu tikda muddati o'tgan so'rov — alohida «muddati o'tdi» xabari emas, ro'yxatda 🔴
+  const ovl = await pr.create({ requesterId: sam.id, declarantId: rav.id, description: 'W muddatli', dueAt: at10.plus({ minutes: 100 }).toISO() });
+  await db.query('UPDATE price_requests SET created_at = $1 WHERE id = $2', [at10.plus({ minutes: 30 }).toISO(), ovl.id]);
+  mark = sent.length; await price.nag(bot, at10.plus({ minutes: 122 }));
+  const ovMsgs = ravMsgs(mark);
+  ok("narx eslatma: shu tikdagi muddati o'tgan — bitta xabar ichida 🔴, alohida emas",
+    ovMsgs.length === 1 && ovMsgs[0].payload.text.includes(`🔴 №${ovl.id}`) && listsAll(ovMsgs[0].payload.text) && !ovMsgs[0].payload.text.includes("muddati o'tdi"));
+  ok("narx eslatma: so'rovchiga muddat xabari kun bilan (faqat soat emas)", new RegExp(String.raw`№${ovl.id} ga hali narx berilmadi \(muddat \S+ \d{2}:\d{2}\)`).test(allText(50002, mark)));
+  for (const s of [...stag, ovl]) await pr.cancel(s.id, sam.id);
+  // eslatma yo'q tikda muddati o'tgan — deklarantga alohida xabar saqlanadi
+  const solo = await pr.create({ requesterId: sam.id, declarantId: rav.id, description: 'U yolg\'iz', dueAt: at10.plus({ minutes: 125 }).toISO() });
+  await db.query('UPDATE price_requests SET created_at = $1 WHERE id = $2', [at10.plus({ minutes: 120 }).toISO(), solo.id]);
+  mark = sent.length; await price.nag(bot, at10.plus({ minutes: 130 }));
+  ok("narx eslatma: ro'yxat bo'lmagan tikda deklarantga alohida «muddati o'tdi» saqlanadi",
+    ravMsgs(mark).length === 1 && ravMsgs(mark)[0].payload.text.includes(`№${solo.id} muddati o'tdi`));
+  await pr.cancel(solo.id, sam.id);
+  await employees.setDeclarant(rav.id, false);
+
   // --- 💲 Narx so'rovlari: tarix, qidiruv, statistika, barcha ochiqlar, Excel ---
   await send(cbq(50002, 'pq:h'));
   ok("narx tarix: oxirgi narx ko'rinadi", lastText(50002).includes('320$'));
@@ -914,6 +969,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await employees.deactivate(dil.id); await send(cbq(1000, 'pq:all'));
   ok('narx stat: nofaol deklarant ochiqlari ⚠️', lastText(1000).includes('nofaol'));
   await employees.activate(dil.id);
+  // deklarant bayrog'i olib tashlansa — nofaoldek: eslatma yo'q, ⚠️, narx/savol tugmalari rad
+  await employees.setDeclarant(dil.id, false);
+  const limbo = await pr.create({ requesterId: sam.id, declarantId: dil.id, description: 'Limbo yuk', dueAt: at10.plus({ minutes: 290 }).toISO() });
+  await db.query('UPDATE price_requests SET created_at = $1 WHERE id = $2', [at10.toISO(), limbo.id]);
+  mark = sent.length; await price.nag(bot, at10.plus({ minutes: 300 }));
+  ok("narx bayroq: bayroqsiz deklarantga eslatma ham, «muddati o'tdi» ham yo'q", countSince(mark, 50001) === 0 && allText(50002, mark).includes(`№${limbo.id} ga hali narx berilmadi`));
+  await send(cbq(1000, 'pq:all'));
+  ok('narx bayroq: «barcha ochiq» da ⚠️ nofaol', lastText(1000).includes('nofaol'));
+  mark = sent.length; await send(cbq(50001, `pq:p:${limbo.id}`)); await send(cbq(50001, `pq:q:${limbo.id}`));
+  ok('narx bayroq: bayroqsiz deklarant narx/savol boshlay olmaydi', !String(session.get(50001).step || '').startsWith('pq_'));
+  await send(cbq(50002, `pq:x:${limbo.id}`));
+  ok("narx bayroq: so'rovchi bekor qila oladi", (await pr.byId(limbo.id)).status === 'cancelled');
+  await employees.setDeclarant(dil.id, true);
   mark = sent.length; await send(cbq(50002, 'pq:all')); await send(cbq(50002, 'pq:xl:7'));
   ok('narx stat: hodimga «barcha ochiq» va Excel yopiq', countSince(mark, 50002, 'sendDocument') === 0 && !allText(50002, mark).includes('nofaol'));
   mark = sent.length; await send(cbq(1000, 'pq:xl:7'));
@@ -967,6 +1035,70 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok("narx barcha ochiq: sig'magan deklarantning qatori ko'rinmaydi", !shown.some((x) => declOf.get(x.id) === zar.full_name));
   ok("narx barcha ochiq: ko'rsatilgan + sig'madi = jami", shown.length + cutN === openAll.length);
   for (const id of bigIds) await pr.cancel(id, sam.id);
+
+  // --- 💲 Narx so'rovlari: yakuniy sharh tuzatishlari ---
+  // Minor 1: eskirgan «Bekor qilish» (pq:x0) boshqa oqim bosqichini o'chirmasin
+  session.set(50002, { step: 'warn_text' });
+  await send(cbq(50002, 'pq:x0'));
+  ok("narx x0: boshqa oqim bosqichi (warn_text) o'zgarmaydi", session.get(50002).step === 'warn_text');
+  session.clear(50002);
+  await send(cbq(50002, 'pq:new'));
+  ok('narx x0: pq_pick bosqichi bor', session.get(50002).step === 'pq_pick');
+  await send(cbq(50002, 'pq:x0'));
+  ok("narx x0: pq_ bosqichi tozalanadi", !session.get(50002).step);
+
+  // Minor 3b/4: tarix natijalari bosiladigan; uzun qidiruv natijasi bo'linadi
+  const hist = [];
+  for (let i = 0; i < 20; i += 1) {
+    const h = await pr.create({ requesterId: sam.id, declarantId: dil.id, description: `BIGSEARCH yuk ${i}` });
+    await pr.setPrice(h.id, dil.id, `${i}-narx ${'z'.repeat(200 - 10)}`);
+    hist.push(h);
+  }
+  await send(cbq(50002, 'pq:hs')); mark = sent.length; await send(msg(50002, 'bigsearch'));
+  const histMsgs = sent.slice(mark).filter((x) => Number(x.payload.chat_id) === 50002 && x.method === 'sendMessage' && x.payload.text);
+  ok("narx qidiruv: uzun natija bo'linadi, har bo'lak < 4096", histMsgs.length >= 2 && histMsgs.every((x) => x.payload.text.length < 4096));
+  ok('narx qidiruv: natijalar pq:v: tugmali', Boolean(findCb(50002, new RegExp(`^pq:v:${hist[19].id}$`))));
+  await send(cbq(50002, 'pq:h'));
+  ok('narx tarix: oxirgi natijalar ham pq:v: tugmali', Boolean(findCb(50002, /^pq:v:\d+$/)));
+  const btnLabel = JSON.stringify(to(50002).filter((x) => x.payload.reply_markup).slice(-1)[0].payload.reply_markup);
+  ok("narx tarix: tugma yorlig'i «№id · tavsif»", btnLabel.includes(`№${hist[19].id} · BIGSEARCH yuk 19`));
+  // narx berilgan so'rovni (begona) deklarant faqat ko'rish rejimida ochadi
+  mark = sent.length; await send(cbq(50003, `pq:v:${hist[0].id}`));
+  const zCard = sent.slice(mark).filter((x) => Number(x.payload.chat_id) === 50003);
+  ok("narx v: begona deklarant narx berilgan so'rovni ko'radi", zCard.some((x) => (x.payload.text || x.payload.caption || '').includes(`№${hist[0].id}`)));
+  ok("narx v: ko'rish rejimida narx/savol/bekor tugmalari yo'q", !zCard.some((x) => /pq:[pqx]:/.test(JSON.stringify(x.payload.reply_markup || {}))));
+  const hOpen = await pr.create({ requesterId: sam.id, declarantId: dil.id, description: "Faqat tayinlangan ko'radi" });
+  mark = sent.length; await send(cbq(50003, `pq:v:${hOpen.id}`));
+  ok("narx v: ochiq so'rovni begona deklarant ocha olmaydi", countSince(mark, 50003, 'sendMessage') === 0);
+  mark = sent.length; await send(cbq(30001, `pq:v:${hist[0].id}`));
+  ok("narx v: ruxsatsiz hodim ocha olmaydi", countSince(mark, 30001, 'sendMessage') === 0);
+  mark = sent.length; await send(cbq(50001, `pq:v:${hOpen.id}`));
+  ok("narx v: tayinlangan deklarant ochiq so'rovda narx/savol tugmalarini oladi", sent.slice(mark).some((x) => Number(x.payload.chat_id) === 50001 && ['pq:p:', 'pq:q:'].every((k) => JSON.stringify(x.payload.reply_markup || {}).includes(k))));
+  await pr.cancel(hOpen.id, sam.id);
+
+  // Minor 3a: statistikada so'rovchilar bo'yicha son
+  await send(cbq(1000, 'pq:st:7'));
+  ok("narx stat: «So'rovchilar» bo'limi va son", lastText(1000).includes("So'rovchilar") && /Samandar — \d+/.test(lastText(1000)));
+  const reqCnt = await pr.byRequester(bugun, bugun);
+  ok('narx svc: byRequester', reqCnt.length >= 1 && reqCnt[0].name === 'Samandar' && reqCnt[0].total >= 20);
+
+  // Minor 7a: dumaloq video (video_note) — savol/javob/media bosqichlarida qabul qilinadi
+  const vnote = (from, fileId) => ({ update_id: (uid += 1), message: { ...base(from), video_note: { file_id: fileId, length: 240, duration: 5 } } });
+  const vq = await pr.create({ requesterId: sam.id, declarantId: dil.id, description: 'Dumaloq video sinovi' });
+  await send(cbq(50001, `pq:q:${vq.id}`)); mark = sent.length; await send(vnote(50001, 'VN_Q'));
+  ok("narx video_note: savol qabul qilindi, so'rovchiga yuborildi", (await pr.byId(vq.id)).status === 'asked'
+    && (await pr.messages(vq.id)).some((m) => m.media_type === 'video_note' && m.media_file_id === 'VN_Q')
+    && sent.slice(mark).some((x) => Number(x.payload.chat_id) === 50002 && x.method === 'sendVideoNote'));
+  await send(cbq(50002, `pq:a:${vq.id}`)); mark = sent.length; await send(vnote(50002, 'VN_A'));
+  ok('narx video_note: javob qabul qilindi', (await pr.byId(vq.id)).status === 'open'
+    && (await pr.messages(vq.id)).some((m) => m.kind === 'answer' && m.media_type === 'video_note')
+    && sent.slice(mark).some((x) => Number(x.payload.chat_id) === 50001 && x.method === 'sendVideoNote'));
+  await pr.cancel(vq.id, sam.id);
+  await send(cbq(50002, 'pq:new')); await send(cbq(50002, `pq:d:${dil.id}`)); await send(msg(50002, 'Video note media'));
+  await send(vnote(50002, 'VN_M'));
+  ok('narx video_note: media bosqichida qabul qilindi', session.get(50002).step === 'pq_due' && session.get(50002).pq.media && session.get(50002).pq.media.type === 'video_note');
+  session.clear(50002);
+
   await employees.setDeclarant(zar.id, false);
 
   await sleep(50);
