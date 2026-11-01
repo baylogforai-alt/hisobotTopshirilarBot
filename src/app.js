@@ -112,6 +112,7 @@ const STEP_HANDLERS = {
   pq_price_note: { run: (ctx, skip) => priceHandler.handlePriceNote(ctx, { skip }) },
   pq_question: { run: (ctx) => priceHandler.handleQuestion(ctx) },
   pq_answer: { run: (ctx) => priceHandler.handleAnswer(ctx) },
+  pq_search: { run: (ctx) => priceHandler.handleSearch(ctx) },
   present_date: { present: true, run: (ctx) => adminHandler.handleEmpText(ctx, 'present_date') },
   present_time: { present: true, run: (ctx) => adminHandler.handleEmpText(ctx, 'present_time') },
   present_note: { present: true, run: (ctx) => adminHandler.handleEmpText(ctx, 'present_note') },

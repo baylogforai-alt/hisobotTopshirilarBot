@@ -11,6 +11,7 @@ const kpi = require('./kpi');
 const activity = require('./activity');
 const dailyReports = require('./dailyReports');
 const visits = require('./visits');
+const priceRequests = require('./priceRequests');
 
 /**
  * EXCEL HISOBOTLAR.
@@ -21,6 +22,7 @@ const visits = require('./visits');
  *   buildEmployeePeriod(emp, from, to) — istalgan davr, bitta hodim: Xulosa · Bajarilgan ishlar · Kunlar · Missiyalar · Kunlik hisobotlar · Harakatlar
  *   buildTeamPeriod(from, to)       — istalgan davr, jamoa: Jamlanma · Kunlar · Missiyalar · Kechikkanlar · Bajarilganlar · Kunlik hisobotlar
  *   buildJournal(rows, sub)         — topshiriqlar jurnali (filtrlangan)
+ *   buildPriceRequests(from, to)    — narx so'rovlari (deklarant), davr bo'yicha: bitta varaq
  * Raqamlar tasks.stats / attendance.stats / period.employeeStats dan — ekran bilan bir xil.
  */
 
@@ -562,8 +564,35 @@ const buildTeamPeriod = async (fromRaw, toRaw, { viewer = null } = {}) => {
   return { buffer: await wb.xlsx.writeBuffer(), filename: `jamoa-hisobot-${from}_${to}.xlsx` };
 };
 
+const PRICE_STATUS = { open: 'Ochiq', asked: 'Savol berilgan', priced: 'Narx berildi', cancelled: 'Bekor qilingan' };
+const PRICE_COLOR = { open: NAVY, asked: AMBER, priced: GREEN, cancelled: GREY };
+
+/** 💲 Narx so'rovlari (31-okt-2026): davrda yaratilgan barcha so'rovlar — bitta varaq */
+const buildPriceRequests = async (from, to) => {
+  const wb = new ExcelJS.Workbook();
+  const rows = await priceRequests.forPeriod(from, to);
+  const ws = wb.addWorksheet("Narx so'rovlari");
+  decorate(ws, [
+    { key: 'id', header: '№', width: 7 }, { key: 'date', header: 'Sana', width: 17 }, { key: 'req', header: "So'rovchi", width: 22 },
+    { key: 'decl', header: 'Deklarant', width: 22 }, { key: 'desc', header: 'Tavsif', width: 60 }, { key: 'due', header: 'Muddat', width: 17 },
+    { key: 'status', header: 'Holat', width: 16 }, { key: 'price', header: 'Narx', width: 18 }, { key: 'note', header: 'Izoh', width: 36 },
+    { key: 'pricedAt', header: 'Narx berildi', width: 17 }, { key: 'mins', header: 'Javob (daq)', width: 12 },
+  ], `${config.companyName} — narx so'rovlari`, time.prettyRange(from, to));
+  for (const r of rows) {
+    const row = wrap(ws.addRow({
+      id: r.id, date: stamp(r.created_at), req: r.requester_name, decl: r.declarant_name, desc: r.description,
+      due: r.due_at ? stamp(r.due_at) : 'Muddatsiz', status: PRICE_STATUS[r.status] || r.status, price: r.price || '', note: r.price_note || '',
+      pricedAt: stamp(r.priced_at), mins: r.priced_at ? Math.max(0, Math.round((new Date(r.priced_at) - new Date(r.created_at)) / 60000)) : '',
+    }));
+    colorCell(row.getCell('status'), PRICE_COLOR[r.status] || NAVY);
+  }
+  if (!rows.length) ws.addRow({ desc: "— bu davrda narx so'rovi yo'q —" });
+  zebra(ws);
+  return { buffer: await wb.xlsx.writeBuffer(), filename: `narx-sorovlari-${from}_${to}.xlsx` };
+};
+
 /** Oxirgi N kun → davr hisoboti */
 const buildEmployeeHistory = (emp, days = 30) => buildEmployeePeriod(emp, time.addDays(time.today(), -(days - 1)), time.today());
 const buildTeamSummary = (days = 30) => buildTeamPeriod(time.addDays(time.today(), -(days - 1)), time.today());
 
-module.exports = { buildMonthly, buildEmployeeMonth, buildDay, buildEmployeePeriod, buildTeamPeriod, buildEmployeeHistory, buildTeamSummary };
+module.exports = { buildMonthly, buildEmployeeMonth, buildDay, buildEmployeePeriod, buildTeamPeriod, buildEmployeeHistory, buildTeamSummary, buildPriceRequests };

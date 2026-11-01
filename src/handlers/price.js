@@ -9,6 +9,7 @@ const { render } = require('../render');
 const employees = require('../services/employees');
 const pr = require('../services/priceRequests');
 const notify = require('../services/notify');
+const excel = require('../services/excel');
 const worktime = require('../services/worktime');
 const config = require('../config');
 const activity = require('../services/activity');
@@ -21,7 +22,8 @@ const botOf = (ctx) => ({ telegram: ctx.telegram });
  * So'rov sehrgari: pq_pick → pq_desc → pq_media → pq_due → pq_confirm (sessiya: { step, pq: { declarantId, description, media, dueKey, parentId, id } }).
  * Deklarant: pq_price → pq_price_note, pq_question; so'rovchi: pq_answer.
  * Barcha holat o'tishlari priceRequests xizmatida (false = eskirgan tugma) — natija doim tekshiriladi.
- * Tarix / qidiruv / statistika / Excel — alohida vazifa (Task 5), eslatma (nag) — Task 4.
+ * Tarix / qidiruv (pq:h, pq:hs → pq_search) — deklarant, ruxsatli va rahbarga; statistika / barcha ochiq / Excel (pq:st, pq:all, pq:xl) — faqat rahbarga.
+ * Eslatma (nag) — pastda.
  */
 
 const PAGE = 10;
@@ -54,6 +56,8 @@ const dueText = (iso) => {
   const day = d === t ? 'bugun' : d === time.addDays(t, 1) ? 'ertaga' : time.shortDate(d);
   return `${day} ${time.clock(iso)}`;
 };
+const markOf = (r) => (r.status === 'asked' ? '💬' : isOverdue(r) ? '🔴' : '🟡');
+const hourOf = (r) => (r.due_at ? time.clock(r.due_at) : '—');
 const isOverdue = (r) => Boolean(r.due_at && r.due_at <= time.stamp());
 const workEnded = () => { const n = time.now(); return n.hour * 60 + n.minute >= employees.endMinutesOf(null); };
 
@@ -108,15 +112,13 @@ const showList = async (ctx, rows, { title, page, base, who }) => {
   const pages = Math.max(1, Math.ceil(rows.length / PAGE));
   const p = Math.min(Math.max(Number(page) || 0, 0), pages - 1);
   const slice = rows.slice(p * PAGE, p * PAGE + PAGE);
-  const mark = (r) => (r.status === 'asked' ? '💬' : isOverdue(r) ? '🔴' : '🟡');
-  const hour = (r) => (r.due_at ? time.clock(r.due_at) : '—');
-  const lines = slice.map((r) => `${mark(r)} №${r.id} · ${esc(r[who])} · ${esc(short(r.description, 60))} · ⏰ ${hour(r)}`);
-  const kb = slice.map((r) => [cb(`${mark(r)} №${r.id} · ${r[who]} · ${short(r.description, 30)} · ${hour(r)}`.slice(0, 60), `pq:v:${r.id}`)]);
+  const lines = slice.map((r) => `${markOf(r)} №${r.id} · ${esc(r[who])} · ${esc(short(r.description, 60))} · ⏰ ${hourOf(r)}`);
+  const kb = slice.map((r) => [cb(`${markOf(r)} №${r.id} · ${r[who]} · ${short(r.description, 30)} · ${hourOf(r)}`.slice(0, 60), `pq:v:${r.id}`)]);
   const nav = [];
   if (p > 0) nav.push(cb('◀️', `${base}:${p - 1}`));
   if (p < pages - 1) nav.push(cb('▶️', `${base}:${p + 1}`));
   if (nav.length) kb.push(nav);
-  if (canAsk(ctx)) kb.push([cb('⬅️ Menyu', 'pq:menu')]);
+  kb.push(canAsk(ctx) ? [cb('⬅️ Menyu', 'pq:menu')] : [cb('📜 Narxlar tarixi', 'pq:h')]); // faqat-deklarantda menyu yo'q — tarixga shu yerdan
   return render(ctx, `${title} (${rows.length})\n${LINE}\n${lines.join('\n') || "<i>Hozircha so'rov yo'q ✅</i>"}`, inline(kb));
 };
 
@@ -141,6 +143,8 @@ const menu = async (ctx) => {
   if (decl) rows.push([cb(`📥 Narx kutilmoqda (${await pr.countInbox(emp.id)})`, 'pq:in')]);
   rows.push([cb("➕ Yangi so'rov", 'pq:new')]);
   if (emp) rows.push([cb(`📤 Mening so'rovlarim (${await pr.countMine(emp.id)})`, 'pq:my')]);
+  rows.push([cb('📜 Narxlar tarixi', 'pq:h')]);
+  if (isMgr(ctx)) rows.push([cb('📊 Statistika', 'pq:st:7'), cb('📋 Barcha ochiq', 'pq:all')]);
   return render(ctx, `💲 <b>NARX SO'ROVLARI</b>\n${LINE}\nDeklarantdan yuk narxini so'rang yoki so'rovlaringiz holatini ko'ring.`, inline(rows));
 };
 
@@ -387,6 +391,90 @@ const reRequest = async (ctx, id) => {
   return askDue(ctx, { fresh: true });
 };
 
+// ---------------- tarix, qidiruv, statistika, barcha ochiqlar, Excel ----------------
+
+const canSee = (ctx) => isDecl(ctx) || canAsk(ctx);
+const SEARCH_MIN = 2;
+const SEARCH_MAX = 100;
+const HISTORY_LIMIT = 10;
+const SEARCH_LIMIT = 20;
+
+/** Tarix / qidiruv natijasi (q bor bo'lsa — qidiruv): oxirgi 10 / 20 tagacha narx berilgan so'rov */
+const showHistory = async (ctx, q = null) => {
+  const rows = await pr.history({ q, limit: q ? SEARCH_LIMIT : HISTORY_LIMIT });
+  const lines = rows.map((r) => `№${r.id} · ${time.shortDate(String(r.priced_at || r.created_at).slice(0, 10))} · ${esc(r.requester_name)}\n   ${esc(short(r.description, 60))} → 💲 ${esc(r.price)}`);
+  const empty = q ? '<i>Topilmadi</i>' : "<i>Hozircha narx berilgan so'rov yo'q</i>";
+  const kb = inline([[cb('🔎 Qidirish', 'pq:hs'), cb('⬅️ Menyu', 'pq:menu')]]);
+  const text = `📜 <b>NARXLAR TARIXI</b>${q ? ` · «${esc(q)}»` : ''}\n${LINE}\n${lines.join('\n') || empty}`;
+  return q ? ctx.reply(text, { parse_mode: 'HTML', ...kb }) : render(ctx, text, kb);
+};
+
+const startSearch = async (ctx) => {
+  if (!canSee(ctx)) return deny(ctx);
+  await ctx.answerCbQuery();
+  session.set(ctx.from.id, { step: 'pq_search' });
+  return ctx.reply(`🔎 Qidiruv so'zini yozing (tavsif bo'yicha, kamida ${SEARCH_MIN} belgi):`, ui.cancelKeyboard());
+};
+
+const handleSearch = async (ctx) => {
+  if (!canSee(ctx)) { session.clear(ctx.from.id); return ctx.reply("⛔️ Narx bo'limi sizga ochiq emas.", ui.kbFor(ctx)); }
+  const q = String(ctx.message.text || '').trim().slice(0, SEARCH_MAX);
+  if (q.length < SEARCH_MIN) return ctx.reply(`🔎 Kamida ${SEARCH_MIN} belgi yozing:`, ui.cancelKeyboard());
+  session.clear(ctx.from.id);
+  return showHistory(ctx, q);
+};
+
+/** Davr: bugun−(d−1) … bugun */
+const periodOf = (days) => ({ from: time.addDays(time.today(), -(Number(days) - 1)), to: time.today() });
+
+const showStats = async (ctx, days) => {
+  if (!isMgr(ctx)) return deny(ctx);
+  await ctx.answerCbQuery();
+  const { from, to } = periodOf(days);
+  const stats = await pr.stats(from, to);
+  const lines = stats.map((d) => `👤 <b>${esc(d.name)}</b> — so'rov ${d.total} · narx ${d.priced} · o'rtacha ${time.prettyDuration(d.avgMinutes)} · 🔴 kechikkan ${d.late} · ⏳ ochiq ${d.open}`);
+  const kb = inline([
+    [cb('7 kun', 'pq:st:7'), cb('30 kun', 'pq:st:30')],
+    [cb('📋 Barcha ochiq', 'pq:all'), cb('📥 Excel', `pq:xl:${days}`)],
+    [cb('⬅️ Menyu', 'pq:menu')],
+  ]);
+  return render(ctx, `📊 <b>NARX SO'ROVLARI</b> · ${time.prettyRange(from, to)} (${days} kun)\n${LINE}\n${lines.join('\n') || "<i>Bu davrda so'rov yo'q</i>"}`, kb);
+};
+
+/** Barcha ochiq so'rovlar — deklarant bo'yicha guruhlangan; nofaol deklarant sarlavhada ⚠️ */
+const showAllOpen = async (ctx) => {
+  if (!isMgr(ctx)) return deny(ctx);
+  await ctx.answerCbQuery();
+  const groups = new Map();
+  for (const r of await pr.allOpen()) {
+    if (!groups.has(r.declarant_id)) groups.set(r.declarant_id, []);
+    groups.get(r.declarant_id).push(r);
+  }
+  const out = [];
+  let size = 0;
+  let cut = 0;
+  for (const list of groups.values()) {
+    const head = `\n📑 <b>${esc(list[0].declarant_name)}</b> (${list.length})${Number(list[0].declarant_active) ? '' : ' ⚠️ nofaol'}`;
+    const lines = list.map((r) => `${markOf(r)} №${r.id} · ${esc(r.requester_name)} · ${esc(short(r.description, 60))} · ⏰ ${hourOf(r)}`);
+    for (const l of [head, ...lines]) {
+      if (size + l.length > 3500) { cut += 1; continue; } // Telegram 4096 chegarasi
+      out.push(l);
+      size += l.length + 1;
+    }
+  }
+  const total = [...groups.values()].reduce((a, l) => a + l.length, 0);
+  const text = `📋 <b>BARCHA OCHIQ NARX SO'ROVLARI (${total})</b>\n${LINE}${out.join('\n') || "\n<i>Ochiq so'rov yo'q ✅</i>"}${cut ? `\n<i>… yana ${cut} qator sig'madi</i>` : ''}`;
+  return render(ctx, text, inline([[cb('📊 Statistika', 'pq:st:7'), cb('⬅️ Menyu', 'pq:menu')]]));
+};
+
+const sendExcel = async (ctx, days) => {
+  if (!isMgr(ctx)) return deny(ctx);
+  await ctx.answerCbQuery('Tayyorlanmoqda…');
+  const { from, to } = periodOf(days);
+  const file = await excel.buildPriceRequests(from, to);
+  await notify.docToUser(botOf(ctx), ctx.from.id, file.buffer, file.filename, `📥 <b>Narx so'rovlari</b> — ${time.prettyRange(from, to)} (${days} kun)`);
+};
+
 // ---------------- ro'yxatdan o'tkazish ----------------
 
 const onMedia = async (ctx, next) => {
@@ -427,6 +515,11 @@ const register = (bot) => {
   bot.action(/^pq:a:(\d+)$/, reg((ctx) => startAnswer(ctx, num(ctx))));
   bot.action(/^pq:x:(\d+)$/, reg((ctx) => cancelRequest(ctx, num(ctx))));
   bot.action(/^pq:r:(\d+)$/, reg((ctx) => reRequest(ctx, num(ctx))));
+  bot.action('pq:h', reg(async (ctx) => { if (!canSee(ctx)) return deny(ctx); await ctx.answerCbQuery(); session.clear(ctx.from.id); return showHistory(ctx); }));
+  bot.action('pq:hs', reg(startSearch));
+  bot.action(/^pq:st:(7|30)$/, reg((ctx) => showStats(ctx, num(ctx))));
+  bot.action('pq:all', reg(showAllOpen));
+  bot.action(/^pq:xl:(7|30)$/, reg((ctx) => sendExcel(ctx, num(ctx))));
   bot.on(['photo', 'document', 'video', 'voice', 'audio'], onMedia);
 };
 
@@ -481,4 +574,4 @@ const nag = async (bot, now = time.now()) => {
   return n;
 };
 
-module.exports = { register, nag, handleDesc, handleMedia, handlePrice, handlePriceNote, handleQuestion, handleAnswer };
+module.exports = { register, nag, handleSearch, handleDesc, handleMedia, handlePrice, handlePriceNote, handleQuestion, handleAnswer };

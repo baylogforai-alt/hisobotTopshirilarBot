@@ -895,6 +895,33 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('narx eslatma: nofaol deklarantga yo\'q', countSince(mark, 50001) === 0);
   await employees.activate(dil.id);
 
+  // --- 💲 Narx so'rovlari: tarix, qidiruv, statistika, barcha ochiqlar, Excel ---
+  await send(cbq(50002, 'pq:h'));
+  ok("narx tarix: oxirgi narx ko'rinadi", lastText(50002).includes('320$'));
+  await send(cbq(50002, 'pq:hs')); await send(msg(50002, 'kosmetika'));
+  ok('narx tarix: qidiruv topdi', lastText(50002).includes('Karim'));
+  await send(cbq(50002, 'pq:hs')); await send(msg(50002, 'zzzz'));
+  ok('narx tarix: topilmadi', lastText(50002).includes('Topilmadi'));
+  await send(cbq(50002, 'pq:hs')); await send(msg(50002, 'k'));
+  ok("narx tarix: 1 belgi — qayta so'raydi", session.get(50002).step === 'pq_search' && lastText(50002).includes('Kamida 2'));
+  await send(msg(50002, '❌ Bekor qilish'));
+  await send(cbq(30001, 'pq:h'));
+  ok('narx tarix: ruxsatsiz hodimga yopiq', !lastText(30001).includes('NARXLAR TARIXI'));
+  await send(cbq(50002, 'pq:st:7'));
+  ok('narx stat: hodimga yopiq', !lastText(50002).includes("o'rtacha"));
+  await send(cbq(1000, 'pq:st:7'));
+  ok("narx stat: direktor ko'radi", lastText(1000).includes('Dilshod') && lastText(1000).includes("o'rtacha"));
+  await employees.deactivate(dil.id); await send(cbq(1000, 'pq:all'));
+  ok('narx stat: nofaol deklarant ochiqlari ⚠️', lastText(1000).includes('nofaol'));
+  await employees.activate(dil.id);
+  mark = sent.length; await send(cbq(50002, 'pq:all')); await send(cbq(50002, 'pq:xl:7'));
+  ok('narx stat: hodimga «barcha ochiq» va Excel yopiq', countSince(mark, 50002, 'sendDocument') === 0 && !allText(50002, mark).includes('nofaol'));
+  mark = sent.length; await send(cbq(1000, 'pq:xl:7'));
+  ok('narx stat: Excel yuborildi', sent.slice(mark).some((s) => s.method === 'sendDocument' && Number(s.payload.chat_id) === 1000));
+  const xf = await excel.buildPriceRequests(bugun, bugun); const xwb = new ExcelJS.Workbook(); await xwb.xlsx.load(xf.buffer);
+  ok("narx stat: Excel varag'i va qatorlar", Boolean(xwb.getWorksheet("Narx so'rovlari")) && xwb.getWorksheet("Narx so'rovlari").rowCount >= 3);
+  ok('narx stat: Excel fayl nomi', xf.filename === `narx-sorovlari-${bugun}_${bugun}.xlsx`);
+
   await sleep(50);
   await db.close();
   console.log(`\n${failed ? '❌' : '🎉'} ${passed} o'tdi, ${failed} yiqildi · handler xatolari: ${errors.length}`);
