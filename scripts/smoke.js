@@ -922,6 +922,53 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok("narx stat: Excel varag'i va qatorlar", Boolean(xwb.getWorksheet("Narx so'rovlari")) && xwb.getWorksheet("Narx so'rovlari").rowCount >= 3);
   ok('narx stat: Excel fayl nomi', xf.filename === `narx-sorovlari-${bugun}_${bugun}.xlsx`);
 
+  // «Barcha ochiq» uzun ro'yxat: byudjet (3500) birinchi deklarantda deyarli to'ladi — ikkinchi deklarantning sarlavhasi sig'maydi,
+  // lekin qisqa qatori sig'ardi. Eski kod shu qatorni birinchi deklarant sarlavhasi ostida ko'rsatardi.
+  USERS[50003] = { id: 50003, first_name: 'Zarina', username: 'zarina' };
+  await employees.add({ tgId: 50003, fullName: 'Zarina Deklarant Karimova', position: 'Deklarant' });
+  const zar = await employees.byTgId(50003);
+  await employees.setDeclarant(zar.id, true);
+  const bigIds = [];
+  const mkBig = async (decl, description) => { const r = await pr.create({ requesterId: sam.id, declarantId: decl.id, description }); bigIds.push(r.id); return r; };
+  for (let i = 0; i < 12; i += 1) await mkBig(zar, `z${i}`);
+  const lineLen = (r) => `🟡 №${r.id} · ${r.requester_name} · ${String(r.description).replace(/\s+/g, ' ').trim().slice(0, 60)} · ⏰ ${r.due_at ? time.clock(r.due_at) : '—'}`.length;
+  const roomLeft = async () => {
+    const rows = await pr.allOpen();
+    const d = rows.filter((r) => r.declarant_id === dil.id);
+    const z = rows.filter((r) => r.declarant_id === zar.id);
+    const used = `\n📑 <b>${dil.full_name}</b> (${d.length})`.length + 1 + d.reduce((a, r) => a + lineLen(r) + 1, 0);
+    return { room: 3500 - used, zHead: `\n📑 <b>${zar.full_name}</b> (${z.length})`.length, zLine: Math.max(...z.map(lineLen)) };
+  };
+  let tuned = false;
+  for (let attempt = 0; attempt < 80 && !tuned; attempt += 1) {
+    for (let d = 60; d >= 1 && !tuned; d -= 1) {
+      const t = await mkBig(dil, 'y'.repeat(d));
+      const { room, zHead, zLine } = await roomLeft();
+      if (room >= zLine && room < zHead) tuned = true; else { await pr.cancel(t.id, sam.id); bigIds.pop(); }
+    }
+    if (!tuned) await mkBig(dil, 'x'.repeat(40));
+  }
+  ok("narx barcha ochiq: stsenariy tayyor (sig'masligi aniq sarlavhada)", tuned);
+  const openAll = await pr.allOpen();
+  await send(cbq(1000, 'pq:all'));
+  const allTxt = lastText(1000).replace(/<[^>]+>/g, '');
+  const shown = [];
+  let curHead = null;
+  for (const ln of allTxt.split(String.fromCharCode(10))) {
+    const h = ln.match(/^📑 (.+?) \(\d+\)/);
+    if (h) { curHead = h[1]; continue; }
+    const m = ln.match(/№(\d+) ·/);
+    if (m && /^[🟡🔴💬]/u.test(ln)) shown.push({ id: Number(m[1]), head: curHead });
+  }
+  const declOf = new Map(openAll.map((r) => [r.id, r.declarant_name]));
+  const cutN = Number((allTxt.match(/yana (\d+) qator/) || [])[1] || 0);
+  ok("narx barcha ochiq: uzun ro'yxat qirqildi, 4096 dan kam", allTxt.length < 4096 && cutN > 0);
+  ok("narx barcha ochiq: har qator o'z deklarant sarlavhasi ostida", shown.length > 0 && shown.every((x) => x.head && x.head === declOf.get(x.id)));
+  ok("narx barcha ochiq: sig'magan deklarantning qatori ko'rinmaydi", !shown.some((x) => declOf.get(x.id) === zar.full_name));
+  ok("narx barcha ochiq: ko'rsatilgan + sig'madi = jami", shown.length + cutN === openAll.length);
+  for (const id of bigIds) await pr.cancel(id, sam.id);
+  await employees.setDeclarant(zar.id, false);
+
   await sleep(50);
   await db.close();
   console.log(`\n${failed ? '❌' : '🎉'} ${passed} o'tdi, ${failed} yiqildi · handler xatolari: ${errors.length}`);

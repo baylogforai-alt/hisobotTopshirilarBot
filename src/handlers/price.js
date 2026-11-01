@@ -452,15 +452,23 @@ const showAllOpen = async (ctx) => {
   }
   const out = [];
   let size = 0;
-  let cut = 0;
+  let cut = 0; // sig'madigan so'rov qatorlari
+  let full = false;
   for (const list of groups.values()) {
-    const head = `\n📑 <b>${esc(list[0].declarant_name)}</b> (${list.length})${Number(list[0].declarant_active) ? '' : ' ⚠️ nofaol'}`;
+    const head = `
+📑 <b>${esc(list[0].declarant_name)}</b> (${list.length})${Number(list[0].declarant_active) ? '' : ' ⚠️ nofaol'}`;
     const lines = list.map((r) => `${markOf(r)} №${r.id} · ${esc(r.requester_name)} · ${esc(short(r.description, 60))} · ⏰ ${hourOf(r)}`);
-    for (const l of [head, ...lines]) {
-      if (size + l.length > 3500) { cut += 1; continue; } // Telegram 4096 chegarasi
+    // birinchi to'lishda to'xtaymiz: qator o'z deklarant sarlavhasisiz hech qachon ko'rinmaydi (sarlavha + birinchi qator birga sig'ishi kerak)
+    if (!full && size + head.length + lines[0].length + 1 > 3500) full = true;
+    if (full) { cut += lines.length; continue; }
+    out.push(head);
+    size += head.length + 1;
+    lines.forEach((l) => {
+      if (!full && size + l.length > 3500) full = true; // Telegram 4096 chegarasi
+      if (full) { cut += 1; return; }
       out.push(l);
       size += l.length + 1;
-    }
+    });
   }
   const total = [...groups.values()].reduce((a, l) => a + l.length, 0);
   const text = `📋 <b>BARCHA OCHIQ NARX SO'ROVLARI (${total})</b>\n${LINE}${out.join('\n') || "\n<i>Ochiq so'rov yo'q ✅</i>"}${cut ? `\n<i>… yana ${cut} qator sig'madi</i>` : ''}`;
