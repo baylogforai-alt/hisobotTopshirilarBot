@@ -794,6 +794,38 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok("narx: Samandar fix ro'yxatda", require('../src/fixes').FIXES.some((f) => f.id === 'samandar-narx-20261031' && f.action === 'askPrice' && f.match({ tg_id: 8254184544 })));
   ok('narx: jadvallar bor', (await db.count('SELECT COUNT(*) AS c FROM price_requests')) === 0 && (await db.count('SELECT COUNT(*) AS c FROM price_request_msgs')) === 0);
 
+  const pr = require('../src/services/priceRequests');
+  const t0 = time.now().set({ hour: 10, minute: 0, second: 0, millisecond: 0 });
+  ok('narx svc: dueAtFor', pr.dueAtFor('1h', t0) === t0.plus({ minutes: 60 }).toISO() && pr.dueAtFor('none', t0) === null
+    && pr.dueAtFor('today', t0).startsWith(`${t0.toFormat('yyyy-MM-dd')}T${employees.workEndOf(null)}`));
+  const r1 = await pr.create({ requesterId: sam.id, declarantId: dil.id, description: 'Mijoz Ali: 20 quti telefon g\'ilofi', dueAt: pr.dueAtFor('3h', t0) });
+  const r2 = await pr.create({ requesterId: sam.id, declarantId: dil.id, description: 'Mijoz Vali: mebel 2 t' });
+  ok('narx svc: inbox tartibi (muddatlisi birinchi)', (await pr.inbox(dil.id)).map((r) => r.id).join() === `${r1.id},${r2.id}`);
+  ok('narx svc: ask → asked, msg yozildi', await pr.ask(r1.id, dil.id, { text: 'Brendmi?' }) && (await pr.byId(r1.id)).status === 'asked' && (await pr.messages(r1.id)).length === 1);
+  ok('narx svc: begona javob bera olmaydi', !(await pr.answer(r1.id, dil.id, { text: 'x' })));
+  ok('narx svc: answer → open', await pr.answer(r1.id, sam.id, { text: 'Yo\'q' }) && (await pr.byId(r1.id)).status === 'open');
+  ok('narx svc: begona deklarant narx bera olmaydi', !(await pr.setPrice(r1.id, sam.id, '100$')));
+  ok('narx svc: setPrice', await pr.setPrice(r1.id, dil.id, '1 250$', 'yetkazish bilan') && (await pr.byId(r1.id)).price === '1 250$');
+  ok('narx svc: ikkinchi setPrice → false', !(await pr.setPrice(r1.id, dil.id, '1$')));
+  ok('narx svc: cancel', await pr.cancel(r2.id, sam.id) && !(await pr.cancel(r2.id, sam.id)));
+  ok('narx svc: history qidiruv', (await pr.history({ q: 'TELEFON' })).map((r) => r.id).join() === String(r1.id) && (await pr.history({ q: 'mebel' })).length === 0);
+  const prSt = await pr.stats(bugun, bugun);
+  ok('narx svc: stats', prSt.length === 1 && prSt[0].total === 2 && prSt[0].priced === 1 && prSt[0].avgMinutes !== null);
+  ok('narx svc: countInbox 0', (await pr.countInbox(dil.id)) === 0);
+  const r3 = await pr.create({ requesterId: sam.id, declarantId: dil.id, description: 'Mijoz Sher: kiyim 1 t', dueAt: pr.dueAtFor('1h', t0) });
+  const prLater = time.now().plus({ hours: 5 }).toISO();
+  ok('narx svc: dueForReminder (open, faol deklarant)', (await pr.dueForReminder(prLater, 60)).map((r) => r.id).join() === String(r3.id) && (await pr.dueForReminder(time.stamp(), 60)).length === 0);
+  await pr.markReminded([r3.id], prLater);
+  ok('narx svc: markReminded oraliqni suradi', (await pr.dueForReminder(prLater, 60)).length === 0);
+  const prOv = (await pr.overdue(prLater)).map((r) => r.id).join();
+  await pr.markOverdue(r3.id, prLater);
+  ok('narx svc: overdue bir marta', prOv === String(r3.id) && (await pr.overdue(prLater)).length === 0);
+  await pr.ask(r3.id, dil.id, { text: 'Hajmi?' });
+  const prStale = (await pr.askedStale(prLater, 30)).map((r) => r.id).join();
+  await pr.markAskedNudged(r3.id, prLater);
+  ok('narx svc: askedStale + markAskedNudged', prStale === String(r3.id) && (await pr.askedStale(prLater, 30)).length === 0 && (await pr.dueForReminder(prLater, 60)).length === 0);
+  ok('narx svc: countMine/allOpen/mine', (await pr.countMine(sam.id)) === 1 && (await pr.allOpen()).map((r) => r.id).join() === String(r3.id) && (await pr.mine(sam.id))[0].declarant_name === 'Dilshod Deklarant');
+
   await sleep(50);
   await db.close();
   console.log(`\n${failed ? '❌' : '🎉'} ${passed} o'tdi, ${failed} yiqildi · handler xatolari: ${errors.length}`);
