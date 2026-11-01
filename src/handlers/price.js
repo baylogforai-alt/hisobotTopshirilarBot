@@ -1,5 +1,7 @@
 'use strict';
 
+const { DateTime } = require('luxon');
+
 const ui = require('../ui');
 const time = require('../time');
 const session = require('../session');
@@ -7,6 +9,8 @@ const { render } = require('../render');
 const employees = require('../services/employees');
 const pr = require('../services/priceRequests');
 const notify = require('../services/notify');
+const worktime = require('../services/worktime');
+const config = require('../config');
 const activity = require('../services/activity');
 
 const { esc, cb, inline, LINE } = ui;
@@ -426,4 +430,55 @@ const register = (bot) => {
   bot.on(['photo', 'document', 'video', 'voice', 'audio'], onMedia);
 };
 
-module.exports = { register, handleDesc, handleMedia, handlePrice, handlePriceNote, handleQuestion, handleAnswer };
+// ---------------- eslatmalar (cron: jobs.js «price-nag») ----------------
+
+/**
+ * Narx so'rovlari eslatmalari — faqat ish kuni va ish vaqti ichida; "hozir" — `now` dan (testlar uchun deterministik).
+ *  1) deklarantga: kutilayotgan (open) so'rovlar bo'yicha har PRICE_REMIND_MIN daqiqada BITTA xabar (ro'yxat);
+ *  2) muddati o'tganlar — so'rovchiga va (faol) deklarantga, bir martadan;
+ *  3) deklarant savol bergan, so'rovchi javob bermagan — so'rovchiga bir marta turtki.
+ * Yuborilgan xabarlar sonini qaytaradi.
+ */
+const nag = async (bot, now = time.now()) => {
+  if (!time.isWorkDay(now.toFormat('yyyy-MM-dd'))) return 0;
+  const nowMin = now.hour * 60 + now.minute;
+  if (nowMin < worktime.minutes() || nowMin >= employees.endMinutesOf(null)) return 0;
+  const nowIso = now.toISO();
+  let n = 0;
+  const deliver = async (tgId, text, extra) => {
+    if (!tgId) return;
+    if (await notify.toUser(bot, tgId, text, extra)) n += 1;
+  };
+
+  // 1) deklarantga bitta ro'yxat
+  const byDecl = new Map();
+  for (const r of await pr.dueForReminder(nowIso, config.priceRemindMin)) {
+    if (!byDecl.has(r.declarant_id)) byDecl.set(r.declarant_id, []);
+    byDecl.get(r.declarant_id).push(r);
+  }
+  for (const list of byDecl.values()) {
+    const lines = list.map((r) => {
+      const mins = Math.max(0, Math.round(now.diff(DateTime.fromISO(r.created_at, { zone: time.TZ }), 'minutes').minutes));
+      return `${r.due_at && r.due_at <= nowIso ? '🔴' : '🟡'} №${r.id} · ${esc(r.requester_name)} · ${esc(short(r.description, 40))} · (${time.prettyDuration(mins)}dan beri)`;
+    });
+    const rows = [...list.map((r) => [cb(`💲 №${r.id}`, `pq:p:${r.id}`)]), [cb("📥 Barcha so'rovlar", 'pq:in')]];
+    await deliver(list[0].declarant_tg, `⏰ <b>NARX KUTILMOQDA (${list.length})</b>\n${LINE}\n${lines.join('\n')}`, inline(rows));
+    await pr.markReminded(list.map((r) => r.id), nowIso);
+  }
+
+  // 2) muddati o'tganlar — bir marta (nofaol deklarantga yuborilmaydi, so'rovchiga esa boradi)
+  for (const r of await pr.overdue(nowIso)) {
+    await deliver(r.requester_tg, `⚠️ №${r.id} ga hali narx berilmadi (muddat ${time.clock(r.due_at)})\n${esc(short(r.description, 60))}`);
+    if (r.declarant_active) await deliver(r.declarant_tg, `🔴 №${r.id} muddati o'tdi\n${esc(short(r.description, 60))}`, inline([[cb('💲 Narx berish', `pq:p:${r.id}`)]]));
+    await pr.markOverdue(r.id, nowIso);
+  }
+
+  // 3) deklarant savoliga javob kutilmoqda
+  for (const r of await pr.askedStale(nowIso, config.priceRemindMin)) {
+    await deliver(r.requester_tg, `💬 №${r.id} — deklarant savoliga javob kutilmoqda\n${esc(short(r.description, 60))}`, inline([[cb('💬 Javob berish', `pq:a:${r.id}`)]]));
+    await pr.markAskedNudged(r.id, nowIso);
+  }
+  return n;
+};
+
+module.exports = { register, nag, handleDesc, handleMedia, handlePrice, handlePriceNote, handleQuestion, handleAnswer };

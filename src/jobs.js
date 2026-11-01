@@ -18,6 +18,7 @@ const kpi = require('./services/kpi');
 const excel = require('./services/excel');
 const backup = require('./services/backup');
 const dailyReport = require('./handlers/dailyReport');
+const price = require('./handlers/price');
 
 /**
  * REJALASHTIRUVCHI (Asia/Tashkent, WORK_DAYS). Ish boshlanishi bazada (Panel → «🕘 Ish vaqti»), shuning uchun
@@ -43,6 +44,7 @@ const dailyReport = require('./handlers/dailyReport');
  *   har daqiqa   recurring-run   — «📆 Davriy eslatma»: har oy / har hafta belgilangan vaqtda eslatma yoki topshiriq
  *   17:00        recurring-ask   — davriy topshiriq: keyingisidan oldingi ish kuni hali bajarilmaganiga «bajardingizmi?» savoli
  *   10,12…18     recurring-nag   — bajarilmagan davriy topshiriq yopilguncha: hodimga (yoki tekshiruvda — yozgan odamga)
+ *   har 5 daq    price-nag       — 💲 narx so'rovi: deklarantga har PRICE_REMIND_MIN daqiqada, muddat o'tsa so'rovchiga
  *   har 5 daq    live-watch      — agent jonli joylashuvi: yoqmagan / muddati tugagan / LIVE_GAP_MIN yangilanmagan → agent va rahbar/HR
  */
 
@@ -246,6 +248,12 @@ const start = (bot) => {
   schedule('live-watch', '*/5 6-21 * * *', async () => {
     const n = await require('./services/live').watch(bot);
     if (n) await logRun('live-watch', `${n} ta xabar`);
+  });
+
+  // 31-okt: narx so'rovlari eslatmalari (ish kuni va ish vaqti ichida — price.nag o'zi tekshiradi)
+  schedule('price-nag', `*/5 6-21 * * ${dow}`, async () => {
+    const n = await price.nag(bot);
+    if (n) await logRun('price-nag', n);
   });
 
   // topshiriq eslatmalari — tick ichida (remindTick): har hodim o'z jadvalida

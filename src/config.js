@@ -119,6 +119,7 @@ const config = {
   dailyReportRequired: bool(process.env.DAILY_REPORT_REQUIRED, true),
   /** Ish tugashidan necha daqiqa oldin "hisobot topshiring" eslatmasi */
   dailyReportRemindMin: num(process.env.DAILY_REPORT_REMIND_MIN, 30),
+  priceRemindMin: num(process.env.PRICE_REMIND_MIN, 60), // 💲 narx so'rovi: deklarantga eslatma oralig'i (daqiqa)
   // «Kun yakuni» hisoboti soati (standart — ish tugashi soati, WORK_END_HOUR)
   dailyReportHour: num(process.env.DAILY_REPORT_HOUR, num(process.env.WORK_END_HOUR, 18)),
 

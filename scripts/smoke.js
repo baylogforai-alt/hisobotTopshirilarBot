@@ -870,6 +870,31 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   mark = sent.length; await send(cbq(50002, `pq:x:${q2.id}`));
   ok('narx oqim: ikkinchi bekor — xabar yo\'q', countSince(mark, 50001) === 0);
 
+  // --- 💲 Narx so'rovlari: eslatmalar (price.nag) ---
+  const price = require('../src/handlers/price');
+  const wd = (() => { let d = time.now(); while (!time.isWorkDay(d.toFormat('yyyy-MM-dd'))) d = d.plus({ days: 1 }); return d; })();
+  const at10 = wd.set({ hour: 10, minute: 0, second: 0, millisecond: 0 });
+  const old = at10.minus({ minutes: 70 }).toISO();
+  const a = await pr.create({ requesterId: sam.id, declarantId: dil.id, description: 'A yuk' });
+  const b = await pr.create({ requesterId: sam.id, declarantId: dil.id, description: 'B yuk', dueAt: at10.minus({ minutes: 5 }).toISO() });
+  const c = await pr.create({ requesterId: sam.id, declarantId: dil.id, description: 'C yuk' });
+  await db.query('UPDATE price_requests SET created_at = $1 WHERE id IN ($2, $3, $4)', [old, a.id, b.id, c.id]);
+  await pr.ask(c.id, dil.id, { text: 'savol' }); await db.query('UPDATE price_requests SET asked_at = $1 WHERE id = $2', [old, c.id]);
+  mark = sent.length; await price.nag(bot, at10);
+  const toDil = sent.slice(mark).filter((s) => Number(s.payload.chat_id) === 50001 && (s.payload.text || '').includes('NARX KUTILMOQDA'));
+  ok('narx eslatma: bitta xabar, 2 ta so\'rov (asked yo\'q)', toDil.length === 1 && toDil[0].payload.text.includes(`№${a.id}`) && toDil[0].payload.text.includes(`№${b.id}`) && !toDil[0].payload.text.includes(`№${c.id}`));
+  ok('narx eslatma: muddat o\'tdi — so\'rovchiga', allText(50002, mark).includes(`№${b.id} ga hali narx berilmadi`));
+  ok('narx eslatma: savolga javob kutilmoqda — so\'rovchiga', allText(50002, mark).includes(`№${c.id}`) && Boolean(findCb(50002, new RegExp(`^pq:a:${c.id}$`))));
+  mark = sent.length; await price.nag(bot, at10.plus({ minutes: 5 }));
+  ok('narx eslatma: 5 daqiqadan keyin takror yo\'q (overdue ham bir marta)', countSince(mark, 50001) === 0 && countSince(mark, 50002) === 0);
+  mark = sent.length; await price.nag(bot, at10.plus({ minutes: 61 }));
+  ok('narx eslatma: 60 daqiqadan keyin yana', countSince(mark, 50001) === 1);
+  mark = sent.length; await price.nag(bot, wd.set({ hour: 20, minute: 0 }));
+  ok('narx eslatma: ish vaqtidan tashqari — yo\'q', sent.length === mark);
+  await employees.deactivate(dil.id); mark = sent.length; await price.nag(bot, at10.plus({ minutes: 130 }));
+  ok('narx eslatma: nofaol deklarantga yo\'q', countSince(mark, 50001) === 0);
+  await employees.activate(dil.id);
+
   await sleep(50);
   await db.close();
   console.log(`\n${failed ? '❌' : '🎉'} ${passed} o'tdi, ${failed} yiqildi · handler xatolari: ${errors.length}`);
