@@ -937,7 +937,7 @@ const register = (bot) => {
     if (on) await flows.hrNotice(botOf(ctx), await employees.byId(e.id));
     return employeeCard(ctx, e.id);
   });
-  // deklarant / narx so'rash bayrog'i — faqat direktor (guard); hodimga xabar yuborilmaydi
+  // deklarant / narx so'rash bayrog'i — faqat direktor (guard); deklarant rejimi o'zgarsa — hodimga yangi menyu
   const flagAction = (re, col, set) => bot.action(re, async (ctx) => {
     if (!(await guard(ctx))) return;
     const e = await employees.byId(ctx.match[1]);
@@ -945,6 +945,11 @@ const register = (bot) => {
     if (!ctx.match[2] || Number(Boolean(Number(e[col]))) === Number(ctx.match[2])) return stale(ctx, e.id);
     await employees[set](e.id, ctx.match[2] === '1');
     await ctx.answerCbQuery('Saqlandi');
+    const fresh = await employees.byId(e.id);
+    if (employees.isDeclarantOnly(fresh) !== employees.isDeclarantOnly(e)) {
+      if (employees.isDeclarantOnly(fresh)) await flows.declarantNotice(botOf(ctx), fresh);
+      else await flows.roleNotice(botOf(ctx), fresh);
+    }
     return employeeCard(ctx, e.id);
   });
   flagAction(/^emp:dc:(\d+)(?::([01]))?$/, 'is_declarant', 'setDeclarant');

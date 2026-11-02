@@ -28,7 +28,8 @@ const listAll = () => db.query(`${SELECT} ORDER BY e.active DESC, lower(d.name),
  * davomat, KPI, oylik, ertalabki/kun yakuni ro'yxatlari va oy boshiga kirmaydi.
  */
 const isBoss = (emp) => Boolean(emp && emp.role === 'admin') && !config.bossIsStaff;
-const isStaff = (emp) => Boolean(emp) && !isBoss(emp);
+// 2-noy: deklarant (oddiy hodim roli) — ish vaqti, davomat va KPI yo'q
+const isStaff = (emp) => Boolean(emp) && !isBoss(emp) && !isDeclarantOnly(emp);
 /** Davomat/KPI hisoblanadigan faol hodimlar (boshliqsiz); deptId berilsa — shu bo'lim */
 const listStaff = async (deptId = null) => (deptId ? await listByDepartment(deptId) : await listActive()).filter(isStaff);
 
@@ -44,19 +45,19 @@ const listAdmins = () => db.query(`${SELECT} WHERE e.active = 1 AND e.role = 'ad
 
 const listHeads = () => db.query(`${SELECT} WHERE e.active = 1 AND e.role = 'head' ORDER BY lower(e.full_name)`);
 
-const add = async ({ tgId, fullName, position = null, role = 'employee', departmentId = null, username = null, isHr = false }) => {
+const add = async ({ tgId, fullName, position = null, role = 'employee', departmentId = null, username = null, isHr = false, isDeclarant = false }) => {
   const existing = await byTgId(tgId);
   if (existing) {
     await db.query(
-      'UPDATE employees SET full_name = $1, position = $2, role = $3, department_id = $4, is_hr = $5, active = 1 WHERE id = $6',
-      [fullName, position, role, departmentId, isHr ? 1 : 0, existing.id],
+      'UPDATE employees SET full_name = $1, position = $2, role = $3, department_id = $4, is_hr = $5, is_declarant = $6, active = 1 WHERE id = $7',
+      [fullName, position, role, departmentId, isHr ? 1 : 0, isDeclarant ? 1 : 0, existing.id],
     );
     return { employee: await byId(existing.id), created: false };
   }
   const rows = await db.query(
-    `INSERT INTO employees (tg_id, full_name, position, username, role, department_id, is_hr, active, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8) RETURNING id`,
-    [Number(tgId), fullName, position, username, role, departmentId, isHr ? 1 : 0, time.stamp()],
+    `INSERT INTO employees (tg_id, full_name, position, username, role, department_id, is_hr, is_declarant, active, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, $9) RETURNING id`,
+    [Number(tgId), fullName, position, username, role, departmentId, isHr ? 1 : 0, isDeclarant ? 1 : 0, time.stamp()],
   );
   return { employee: await byId(rows[0].id), created: true };
 };
@@ -149,6 +150,8 @@ const isViewer = (emp) => Boolean(emp && emp.active && Number(emp.can_view_att) 
 const setViewer = (id, on) => db.query('UPDATE employees SET can_view_att = $1 WHERE id = $2', [on ? 1 : 0, Number(id)]);
 /** Deklarant — narx so'rovlariga javob beradi (faqat direktor belgilaydi) */
 const isDeclarant = (emp) => Boolean(emp && emp.active && Number(emp.is_declarant) === 1);
+/** Faqat deklarant (oddiy hodim roli): menyuda faqat Topshiriqlarim/Bajardim/Narxlar; Keldim, davomat, KPI yo'q */
+const isDeclarantOnly = (emp) => isDeclarant(emp) && emp.role === 'employee' && Number(emp.is_hr) !== 1 && !isAdminId(emp.tg_id);
 const setDeclarant = (id, on) => db.query('UPDATE employees SET is_declarant = $1 WHERE id = $2', [on ? 1 : 0, Number(id)]);
 /** Narx so'rashi mumkin hodim (rahbarlar — HR / direktor — bayroqsiz so'ray oladi) */
 const canAskPrice = (emp) => Boolean(emp && emp.active && Number(emp.can_ask_price) === 1);
@@ -284,7 +287,7 @@ const mention = (e) => (e.username ? `@${e.username}` : e.full_name);
 module.exports = {
   ROLES, byTgId, byId, listActive, listStaff, isBoss, isStaff, listAll, listByDepartment, listWithoutDepartment, listAdmins, listHeads,
   add, ensureMany, deactivate, activate, setRole, setPosition, rename, setDepartment, setBonusFund, setWorkStart, parseWorkStart, startMinutesOf, setWorkEnd, workEndOf, endMinutesOf, setFlexible, isFlexible,
-  isHr, setHr, listHr, wantsDoneNotify, setNotifyDone, attendanceWatchersOf, doneReviewersOf, isViewer, setViewer, isDeclarant, setDeclarant, canAskPrice, setCanAskPrice, listDeclarants, contactHtml, titleOf, personIcon, teamOf, listUnmanaged,
+  isHr, setHr, listHr, wantsDoneNotify, setNotifyDone, attendanceWatchersOf, doneReviewersOf, isViewer, setViewer, isDeclarant, isDeclarantOnly, setDeclarant, canAskPrice, setCanAskPrice, listDeclarants, contactHtml, titleOf, personIcon, teamOf, listUnmanaged,
   setBranch, setWorkMode, isField, setHome, clearHome, homeOf, setVideoRequired, needsCheckinVideo, setSalary, modeLabel,
   touchUsername, isAdminId, isAdmin, isHead, canManage, reviewersOf, deptHeadIdsOf, bossTgIds, isTop, roleLabel, mention,
 };

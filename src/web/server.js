@@ -145,6 +145,9 @@ const handleApi = async (req, res, url, bot) => {
   const actor = await access.resolve(v.user.id, v.user);
   if (!actor.registered) return sendJson(res, 403, { error: "Siz ro'yxatda yo'qsiz", code: 'not_registered', tgId: v.user.id });
   if (actor.employee && v.user.username) await employees.touchUsername(v.user.id, v.user.username);
+  if (!actor.isAdmin && employees.isDeclarantOnly(actor.employee)) {
+    return sendJson(res, 403, { error: "📑 Deklarant uchun ilova yo'q — narx so'rovlari va topshiriqlar botda.", code: 'declarant' });
+  }
 
   if (!hit(`u:${actor.tgId}`, LIMITS.user)) return sendJson(res, 429, { error: "Juda ko'p so'rov, birozdan keyin urinib ko'ring" });
   const write = req.method !== 'GET';

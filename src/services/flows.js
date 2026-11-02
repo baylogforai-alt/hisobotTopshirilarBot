@@ -832,13 +832,14 @@ const DONE_AFTER_CHECKOUT = `🔒 <b>Siz bugun «${ui.BTN.checkOut}» qilgansiz.
 Ishdan ketgandan keyin vazifani «${ui.BTN.done}» qilib bo'lmaydi — ertaga «${ui.BTN.checkIn}» dan keyin belgilang.`;
 /** «Bajardim» faqat ishda turganda: Keldim bor va Ketdim yo'q (boshliq ozod) */
 const doneBlocked = async (emp) => {
-  if (!emp || employees.isBoss(emp)) return null;
+  if (!emp || employees.isBoss(emp) || employees.isDeclarantOnly(emp)) return null; // deklarantda ish vaqti yo'q
   const row = await attendance.get(emp.id);
   if (!row || !row.checked_in) return DONE_NEEDS_CHECKIN;
   return row.checked_out ? DONE_AFTER_CHECKOUT : null;
 };
 
 const welcome = async (bot, employee) => {
+  if (employees.isDeclarantOnly(employee)) return declarantNotice(bot, employee);
   await notify.toUser(
     bot, employee.tg_id,
     `🎉 <b>Xush kelibsiz, ${esc(employee.full_name)}!</b>\n\n` +
@@ -847,6 +848,18 @@ const welcome = async (bot, employee) => {
     ui.kbForEmp(employee),
   );
   await webapp.setMenuFor(bot, employee.tg_id);
+};
+
+/** Deklarant: ish vaqti yo'q, menyuda faqat topshiriqlar va narxlar; ilova tugmasi olinadi */
+const declarantNotice = async (bot, e) => {
+  await notify.toUser(
+    bot, e.tg_id,
+    `📑 <b>${esc(e.full_name)}</b>, siz <b>deklarant</b> sifatida belgilandingiz.\n\n` +
+      `«${ui.BTN.prices}» — sizdan narx so'ralgan yuklar: narx berish yoki «❓ Savol bor».\n` +
+      `«${ui.BTN.myTasks}» va «${ui.BTN.done}» — sizga berilgan topshiriqlar.\n\n<i>Ish vaqti va «${ui.BTN.checkIn}» siz uchun yo'q.</i>`,
+    ui.kbForEmp(e),
+  );
+  await webapp.resetMenuFor(bot, e.tg_id);
 };
 
 const roleNotice = (bot, e) =>
@@ -1076,6 +1089,6 @@ module.exports = {
   meetingWhen, meetingText, meetingKb, meetingSummary, sendMeeting, resendMeeting, answerMeeting, remindMeetings, cancelMeeting, returnTask, cancelTask,
   taskReplyTarget, sendTaskReply, personLink, chatRecipients, startChat, sendChatMessage,
   lateNotice, lateNoticeRule, requestAbsence, requestLeave, decideLeave, checkOut, CHECKOUT_PROMPT, notifyTaskStarts, whenText, TASK_REPLY_OK, decideExcuse, markExcused, markPresentBy, sendWarning, warningSeen,
-  kpiDecisionNotice, decideKpi, welcome, roleNotice, hrNotice, modeNotice, homeClearedNotice, setActive, announceWorktime,
+  kpiDecisionNotice, decideKpi, welcome, declarantNotice, roleNotice, hrNotice, modeNotice, homeClearedNotice, setActive, announceWorktime,
   recipientsLabel: org.recipientsLabel,
 };

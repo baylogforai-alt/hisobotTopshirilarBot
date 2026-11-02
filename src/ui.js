@@ -2,6 +2,7 @@
 
 const { Markup } = require('telegraf');
 const time = require('./time');
+const config = require('./config');
 
 const esc = (s) =>
   String(s === null || s === undefined ? '' : s)
@@ -62,7 +63,9 @@ const BTN = {
 const LINE = '━'.repeat(18);
 
 /** Rolga va ish turiga qarab asosiy klaviatura (isField — hudud agenti: «Hududga keldim» tugmasi) */
-const mainKeyboard = ({ isAdmin = false, isHead = false, isField = false, isHr = false, isViewer = false, isBoss = false, isPrice = false } = {}) => {
+const mainKeyboard = ({ isAdmin = false, isHead = false, isField = false, isHr = false, isViewer = false, isBoss = false, isPrice = false, isDecl = false } = {}) => {
+  // 2-noy: deklarant — faqat o'z topshiriqlari va narx so'rovlari (ish vaqti, Keldim yo'q)
+  if (isDecl) return Markup.keyboard([[BTN.myTasks, BTN.done], [BTN.prices]]).resize();
   const rows = isBoss ? [] : [[BTN.checkIn, BTN.checkOut]];
   if (isField && !isBoss) rows.push([BTN.visit]);
   rows.push([BTN.myTasks, BTN.done], [BTN.stActive, BTN.stFix], [BTN.stReview, BTN.stDone], isBoss ? [BTN.selfTask, BTN.myReport] : [BTN.selfTask, BTN.dailyReport]);
@@ -85,14 +88,18 @@ const mainKeyboard = ({ isAdmin = false, isHead = false, isField = false, isHr =
 const isFieldEmp = (emp) => Boolean(emp && emp.work_mode === 'field');
 const flag = (emp, key) => Boolean(emp && Number(emp[key]) === 1);
 const isBossEmp = (emp) => Boolean(emp && emp.role === 'admin');
+/** employees.isDeclarantOnly bilan bir xil (ui employees'ni yuklamaydi) */
+const isDeclOnly = (emp, isAdmin) => !isAdmin && flag(emp, 'active') && flag(emp, 'is_declarant') && emp.role === 'employee' && !flag(emp, 'is_hr');
 const kbFor = (ctx) => mainKeyboard({
   isAdmin: ctx.state.isAdmin, isHead: ctx.state.isHead, isField: isFieldEmp(ctx.state.employee),
   isHr: flag(ctx.state.employee, 'is_hr'), isViewer: flag(ctx.state.employee, 'can_view_att'), isBoss: isBossEmp(ctx.state.employee),
   isPrice: Boolean(ctx.state.isAdmin) || flag(ctx.state.employee, 'is_hr') || flag(ctx.state.employee, 'is_declarant') || flag(ctx.state.employee, 'can_ask_price'),
+  isDecl: isDeclOnly(ctx.state.employee, ctx.state.isAdmin),
 });
 const kbForEmp = (emp) => mainKeyboard({
   isAdmin: emp.role === 'admin', isHead: emp.role === 'head', isField: isFieldEmp(emp), isHr: flag(emp, 'is_hr'), isViewer: flag(emp, 'can_view_att'), isBoss: isBossEmp(emp),
   isPrice: emp.role === 'admin' || flag(emp, 'is_hr') || flag(emp, 'is_declarant') || flag(emp, 'can_ask_price'),
+  isDecl: isDeclOnly(emp, config.adminIds.includes(Number(emp.tg_id))),
 });
 
 /** noLoc — Keldimda «📵 Joylashuv yubora olmayman» (sabab bilan) */

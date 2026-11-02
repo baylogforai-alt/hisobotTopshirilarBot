@@ -160,7 +160,8 @@ const markLiveExcused = async (rowId, reason) =>
  * («Kech qolaman» yoki «Kelmayman» — kutilmoqda/tasdiqlangan). Rad etilgan «Kelmayman» — sabab emas.
  */
 const needsCheckIn = async (emp, date = time.today()) => {
-  if (!config.checkinRequired || !emp || require('./employees').isBoss(emp) || !time.isWorkDay(date)) return false;
+  const employees = require('./employees');
+  if (!config.checkinRequired || !emp || employees.isBoss(emp) || employees.isDeclarantOnly(emp) || !time.isWorkDay(date)) return false;
   const row = await get(emp.id, date);
   return !(row && (row.checked_in || row.late_notice_at || ['pending', 'approved'].includes(row.excuse_status)));
 };

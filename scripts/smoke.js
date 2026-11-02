@@ -1101,6 +1101,57 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   await employees.setDeclarant(zar.id, false);
 
+  // =========================================================================
+  console.log('\n— 📑 Deklarant rejimi: ish vaqti yo\'q, faqat topshiriqlar va narxlar —');
+  const cfg = require('../src/config');
+  const flowsSvc = require('../src/services/flows');
+  const kbRows = (s) => ((s && s.payload.reply_markup && s.payload.reply_markup.keyboard) || []).map((r) => r.map((b) => b.text || b));
+  USERS[50005] = { id: 50005, first_name: 'Nodira', username: 'nodira' };
+  await send(msg(50005, '/start'));
+  await send(cbq(1000, findCb(1000, /^jr:add:\d+$/)));
+  await send(msg(1000, "⏭ O'tkazib yuborish"));
+  await send(msg(1000, "⏭ O'tkazib yuborish"));
+  await send(cbq(1000, 'ea:dept:0'));
+  ok("deklarant: sehrgarda «📑 Deklarant» roli bor", Boolean(findCb(1000, /^ea:role:declarant$/)));
+  mark = sent.length;
+  await send(cbq(1000, 'ea:role:declarant'));
+  await send(cbq(1000, 'ea:ok'));
+  const nod = await employees.byTgId(50005);
+  ok('deklarant: qo\'shildi — role=employee, is_declarant=1, lavozim «Deklarant»',
+    nod && nod.role === 'employee' && Number(nod.is_declarant) === 1 && nod.position === 'Deklarant' && employees.isDeclarantOnly(nod));
+  const welcomeMsg = to(50005).filter((s) => s.method === 'sendMessage' && (s.payload.text || '').includes('deklarant')).pop();
+  ok('deklarant: xush kelibsiz — faqat Topshiriqlarim / Bajardim / Narxlar',
+    Boolean(welcomeMsg) && JSON.stringify(kbRows(welcomeMsg)) === JSON.stringify([['📋 Topshiriqlarim', '✔️ Bajardim'], ['💲 Narxlar']]));
+  ok("deklarant: ilova tugmasi o'rnatilmadi", !sent.slice(mark).some((s) => s.method === 'setChatMenuButton' && Number(s.payload.chat_id) === 50005 && s.payload.menu_button && s.payload.menu_button.type === 'web_app'));
+  ok("deklarant: davomat/KPI ro'yxatida yo'q, topshiriq beriladiganlar ichida bor",
+    !(await employees.listStaff()).some((e) => Number(e.id) === Number(nod.id)) && (await employees.listActive()).some((e) => Number(e.id) === Number(nod.id)));
+  const prevReq = cfg.checkinRequired;
+  cfg.checkinRequired = true;
+  ok("deklarant: ish kunida ham «Keldim» talab qilinmaydi", !(await attendance.needsCheckIn(nod, wd.toFormat('yyyy-MM-dd'))));
+  cfg.checkinRequired = prevReq;
+  ok('deklarant: «Bajardim» Keldimsiz ochiq', (await flowsSvc.doneBlocked(nod)) === null);
+  await send(msg(50005, '✅ Keldim'));
+  ok('deklarant: «Keldim» tugmasi yopiq', lastText(50005).includes('deklarantsiz'));
+  await send(msg(50005, '/oylik'));
+  ok('deklarant: boshqa buyruq yopiq', lastText(50005).includes('deklarantsiz'));
+  await send(msg(50005, '/yordam'));
+  ok("deklarant: /yordam — qisqa deklarant qo'llanmasi", lastText(50005).includes('Deklarant uchun') && !lastText(50005).includes('/kalkulyator'));
+  await send(msg(50005, '📋 Topshiriqlarim'));
+  ok('deklarant: «Topshiriqlarim» ishlaydi', !lastText(50005).includes('deklarantsiz'));
+  await send(msg(50005, '💲 Narxlar'));
+  ok('deklarant: «Narxlar» ishlaydi', !lastText(50005).includes('deklarantsiz') && !lastText(50005).includes('Keldim'));
+  mark = sent.length;
+  await send(cbq(1000, `emp:dc:${nod.id}:0`));
+  const offMsg = sent.slice(mark).filter((s) => Number(s.payload.chat_id) === 50005 && s.method === 'sendMessage').pop();
+  ok("deklarant: bayroq olinsa — oddiy hodim menyusi (Keldim bilan) yuboriladi", Boolean(offMsg) && kbRows(offMsg).flat().includes('✅ Keldim'));
+  ok("deklarant: bayroqsiz — davomat ro'yxatiga qaytdi", (await employees.listStaff()).some((e) => Number(e.id) === Number(nod.id)));
+  mark = sent.length;
+  await send(cbq(1000, `emp:dc:${nod.id}:1`));
+  const onMsg = sent.slice(mark).filter((s) => Number(s.payload.chat_id) === 50005 && s.method === 'sendMessage').pop();
+  ok('deklarant: bayroq qo\'yilsa — deklarant xabari va qisqa menyu', Boolean(onMsg) && onMsg.payload.text.includes('deklarant') && !kbRows(onMsg).flat().includes('✅ Keldim'));
+  ok("deklarant: rahbar/HR deklarant bo'lsa — oddiy menyusi qoladi", !employees.isDeclarantOnly({ ...nod, role: 'head' }) && !employees.isDeclarantOnly({ ...nod, is_hr: 1 }));
+  await employees.deactivate(nod.id);
+
   await sleep(50);
   await db.close();
   console.log(`\n${failed ? '❌' : '🎉'} ${passed} o'tdi, ${failed} yiqildi · handler xatolari: ${errors.length}`);

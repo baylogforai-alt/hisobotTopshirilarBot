@@ -220,6 +220,25 @@ const legacyButtons = (ctx, next) => {
   return next();
 };
 
+/** 2-noy: deklarantga faqat Topshiriqlarim / Bajardim / Narxlar — boshqa menyu tugmalari va buyruqlar yopiq */
+const DECL_TEXTS = new Set([ui.BTN.myTasks, ui.BTN.done, ui.BTN.prices, ui.BTN.cancel, ui.BTN.skip]);
+const DECL_COMMANDS = new Set(['/start', '/menu', '/narx', '/topshiriqlarim', '/missiyalarim', '/bajardim', '/id']);
+const HELP_DECLARANT =
+  `📑 <b>Deklarant uchun</b>\n\n` +
+  `💲 <b>${ui.BTN.prices}</b> — sizdan narx so'ralgan yuklar ro'yxati: so'rovni ochib «💲 Narx berish» (narx + izoh) yoki «❓ Savol bor» (so'rovchiga savol). ` +
+  `Narx berilmaguncha ish vaqtida eslatma keladi.\n` +
+  `📋 <b>${ui.BTN.myTasks}</b> — sizga berilgan topshiriqlar; bajarganingizni «${ui.BTN.done}» bilan belgilang.\n\n` +
+  `<i>Ish vaqti, «${ui.BTN.checkIn}» / «${ui.BTN.checkOut}», davomat va KPI siz uchun yo'q.</i>`;
+const isDeclOnly = (ctx) => !ctx.state.isAdmin && employees.isDeclarantOnly(ctx.state.employee);
+const declarantGate = (ctx, next) => {
+  const text = ctx.message && typeof ctx.message.text === 'string' ? ctx.message.text.trim() : '';
+  if (!text || !ctx.chat || ctx.chat.type !== 'private' || !isDeclOnly(ctx)) return next();
+  const cmd = text.startsWith('/') ? text.split(/[\s@]/)[0].toLowerCase() : null;
+  if (cmd === '/yordam' || cmd === '/help') return ctx.reply(HELP_DECLARANT, { parse_mode: 'HTML', ...ui.kbFor(ctx) });
+  if (cmd ? DECL_COMMANDS.has(cmd) : !MENU_TEXTS.has(text) || DECL_TEXTS.has(text)) return next();
+  return ctx.reply(`📑 Siz deklarantsiz — sizga faqat «${ui.BTN.prices}», «${ui.BTN.myTasks}» va «${ui.BTN.done}» ochiq.`, ui.kbFor(ctx));
+};
+
 const register = (bot) => {
   bot.use(legacyButtons);
   bot.use(dedupeCallbacks);
@@ -227,6 +246,7 @@ const register = (bot) => {
   bot.use(groupGuard);
   bot.use(menuResetsStep);
   bot.use(trackUsage);
+  bot.use(declarantGate);
   // jonli joylashuvi o'chiq agent — boshqa hech narsa ishlamaydi (7-okt)
   bot.use((ctx, next) => require('./live').guard(ctx, next));
   // ish kunida «Keldim» (yoki sabab) qilmagan hodim — boshqa hech narsa ishlamaydi (7-okt)
@@ -256,6 +276,7 @@ const register = (bot) => {
     if (!ctx.state.employee && ctx.state.isAdmin) await requests.closeFor(ctx.from.id, 'approved', ctx.from.id);
     activity.mark(ctx, 'start');
     await ctx.reply(welcome(ctx), { parse_mode: 'HTML', ...ui.kbFor(ctx) });
+    if (isDeclOnly(ctx)) return webapp.resetMenuFor({ telegram: ctx.telegram }, ctx.from.id); // deklarantga ilova yo'q
     if (webapp.enabled()) {
       await webapp.setMenuFor({ telegram: ctx.telegram }, ctx.from.id);
       await ctx.reply(WEBAPP_HINT, { parse_mode: 'HTML', ...webapp.keyboard('📱 Ilovani ochish') });

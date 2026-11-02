@@ -38,7 +38,7 @@ const syncMenus = async (bot) => {
   if (!enabled()) return 0;
   const employees = require('./employees');
   const ids = new Set(config.adminIds.map(Number));
-  for (const e of await employees.listActive()) ids.add(Number(e.tg_id));
+  for (const e of await employees.listActive()) if (!employees.isDeclarantOnly(e)) ids.add(Number(e.tg_id)); // deklarantga ilova yo'q
   let n = 0;
   for (const id of ids) {
     if (await setMenuFor(bot, id)) n += 1;

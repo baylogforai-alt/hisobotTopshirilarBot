@@ -50,10 +50,12 @@ const askRole = (ctx, add) => {
   session.set(ctx.from.id, { step: 'add_role', add });
   return ctx.reply(
     `🎖 <b>Roli?</b>\n\n👤 <b>Hodim</b> — topshiriq oladi, bajaradi.\n🎖 <b>Rahbar</b> (masalan sotuv rahbari) — o'z bo'limi hodimlariga topshiriq beradi, tekshiradi, baholaydi.\n` +
-      `🧑‍💼 <b>HR</b> — rahbar + barcha hodimlarning kelmaslik/kechikish xabarlarini oladi.\n👑 <b>Direktor</b> — hamma narsa.`,
+      `🧑‍💼 <b>HR</b> — rahbar + barcha hodimlarning kelmaslik/kechikish xabarlarini oladi.\n👑 <b>Direktor</b> — hamma narsa.\n` +
+      `📑 <b>Deklarant</b> — faqat narx so'rovlari va o'z topshiriqlari; ish vaqti, Keldim, davomat va KPI yo'q.`,
     { parse_mode: 'HTML', ...inline([
       [cb('👤 Hodim', 'ea:role:employee'), cb('🎖 Rahbar', 'ea:role:head')],
       [cb('🧑‍💼 HR', 'ea:role:hr'), cb('👑 Direktor', 'ea:role:admin')],
+      [cb('📑 Deklarant', 'ea:role:declarant')],
       [cb(ui.BTN.cancel, 'ea:cancel')],
     ]) },
   );
@@ -63,7 +65,7 @@ const summary = async (add) => {
   const dept = add.departmentId ? await departments.byId(add.departmentId) : null;
   return (
     `🆔 <code>${add.tgId}</code>${add.username ? ` (@${esc(add.username)})` : ''}\n` +
-    `👤 <b>${esc(add.fullName)}</b>\n💼 ${esc(add.position || '—')}\n🏢 ${esc(dept ? dept.name : "Bo'limsiz")}\n🎖 ${add.isHr ? 'HR' : employees.roleLabel(add.role)}`
+    `👤 <b>${esc(add.fullName)}</b>\n💼 ${esc(add.position || '—')}\n🏢 ${esc(dept ? dept.name : "Bo'limsiz")}\n🎖 ${add.isHr ? 'HR' : add.isDeclarant ? 'Deklarant' : employees.roleLabel(add.role)}`
   );
 };
 
@@ -77,7 +79,7 @@ const finish = async (ctx) => {
   if (!add || !add.tgId) return ctx.answerCbQuery('Sessiya eskirgan');
   const { employee, created } = await employees.add({
     tgId: add.tgId, fullName: add.fullName, position: add.position || null, role: add.role || 'employee',
-    departmentId: add.departmentId || null, username: add.username || null, isHr: Boolean(add.isHr),
+    departmentId: add.departmentId || null, username: add.username || null, isHr: Boolean(add.isHr), isDeclarant: Boolean(add.isDeclarant),
   });
   await requests.closeFor(add.tgId, 'approved', ctx.from.id);
   session.clear(ctx.from.id);
@@ -201,14 +203,16 @@ const register = (bot) => {
     return askRole(ctx, add);
   });
 
-  bot.action(/^ea:role:(employee|head|admin|hr)$/, async (ctx) => {
+  bot.action(/^ea:role:(employee|head|admin|hr|declarant)$/, async (ctx) => {
     if (!(await guard(ctx))) return;
     const { add } = session.get(ctx.from.id);
     if (!add) return ctx.answerCbQuery('Sessiya eskirgan');
     await ctx.answerCbQuery();
     add.isHr = ctx.match[1] === 'hr';
-    add.role = add.isHr ? 'head' : ctx.match[1];
+    add.isDeclarant = ctx.match[1] === 'declarant';
+    add.role = add.isHr ? 'head' : add.isDeclarant ? 'employee' : ctx.match[1];
     if (add.isHr && !add.position) add.position = 'HR';
+    if (add.isDeclarant && !add.position) add.position = 'Deklarant';
     return confirm(ctx, add);
   });
 
