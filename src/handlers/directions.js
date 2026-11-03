@@ -43,6 +43,8 @@ const dirsMenu = async (ctx) => {
   for (const b of await employees.listAdmins()) {
     if (!me || Number(b.id) !== Number(me.id)) rows.push([cb(`👑 ${b.full_name}ga (boshliq)`.slice(0, 50), `as:emp:${b.id}`)]);
   }
+  const decl = (await employees.listDeclarants()).filter((e) => !me || Number(e.id) !== Number(me.id));
+  if (decl.length) rows.push([cb(`📑 Deklarantlarga (${decl.length})`, 'as:decl')]);
   rows.push([cb('☑️ Bir nechta / hammaga', 'as:multi')]);
   rows.push([cb('👥 Rahbarlar orqali', 'as:mgrs'), cb(ui.BTN.cancel, 'as:cancel')]);
   return render(ctx, `📤 <b>Qaysi yo'nalish bo'yicha?</b>\n<i>Masalan: moliya bo'yicha savol, ta'minot bo'yicha topshiriq. Shaxsiy masala bo'lsa — «Shaxsiy».</i>`, inline(rows));

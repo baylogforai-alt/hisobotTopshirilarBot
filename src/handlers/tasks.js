@@ -236,6 +236,22 @@ const bossRows = async (ctx) => {
     .map((b) => [cb(`👑 ${b.full_name}ga (boshliq)`.slice(0, 50), `as:emp:${b.id}`)]);
 };
 
+/** «📑 Deklarantlarga» — direktor va HR uchun (deklarantlar «Rahbarsiz hodimlar» ichida emas) */
+const declarantRows = async (ctx) => {
+  const me = ctx.state.employee;
+  const list = (await employees.listDeclarants()).filter((e) => !me || Number(e.id) !== Number(me.id));
+  return list.length ? [[cb(`📑 Deklarantlarga (${list.length})`, 'as:decl')]] : [];
+};
+
+const pickDeclarants = async (ctx) => {
+  const me = ctx.state.employee;
+  const list = (await employees.listDeclarants()).filter((e) => !me || Number(e.id) !== Number(me.id));
+  if (!list.length) return render(ctx, "Deklarant yo'q — hodim kartochkasida «📑 Deklarant» ni yoqing.", ui.backKeyboard('as:start'));
+  const rows = list.map((e) => [cb(`📑 ${e.full_name}${e.position ? ` · ${e.position}` : ''}`.slice(0, 60), `as:emp:${e.id}`)]);
+  rows.push([cb('⬅️ Orqaga', 'as:start'), cb(ui.BTN.cancel, 'as:cancel')]);
+  return render(ctx, '📤 <b>Qaysi deklarantga?</b>', inline(rows));
+};
+
 /** Bir nechta hodimni belgilab — hammasiga bir xil topshiriq */
 const multiPick = picker.create({
   prefix: 'am',
@@ -266,6 +282,7 @@ const managersMenu = async (ctx) => {
     }
     const loose = await employees.listUnmanaged();
     if (loose.length) rows.push([cb(`👤 Rahbarsiz hodimlar (${loose.length})`, 'as:none')]);
+    rows.push(...(await declarantRows(ctx)));
     rows.push(...(await bossRows(ctx)));
     rows.push([cb("🧭 Yo'nalish bo'yicha", 'as:dirs'), cb('☑️ Bir nechta / hammaga', 'as:multi')]);
     rows.push([cb("🏢 Bo'lim bo'yicha", 'as:depts'), cb('👥 Hamma hodimlar', 'as:dept:0')], [cb(ui.BTN.cancel, 'as:cancel')]);
@@ -1041,6 +1058,7 @@ const register = (bot) => {
   bot.action('as:start', async (ctx) => { await ctx.answerCbQuery(); await startAssign(ctx); });
   bot.action(/^as:dept:(\d+)$/, async (ctx) => { if (!ctx.state.isAdmin && !ctx.state.isHr) return ctx.answerCbQuery('⛔️'); await ctx.answerCbQuery(); await pickDept(ctx, Number(ctx.match[1])); });
   bot.action(/^as:team:(\d+)$/, async (ctx) => { if (!ctx.state.isAdmin && !ctx.state.isHr) return ctx.answerCbQuery('⛔️'); await ctx.answerCbQuery(); await pickTeam(ctx, ctx.match[1]); });
+  bot.action('as:decl', async (ctx) => { if (!ctx.state.isAdmin && !ctx.state.isHr) return ctx.answerCbQuery('⛔️'); await ctx.answerCbQuery(); await pickDeclarants(ctx); });
   bot.action('as:none', async (ctx) => { if (!ctx.state.isAdmin && !ctx.state.isHr) return ctx.answerCbQuery('⛔️'); await ctx.answerCbQuery(); await pickUnmanaged(ctx); });
   bot.action('as:depts', async (ctx) => { if (!ctx.state.isAdmin && !ctx.state.isHr) return ctx.answerCbQuery('⛔️'); await ctx.answerCbQuery(); await pickDeptList(ctx); });
   bot.action('as:mgrs', async (ctx) => { if (!ctx.state.isAdmin && !ctx.state.isHr) return ctx.answerCbQuery('⛔️'); await ctx.answerCbQuery(); await managersMenu(ctx); });

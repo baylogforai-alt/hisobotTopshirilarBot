@@ -168,11 +168,11 @@ const teamOf = async (manager) => {
   if (!manager || !manager.department_id) return [];
   return (await listByDepartment(manager.department_id)).filter((e) => Number(e.id) !== Number(manager.id));
 };
-/** Rahbari yo'q hodimlar (bo'limsiz yoki bo'limida head yo'q), rahbar va direktorlardan tashqari */
+/** Rahbari yo'q hodimlar (bo'limsiz yoki bo'limida head yo'q), rahbar, direktor va deklarantlardan tashqari */
 const listUnmanaged = async () => {
   const heads = await listHeads();
   const covered = new Set(heads.filter((h) => h.department_id).map((h) => Number(h.department_id)));
-  return (await listActive()).filter((e) => e.role === 'employee' && !(e.department_id && covered.has(Number(e.department_id))));
+  return (await listActive()).filter((e) => e.role === 'employee' && !isDeclarantOnly(e) && !(e.department_id && covered.has(Number(e.department_id))));
 };
 
 const modeLabel = (emp) => (isField(emp) ? '🚶 Hudud (agent)' : '🏢 Ofis');

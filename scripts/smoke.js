@@ -1150,6 +1150,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const onMsg = sent.slice(mark).filter((s) => Number(s.payload.chat_id) === 50005 && s.method === 'sendMessage').pop();
   ok('deklarant: bayroq qo\'yilsa — deklarant xabari va qisqa menyu', Boolean(onMsg) && onMsg.payload.text.includes('deklarant') && !kbRows(onMsg).flat().includes('✅ Keldim'));
   ok("deklarant: rahbar/HR deklarant bo'lsa — oddiy menyusi qoladi", !employees.isDeclarantOnly({ ...nod, role: 'head' }) && !employees.isDeclarantOnly({ ...nod, is_hr: 1 }));
+  // «📤 Topshiriq berish» → «📑 Deklarantlarga»
+  await send(msg(1000, '📤 Topshiriq berish'));
+  ok('deklarant: topshiriq berish menyusida «📑 Deklarantlarga»', Boolean(findCb(1000, /^as:decl$/)) && lastText(1000).includes('Kimga topshiriq'));
+  ok("deklarant: «Rahbarsiz hodimlar» ichida emas", !(await employees.listUnmanaged()).some((e) => Number(e.id) === Number(nod.id)));
+  await send(cbq(1000, 'as:decl'));
+  ok("deklarant: «Deklarantlarga» — ro'yxatda deklarant", lastText(1000).includes('Qaysi deklarantga') && Boolean(findCb(1000, new RegExp(`^as:emp:${nod.id}$`))));
+  await send(cbq(1000, `as:emp:${nod.id}`));
+  ok('deklarant: tanlangach topshiriq matni so\'raladi', session.get(1000).step === 'assign_text' && Number(session.get(1000).assign.employeeId) === Number(nod.id));
+  session.clear(1000);
+  mark = sent.length; await send(cbq(50005, 'as:decl'));
+  ok('deklarant: «as:decl» oddiy hodimga yopiq', !allText(50005, mark).includes('Qaysi deklarantga'));
   await employees.deactivate(nod.id);
 
   await sleep(50);
