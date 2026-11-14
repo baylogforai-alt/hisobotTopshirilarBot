@@ -528,10 +528,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const xAtt = mkX.extras.find((x) => x.basis === 'attendance');
   const xMan = mkX.extras.find((x) => x.basis === 'manual');
   ok('qo\'shimcha KPI: qo\'shildi, summa × foiz',
-    xa.ok && xb.ok && mkX.extras.length === 2 && xAtt.recurring && !xMan.recurring
+    xa.ok && xb.ok && mkX.extras.filter((x) => !x.auto).length === 2 && xAtt.recurring && !xMan.recurring
       && xAtt.earned === Math.round((500000 * (xAtt.basisPct || 0)) / 100) && xMan.earned === 200000
-      && mkX.extrasTotal === xAtt.earned + xMan.earned && mkX.offDays && typeof mkX.offDays.total === 'number',
+      && mkX.extrasTotal === mkX.extras.reduce((s, x) => s + x.earned, 0) && mkX.offDays && typeof mkX.offDays.total === 'number',
     JSON.stringify(mkX.extras));
+  // 13-noy: avtomat davomat KPI — kerakli kun vaqtida kelsa to'liq summa, aks holda 0 (bazada saqlanmaydi)
+  {
+    const kxs = require('../src/services/kpiExtras');
+    const cfgA = require('../src/config');
+    const auto = mkX.extras.find((x) => x.auto);
+    const a = kxs.autoAttendance(cfgA.attBonusFrom);
+    const full = kxs.withEarned({ ontime_days: cfgA.attBonusDays, status: 'draft' }, [a]);
+    const short = kxs.withEarned({ ontime_days: cfgA.attBonusDays - 1, status: 'draft' }, [a]);
+    const excl = kxs.withEarned({ ontime_days: 30, status: 'excluded' }, [a]);
+    ok("davomat KPI: avtomat qator, kun to'lsa to'liq, bo'lmasa 0, chiqarilgan oyda 0, boshlanishdan oldin yo'q",
+      (curM < cfgA.attBonusFrom ? !auto : Boolean(auto) && auto.basis === 'ontime_days' && auto.earned === (auto.have >= auto.days ? auto.amount : 0))
+        && full.total === cfgA.attBonusAmount && short.total === 0 && excl.total === 0
+        && kxs.autoAttendance(time.shiftMonth(cfgA.attBonusFrom, -1)) === null,
+      JSON.stringify({ auto, full: full.total, short: short.total }));
+  }
   ok('qo\'shimcha KPI: noto\'g\'ri asos / summa / foiz / nomsiz — rad',
     (await crmKpi.extraFromCrm({ action: 'add', employeeId: akbar.id, title: 'x', basis: 'pul', amount: 1 })).error === 'bad_basis'
       && (await crmKpi.extraFromCrm({ action: 'add', employeeId: akbar.id, title: 'x', basis: 'total', amount: 0 })).error === 'bad_amount'

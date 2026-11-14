@@ -150,6 +150,11 @@ const config = {
   kpiMaxAbsent: num(process.env.KPI_MAX_ABSENT, 0),      // sababsiz kelmagan kunlar
   kpiMaxMissedTasks: num(process.env.KPI_MAX_MISSED_TASKS, 0), // muddatida bajarilmagan topshiriqlar
   kpiExcusedOk: bool(process.env.KPI_EXCUSED_OK, true),  // tasdiqlangan sababli kun KPI ga zarar qilmaydi
+  // Davomat KPI (13-noy, direktor): oyda vaqtida kelgan kun >= attBonusDays bo'lsa attBonusAmount, aks holda 0.
+  // Botdagi hamma hodimga avtomat, attBonusFrom oyidan (o'tgan oylar o'zgarmaydi). 0 — o'chiq.
+  attBonusAmount: num(process.env.ATT_BONUS_AMOUNT, 1000000),
+  attBonusDays: num(process.env.ATT_BONUS_DAYS, 25),
+  attBonusFrom: str(process.env.ATT_BONUS_FROM) || '2026-11',
 
   dbPath: path.resolve(process.env.DB_PATH || path.join(__dirname, '..', 'data', 'bot.db')),
   backupKeep: num(process.env.BACKUP_KEEP, 14),

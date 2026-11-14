@@ -1,5 +1,6 @@
 'use strict';
 
+const config = require('../config');
 const db = require('../db');
 const time = require('../time');
 const { partPct } = require('./kpi');
@@ -19,6 +20,7 @@ const { partPct } = require('./kpi');
 
 const BASES = ['tasks', 'attendance', 'head', 'custom', 'total', 'manual'];
 const BASIS_LABEL = {
+  ontime_days: 'vaqtida kelgan kun',
   tasks: 'topshiriq %', attendance: 'davomat %', head: 'boshliq bahosi', custom: 'mezon %', total: 'jami KPI %', manual: 'belgilangan %',
 };
 
@@ -41,6 +43,8 @@ const basisPct = (k, x) => {
     case 'custom': return part(n(k && k.custom_pct));
     case 'total': return n(k && k.total);
     case 'manual': return n(x.pct);
+    // avtomat davomat KPI: kerakli kun to'lsa 100%, aks holda 0
+    case 'ontime_days': return k ? (Number(k.ontime_days) >= Number(x.days) ? 100 : 0) : null;
     default: return null;
   }
 };
@@ -51,13 +55,31 @@ const withEarned = (k, items) => {
   const list = items.map((x) => {
     const pct = basisPct(k, x);
     const earned = excluded || pct === null ? 0 : Math.round((Number(x.amount) * Math.max(0, Math.min(100, pct))) / 100);
-    return { ...x, basisPct: pct, earned };
+    const have = x.basis === 'ontime_days' && k ? Number(k.ontime_days) || 0 : undefined;
+    return { ...x, basisPct: pct, earned, ...(have === undefined ? {} : { have }) };
   });
   return { list, total: list.reduce((s, x) => s + x.earned, 0) };
 };
 
+/**
+ * Avtomat davomat KPI (13-noy, direktor: «25 kun to'liq vaqtida kelsa 1 mln, bo'lmasa KPI yo'q»):
+ * bazada saqlanmaydi, har hisobda shu oy uchun qo'shiladi. Kech kelgan va sababli kunlar sanalmaydi.
+ */
+const autoAttendance = (month) => {
+  const amount = Number(config.attBonusAmount) || 0;
+  const days = Number(config.attBonusDays) || 0;
+  if (amount <= 0 || days <= 0 || !time.isValidMonth(month) || month < config.attBonusFrom) return null;
+  return {
+    id: 'auto_att', title: `Davomat (${days} kun vaqtida)`, basis: 'ontime_days', amount, days, pct: null,
+    month: null, start_month: config.attBonusFrom, auto: true,
+  };
+};
+
 /** Bir oy uchun: qatorlar va jami (k — kpi_monthly qatori yoki preview) */
-const forKpi = async (employeeId, month, k) => withEarned(k, await forMonth(employeeId, month));
+const forKpi = async (employeeId, month, k) => {
+  const auto = autoAttendance(month);
+  return withEarned(k, [...(auto ? [auto] : []), ...(await forMonth(employeeId, month))]);
+};
 
 const add = async ({ employeeId, month, title, basis, amount, pct = null, recurring = false, by = null }) => {
   const t = String(title || '').replace(/\s+/g, ' ').trim().slice(0, 80);
@@ -93,6 +115,8 @@ const remove = async ({ id, employeeId, month, by = null }) => {
 
 /** Bot matnlari uchun qator (HTML): «➕ Davomat uchun: 500 000 so'm × davomat % 80% = 400 000 so'm» */
 const lineText = (x, fmtMoney, esc) =>
-  `➕ ${esc(x.title)}: ${fmtMoney(x.amount)} × ${BASIS_LABEL[x.basis] || x.basis}${x.basisPct === null ? ' (kiritilmagan)' : ` ${x.basisPct}%`} = <b>${fmtMoney(x.earned)}</b>${x.month ? '' : ' · har oy'}`;
+  x.basis === 'ontime_days'
+    ? `➕ ${esc(x.title)}: ${fmtMoney(x.amount)} — ${x.have ?? 0}/${x.days} kun ${x.basisPct === 100 ? '✅' : '❌'} = <b>${fmtMoney(x.earned)}</b> · avtomat`
+    : `➕ ${esc(x.title)}: ${fmtMoney(x.amount)} × ${BASIS_LABEL[x.basis] || x.basis}${x.basisPct === null ? ' (kiritilmagan)' : ` ${x.basisPct}%`} = <b>${fmtMoney(x.earned)}</b>${x.month ? '' : ' · har oy'}`;
 
-module.exports = { BASES, BASIS_LABEL, forMonth, forKpi, withEarned, basisPct, add, remove, byId, lineText };
+module.exports = { BASES, autoAttendance, BASIS_LABEL, forMonth, forKpi, withEarned, basisPct, add, remove, byId, lineText };

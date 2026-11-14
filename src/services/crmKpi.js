@@ -92,6 +92,7 @@ const monthKpi = async (monthRaw) => {
       extras: ex.list.map((x) => ({
         id: String(x.id), title: x.title, basis: x.basis, amount: num(x.amount), pct: num(x.pct),
         recurring: !x.month, startMonth: x.start_month, basisPct: x.basisPct, earned: x.earned,
+        ...(x.auto ? { auto: true, days: num(x.days), have: num(x.have) } : {}),
       })),
       extrasTotal: ex.total,
       // Dam olish kuniga chaqiruv — ishlangan kunlar (qat'iy summa, extradays)
@@ -178,7 +179,7 @@ const extraFromCrm = async (body = {}) => {
   console.log(`[crm] qo'shimcha KPI ${body.action}: ${emp.full_name} ${month} ${JSON.stringify({ id: r.id || body.id, title: body.title, basis: body.basis, amount: body.amount, pct: body.pct, recurring: body.recurring, by })}`);
   const k = await kpi.preview(await employees.byId(emp.id), month);
   const ex = await kpiExtras.forKpi(emp.id, month, k);
-  return { ok: true, id: r.id ? String(r.id) : undefined, extrasTotal: ex.total, count: ex.list.length };
+  return { ok: true, id: r.id ? String(r.id) : undefined, extrasTotal: ex.total, count: ex.list.filter((x) => !x.auto).length };
 };
 
 module.exports = { monthKpi, setFromCrm, extraFromCrm };
