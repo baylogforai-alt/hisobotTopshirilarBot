@@ -683,7 +683,7 @@ const CHECKOUT_PROMPT = `🏁 <b>Ishdan ketyapsizmi?</b>\n\n1) Pastdagi «${ui.B
 const earlyLeaveMinutes = (emp, at = time.stamp()) => {
   if (!emp || employees.isFlexible(emp) || !time.isWorkDay(String(at).slice(0, 10))) return 0;
   const now = time.minutesOfDay(at);
-  const end = employees.endMinutesOf(emp);
+  const end = employees.endMinutesOf(emp, String(at).slice(0, 10));
   return now !== null && now < end ? end - now : 0;
 };
 

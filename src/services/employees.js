@@ -106,10 +106,38 @@ const startMinutesOf = (emp) => {
 
 /** Alohida ish tugashi ('HH:mm', null — umumiy WORK_END_HOUR) — boshliq kartochkadan qo'yadi */
 const setWorkEnd = (id, hhmm) => db.query('UPDATE employees SET work_end = $1 WHERE id = $2', [hhmm || null, Number(id)]);
-const workEndOf = (emp) => (emp && /^\d{2}:\d{2}$/.test(String(emp.work_end || '')) ? emp.work_end : `${String(config.workEndHour).padStart(2, '0')}:00`);
+/** Hafta kuni bo'yicha ish tugashi: JSON {"2":"14:30"} (kalit — ISO hafta kuni 1=Du..7=Ya) */
+const setWorkEndDays = (id, map) => db.query('UPDATE employees SET work_end_days = $1 WHERE id = $2', [map && Object.keys(map).length ? JSON.stringify(map) : null, Number(id)]);
+const WEEKDAY_SHORT = ['Du', 'Se', 'Chor', 'Pay', 'Ju', 'Sha', 'Ya'];
+/** "2,4,6=14:30" → {"2":"14:30",...}; noto'g'ri kun yoki vaqt — null */
+const parseWorkEndDays = (text) => {
+  const m = String(text || '').trim().match(/^([1-7](?:\s*,\s*[1-7])*)\s*=\s*(\d{1,2}[:.]\d{2})$/);
+  if (!m) return null;
+  const hhmm = parseWorkStart(m[2]);
+  if (!hhmm) return null;
+  const out = {};
+  for (const d of m[1].split(',')) out[d.trim()] = hhmm;
+  return out;
+};
+const workEndDaysOf = (emp) => {
+  try { const o = JSON.parse(emp && emp.work_end_days ? emp.work_end_days : 'null'); return o && typeof o === 'object' ? o : {}; } catch { return {}; }
+};
+const workEndOf = (emp, date = time.today()) => {
+  const wd = emp ? workEndDaysOf(emp)[String(time.isoWeekday(date))] : null;
+  if (wd && /^\d{2}:\d{2}$/.test(wd)) return wd;
+  return emp && /^\d{2}:\d{2}$/.test(String(emp.work_end || '')) ? emp.work_end : `${String(config.workEndHour).padStart(2, '0')}:00`;
+};
+/** Kartochka uchun: "17:30 · Se/Pay/Sha 14:30" (kunlar bo'yicha guruhlangan) */
+const workEndLabel = (emp) => {
+  const base = emp && /^\d{2}:\d{2}$/.test(String(emp.work_end || '')) ? emp.work_end : `${String(config.workEndHour).padStart(2, '0')}:00 (umumiy)`;
+  const groups = {};
+  for (const [d, v] of Object.entries(workEndDaysOf(emp))) (groups[v] = groups[v] || []).push(Number(d));
+  const extra = Object.entries(groups).map(([v, ds]) => `${ds.sort((a, b) => a - b).map((d) => WEEKDAY_SHORT[d - 1]).join('/')} ${v}`);
+  return [base, ...extra].join(' · ');
+};
 /** Hodimning ish tugashi — kun boshidan daqiqalarda */
-const endMinutesOf = (emp) => {
-  const [h, m] = workEndOf(emp).split(':').map(Number);
+const endMinutesOf = (emp, date = time.today()) => {
+  const [h, m] = workEndOf(emp, date).split(':').map(Number);
   return h * 60 + m;
 };
 
@@ -286,7 +314,7 @@ const mention = (e) => (e.username ? `@${e.username}` : e.full_name);
 
 module.exports = {
   ROLES, byTgId, byId, listActive, listStaff, isBoss, isStaff, listAll, listByDepartment, listWithoutDepartment, listAdmins, listHeads,
-  add, ensureMany, deactivate, activate, setRole, setPosition, rename, setDepartment, setBonusFund, setWorkStart, parseWorkStart, startMinutesOf, setWorkEnd, workEndOf, endMinutesOf, setFlexible, isFlexible,
+  add, ensureMany, deactivate, activate, setRole, setPosition, rename, setDepartment, setBonusFund, setWorkStart, parseWorkStart, startMinutesOf, setWorkEnd, setWorkEndDays, parseWorkEndDays, workEndDaysOf, workEndLabel, workEndOf, endMinutesOf, setFlexible, isFlexible,
   isHr, setHr, listHr, wantsDoneNotify, setNotifyDone, attendanceWatchersOf, doneReviewersOf, isViewer, setViewer, isDeclarant, isDeclarantOnly, setDeclarant, canAskPrice, setCanAskPrice, listDeclarants, contactHtml, titleOf, personIcon, teamOf, listUnmanaged,
   setBranch, setWorkMode, isField, setHome, clearHome, homeOf, setVideoRequired, needsCheckinVideo, setSalary, modeLabel,
   touchUsername, isAdminId, isAdmin, isHead, canManage, reviewersOf, deptHeadIdsOf, bossTgIds, isTop, roleLabel, mention,

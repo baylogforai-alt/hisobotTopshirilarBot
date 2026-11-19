@@ -103,7 +103,7 @@ const employeeCard = async (ctx, id) => {
     `🏙 ${esc(e.branch_name || 'Asosiy ofis')} · ${employees.modeLabel(e)} · 🎥 Keldim videosi: ${employees.needsCheckinVideo(e) ? 'majburiy' : "yo'q/ixtiyoriy"}` +
     (employees.isField(e) ? `\n🏠 Uy joylashuvi: ${employees.homeOf(e) ? mapLink(e.home_lat, e.home_lon) : '<i>belgilanmagan</i>'}` : '') + '\n' +
     `💵 Oklad: <b>${kpi.fmtMoney(e.salary)}</b> · 🏆 KPI summasi (bonus fondi): <b>${kpi.fmtMoney(e.bonus_fund)}</b>\n` +
-    `🕘 Ish boshlanishi: <b>${e.work_start || `${worktime.get()} (umumiy)`}</b> · 🏁 tugashi: <b>${e.work_end || `${employees.workEndOf(null)} (umumiy)`}</b>\n${ui.LINE}\n` +
+    `🕘 Ish boshlanishi: <b>${e.work_start || `${worktime.get()} (umumiy)`}</b> · 🏁 tugashi: <b>${employees.workEndLabel(e)}</b>\n${ui.LINE}\n` +
     `Bugun: ${todayLabel}${(await dailyReports.get(e.id)) ? ' · 📝 hisobot topshirgan' : ''}\n` +
     `📋 Shu oy: ${ts.ontime}/${ts.total} muddatida (${ts.pct}%)${ts.overdue ? ` · 🔴 ${ts.overdue}` : ''} · ⏳ ochiq ${open.length}\n` +
     `🕘 Davomat: ${at.ontime}/${at.workDays} vaqtida (${at.pct}%)${at.late ? ` · 🟡 ${at.late}` : ''}${at.absent ? ` · 🔴 ${at.absent}` : ''}${at.excused ? ` · 📄 ${at.excused}` : ''}`;
@@ -178,11 +178,21 @@ const handleEmpText = async (ctx, field) => {
     }
   }
   if (field === 'work_end') {
-    if (/^(standart|umumiy|0|-)$/i.test(text) || text === ui.BTN.skip) await employees.setWorkEnd(s.empId, null);
+    if (/^(standart|umumiy|0|-)$/i.test(text) || text === ui.BTN.skip) { await employees.setWorkEnd(s.empId, null); await employees.setWorkEndDays(s.empId, null); }
     else {
-      const hhmm = employees.parseWorkStart(text);
-      if (!hhmm) { session.set(ctx.from.id, { step: 'edit_work_end', empId: s.empId }); return ctx.reply("Vaqtni HH:mm ko'rinishida yozing (masalan 19:00). Umumiy vaqtga qaytarish — «standart».", ui.cancelKeyboard()); }
-      await employees.setWorkEnd(s.empId, hhmm);
+      // "17:30; 2,4,6=14:30" — birinchi qism umumiy tugash (ixtiyoriy), qolganlari "kunlar=vaqt"
+      const parts = String(text).split(';').map((p) => p.trim()).filter(Boolean);
+      let base = null;
+      let days = {};
+      let bad = !parts.length;
+      for (const p of parts) {
+        if (p.includes('=')) { const d = employees.parseWorkEndDays(p); if (d) Object.assign(days, d); else bad = true; }
+        else if (!base && !Object.keys(days).length) { base = employees.parseWorkStart(p); if (!base) bad = true; }
+        else bad = true;
+      }
+      if (bad) { session.set(ctx.from.id, { step: 'edit_work_end', empId: s.empId }); return ctx.reply("Vaqtni HH:mm ko'rinishida yozing (masalan 19:00). Hafta kuni bo'yicha: <code>17:30; 2,4,6=14:30</code> (1=Du … 7=Ya). Umumiy vaqtga qaytarish — «standart».", { parse_mode: 'HTML', ...ui.cancelKeyboard() }); }
+      if (base) await employees.setWorkEnd(s.empId, base);
+      await employees.setWorkEndDays(s.empId, days);
     }
   }
   if (field === 'present_date') {
@@ -975,7 +985,7 @@ const register = (bot) => {
     if (await guard(ctx)) { await ctx.answerCbQuery(); await askText(ctx, 'edit_work_start', ctx.match[1], `🕘 Bu hodim uchun ish boshlanish vaqti (masalan <b>10:00</b>). Kechikish shu vaqt + ${config.lateGraceMinutes} daq dan hisoblanadi.\nUmumiy vaqtga (${worktime.get()}) qaytarish — <b>standart</b> deb yozing.`); }
   });
   bot.action(/^emp:end:(\d+)$/, async (ctx) => {
-    if (await guard(ctx)) { await ctx.answerCbQuery(); await askText(ctx, 'edit_work_end', ctx.match[1], `🏁 Bu hodim uchun ish tugash vaqti (masalan <b>19:00</b>). Undan oldin «Ketdim» bossa — «⚠️ erta ketdi» belgisi bilan rahbar va HR ga boradi.\nUmumiy vaqtga (${employees.workEndOf(null)}) qaytarish — <b>standart</b> deb yozing.`); }
+    if (await guard(ctx)) { await ctx.answerCbQuery(); await askText(ctx, 'edit_work_end', ctx.match[1], `🏁 Bu hodim uchun ish tugash vaqti (masalan <b>19:00</b>). Undan oldin «Ketdim» bossa — «⚠️ erta ketdi» belgisi bilan rahbar va HR ga boradi.\nHafta kuni bo'yicha: <code>17:30; 2,4,6=14:30</code> (1=Du … 7=Ya). Umumiy vaqtga (${employees.workEndOf(null)}) qaytarish — <b>standart</b> deb yozing.`); }
   });
   bot.action(/^emp:excuse:(\d+)$/, async (ctx) => { if (await guard(ctx)) { await ctx.answerCbQuery(); await askText(ctx, 'excuse_date', ctx.match[1], '📄 Qaysi kun sababli? Sanani yozing (masalan 15.09):'); } });
   // guard yo'q — bo'lim rahbari ham belgilaydi (huquq: access.canMarkPresent)

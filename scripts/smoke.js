@@ -828,6 +828,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok("narx: Samandar fix ro'yxatda", require('../src/fixes').FIXES.some((f) => f.id === 'samandar-narx-20261031' && f.action === 'askPrice' && f.match({ tg_id: 8254184544 })));
   ok('narx: jadvallar bor', (await db.count('SELECT COUNT(*) AS c FROM price_requests')) === 0 && (await db.count('SELECT COUNT(*) AS c FROM price_request_msgs')) === 0);
 
+  {
+    // hafta kuni bo'yicha ish tugashi
+    ok('ish tugashi: parseWorkEndDays', JSON.stringify(employees.parseWorkEndDays('2,4,6=14:30')) === '{"2":"14:30","4":"14:30","6":"14:30"}'
+      && employees.parseWorkEndDays('8=14:30') === null && employees.parseWorkEndDays('2=25:00') === null && employees.parseWorkEndDays('x') === null);
+    const we = { work_end: '17:30', work_end_days: '{"2":"14:30"}' };
+    ok('ish tugashi: seshanba 14:30, dushanba 17:30', employees.workEndOf(we, '2026-11-24') === '14:30' && employees.workEndOf(we, '2026-11-23') === '17:30'
+      && employees.endMinutesOf(we, '2026-11-24') === 14 * 60 + 30 && employees.workEndOf(null, '2026-11-24') === employees.workEndOf(null));
+    ok('ish tugashi: karta yozuvi', employees.workEndLabel({ work_end: '17:30', work_end_days: '{"2":"14:30","4":"14:30","6":"14:30"}' }) === '17:30 · Se/Pay/Sha 14:30');
+    ok('ish tugashi: erta ketish hafta kuni bilan', require('../src/services/flows').earlyLeaveMinutes(we, '2026-11-24T14:00:00+05:00') === 30 && require('../src/services/flows').earlyLeaveMinutes(we, '2026-11-23T14:00:00+05:00') === 210);
+  }
   const pr = require('../src/services/priceRequests');
   const t0 = time.now().set({ hour: 10, minute: 0, second: 0, millisecond: 0 });
   ok('narx svc: dueAtFor', pr.dueAtFor('1h', t0) === t0.plus({ minutes: 60 }).toISO() && pr.dueAtFor('none', t0) === null

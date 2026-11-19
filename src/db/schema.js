@@ -593,6 +593,7 @@ const MIGRATIONS = [
   col('employees', 'bonus_fund', 'INTEGER'),
   col('employees', 'work_start', 'TEXT'),
   col('employees', 'work_end', 'TEXT'),
+  col('employees', 'work_end_days', 'TEXT'),
   col('employees', 'flexible', 'INTEGER NOT NULL DEFAULT 0'),
   col('kpi_monthly', 'tasks_returned', 'INTEGER NOT NULL DEFAULT 0'),
   col('kpi_monthly', 'fund_manual', 'INTEGER NOT NULL DEFAULT 0'),

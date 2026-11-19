@@ -77,6 +77,7 @@ const weekdayShort = (dateStr) => UZ_SHORT[dt(dateStr).weekday - 1];
 
 /** Dam olish kunimi (yakshanba) */
 const isSunday = (dateStr) => dt(dateStr).weekday === 7;
+const isoWeekday = (dateStr) => dt(dateStr).weekday;
 
 /** 'sentabr 2026' — kalendar sarlavhasi */
 const monthLabel = (dateStr) => {
@@ -193,7 +194,7 @@ const workDaysBetween = (from, to, upTo = today()) => {
 module.exports = {
   TZ, now, today, stamp, stampOf, stampAt, clock, minutesOfDay, addDays, diffDays, prettyDate, isWorkHours,
   startOfMonth, endOfMonth, startOfWeek, endOfWeek, addMonths, daysIn,
-  shortDate, weekdayShort, isSunday, monthLabel, prettyRange, isValidDate, parseDate,
+  shortDate, weekdayShort, isoWeekday, isSunday, monthLabel, prettyRange, isValidDate, parseDate,
   prettyDuration, hhmm, UZ_MONTHS, UZ_SHORT, UZ_WEEKDAYS,
   month, monthOf, monthRange, shiftMonth, prevMonth, monthName, isValidMonth, isWorkDay, workDaysBetween,
 };
