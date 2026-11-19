@@ -119,6 +119,19 @@ const parseWorkEndDays = (text) => {
   for (const d of m[1].split(',')) out[d.trim()] = hhmm;
   return out;
 };
+/** "17:30; 2,4,6=14:30" -> {base, days, bad}. days is null when no "kunlar=vaqt" group was given (plain time keeps saved weekday overrides). */
+const parseWorkEndInput = (text) => {
+  const parts = String(text).split(';').map((p) => p.trim()).filter(Boolean);
+  let base = null;
+  let days = null;
+  let bad = !parts.length;
+  for (const p of parts) {
+    if (p.includes('=')) { const d = parseWorkEndDays(p); if (d) days = Object.assign(days || {}, d); else bad = true; }
+    else if (!base && !days) { base = parseWorkStart(p); if (!base) bad = true; }
+    else bad = true;
+  }
+  return { base, days, bad };
+};
 const workEndDaysOf = (emp) => {
   try { const o = JSON.parse(emp && emp.work_end_days ? emp.work_end_days : 'null'); return o && typeof o === 'object' ? o : {}; } catch { return {}; }
 };
@@ -314,7 +327,7 @@ const mention = (e) => (e.username ? `@${e.username}` : e.full_name);
 
 module.exports = {
   ROLES, byTgId, byId, listActive, listStaff, isBoss, isStaff, listAll, listByDepartment, listWithoutDepartment, listAdmins, listHeads,
-  add, ensureMany, deactivate, activate, setRole, setPosition, rename, setDepartment, setBonusFund, setWorkStart, parseWorkStart, startMinutesOf, setWorkEnd, setWorkEndDays, parseWorkEndDays, workEndDaysOf, workEndLabel, workEndOf, endMinutesOf, setFlexible, isFlexible,
+  add, ensureMany, deactivate, activate, setRole, setPosition, rename, setDepartment, setBonusFund, setWorkStart, parseWorkStart, startMinutesOf, setWorkEnd, setWorkEndDays, parseWorkEndDays, parseWorkEndInput, workEndDaysOf, workEndLabel, workEndOf, endMinutesOf, setFlexible, isFlexible,
   isHr, setHr, listHr, wantsDoneNotify, setNotifyDone, attendanceWatchersOf, doneReviewersOf, isViewer, setViewer, isDeclarant, isDeclarantOnly, setDeclarant, canAskPrice, setCanAskPrice, listDeclarants, contactHtml, titleOf, personIcon, teamOf, listUnmanaged,
   setBranch, setWorkMode, isField, setHome, clearHome, homeOf, setVideoRequired, needsCheckinVideo, setSalary, modeLabel,
   touchUsername, isAdminId, isAdmin, isHead, canManage, reviewersOf, deptHeadIdsOf, bossTgIds, isTop, roleLabel, mention,

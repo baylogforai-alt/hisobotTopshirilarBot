@@ -832,6 +832,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     // hafta kuni bo'yicha ish tugashi
     ok('ish tugashi: parseWorkEndDays', JSON.stringify(employees.parseWorkEndDays('2,4,6=14:30')) === '{"2":"14:30","4":"14:30","6":"14:30"}'
       && employees.parseWorkEndDays('8=14:30') === null && employees.parseWorkEndDays('2=25:00') === null && employees.parseWorkEndDays('x') === null);
+    {
+      const plain = employees.parseWorkEndInput('19:00');
+      const both = employees.parseWorkEndInput('17:30; 2,4=14:30');
+      ok('ish tugashi: oddiy vaqt kunlarni tegmaydi', plain.base === '19:00' && plain.days === null && !plain.bad
+        && both.base === '17:30' && JSON.stringify(both.days) === '{"2":"14:30","4":"14:30"}' && !both.bad
+        && employees.parseWorkEndInput('x').bad && employees.parseWorkEndInput('14:30=2').bad);
+    }
     const we = { work_end: '17:30', work_end_days: '{"2":"14:30"}' };
     ok('ish tugashi: seshanba 14:30, dushanba 17:30', employees.workEndOf(we, '2026-11-24') === '14:30' && employees.workEndOf(we, '2026-11-23') === '17:30'
       && employees.endMinutesOf(we, '2026-11-24') === 14 * 60 + 30 && employees.workEndOf(null, '2026-11-24') === employees.workEndOf(null));

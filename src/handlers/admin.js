@@ -181,18 +181,10 @@ const handleEmpText = async (ctx, field) => {
     if (/^(standart|umumiy|0|-)$/i.test(text) || text === ui.BTN.skip) { await employees.setWorkEnd(s.empId, null); await employees.setWorkEndDays(s.empId, null); }
     else {
       // "17:30; 2,4,6=14:30" — birinchi qism umumiy tugash (ixtiyoriy), qolganlari "kunlar=vaqt"
-      const parts = String(text).split(';').map((p) => p.trim()).filter(Boolean);
-      let base = null;
-      let days = {};
-      let bad = !parts.length;
-      for (const p of parts) {
-        if (p.includes('=')) { const d = employees.parseWorkEndDays(p); if (d) Object.assign(days, d); else bad = true; }
-        else if (!base && !Object.keys(days).length) { base = employees.parseWorkStart(p); if (!base) bad = true; }
-        else bad = true;
-      }
-      if (bad) { session.set(ctx.from.id, { step: 'edit_work_end', empId: s.empId }); return ctx.reply("Vaqtni HH:mm ko'rinishida yozing (masalan 19:00). Hafta kuni bo'yicha: <code>17:30; 2,4,6=14:30</code> (1=Du … 7=Ya). Umumiy vaqtga qaytarish — «standart».", { parse_mode: 'HTML', ...ui.cancelKeyboard() }); }
+      const { base, days, bad } = employees.parseWorkEndInput(text);
+      if (bad) { session.set(ctx.from.id, { step: 'edit_work_end', empId: s.empId }); return ctx.reply("Vaqtni HH:mm ko'rinishida yozing (masalan 19:00). Hafta kuni bo'yicha: <code>17:30; 2,4,6=14:30</code> (1=Du … 7=Ya; faqat vaqt yozilsa — kunlar bo'yicha vaqt saqlanadi). Umumiy vaqtga qaytarish — «standart».", { parse_mode: 'HTML', ...ui.cancelKeyboard() }); }
       if (base) await employees.setWorkEnd(s.empId, base);
-      await employees.setWorkEndDays(s.empId, days);
+      if (days) await employees.setWorkEndDays(s.empId, days); // plain time keeps weekday overrides
     }
   }
   if (field === 'present_date') {
