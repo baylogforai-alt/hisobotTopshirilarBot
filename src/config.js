@@ -155,6 +155,10 @@ const config = {
   attBonusAmount: num(process.env.ATT_BONUS_AMOUNT, 1000000),
   attBonusDays: num(process.env.ATT_BONUS_DAYS, 25),
   attBonusFrom: str(process.env.ATT_BONUS_FROM) || '2026-11',
+  // Vazifa KPI (19-noy, direktor): oyda muddati kelgan hamma topshiriq vaqtida bajarilib qabul qilingan bo'lsa taskBonusAmount,
+  // bittasi kech/bajarilmagan bo'lsa yoki topshiriq bo'lmasa 0. taskBonusFrom oyidan, hamma hodimga avtomat. 0 — o'chiq.
+  taskBonusAmount: num(process.env.TASK_BONUS_AMOUNT, 500000),
+  taskBonusFrom: str(process.env.TASK_BONUS_FROM) || '2026-11',
 
   dbPath: path.resolve(process.env.DB_PATH || path.join(__dirname, '..', 'data', 'bot.db')),
   backupKeep: num(process.env.BACKUP_KEEP, 14),

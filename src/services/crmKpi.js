@@ -92,7 +92,7 @@ const monthKpi = async (monthRaw) => {
       extras: ex.list.map((x) => ({
         id: String(x.id), title: x.title, basis: x.basis, amount: num(x.amount), pct: num(x.pct),
         recurring: !x.month, startMonth: x.start_month, basisPct: x.basisPct, earned: x.earned,
-        ...(x.auto ? { auto: true, days: num(x.days), have: num(x.have) } : {}),
+        ...(x.auto ? { auto: true, days: num(x.days), have: num(x.have), need: num(x.need) } : {}),
       })),
       extrasTotal: ex.total,
       // Dam olish kuniga chaqiruv — ishlangan kunlar (qat'iy summa, extradays)

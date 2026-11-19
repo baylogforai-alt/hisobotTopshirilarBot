@@ -547,6 +547,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         && kxs.autoAttendance(time.shiftMonth(cfgA.attBonusFrom, -1)) === null,
       JSON.stringify({ auto, full: full.total, short: short.total }));
   }
+  // 19-noy: oylik vazifa bonusi — hamma topshiriq vaqtida qabul qilingan bo'lsa to'liq summa, bittasi kech bo'lsa 0
+  {
+    const kxs = require('../src/services/kpiExtras');
+    const cfgT = require('../src/config');
+    const t = kxs.autoTasks(cfgT.taskBonusFrom);
+    const all = kxs.withEarned({ tasks_total: 3, tasks_ontime: 3, status: 'draft' }, [t]);
+    const late = kxs.withEarned({ tasks_total: 3, tasks_ontime: 2, status: 'draft' }, [t]);
+    const none = kxs.withEarned({ tasks_total: 0, tasks_ontime: 0, status: 'draft' }, [t]);
+    const excl = kxs.withEarned({ tasks_total: 3, tasks_ontime: 3, status: 'excluded' }, [t]);
+    ok("vazifa bonusi: hammasi vaqtida — to'liq, bittasi kech — 0, vazifa yo'q — 0, boshlanishdan oldin yo'q",
+      kxs.basisPct({ tasks_total: 3, tasks_ontime: 3 }, { basis: 'ontime_tasks' }) === 100
+        && kxs.basisPct({ tasks_total: 3, tasks_ontime: 2 }, { basis: 'ontime_tasks' }) === 0
+        && kxs.basisPct({ tasks_total: 0, tasks_ontime: 0 }, { basis: 'ontime_tasks' }) === 0
+        && kxs.basisPct(null, { basis: 'ontime_tasks' }) === null
+        && all.total === cfgT.taskBonusAmount && late.total === 0 && none.total === 0 && excl.total === 0
+        && all.list[0].have === 3 && all.list[0].need === 3 && late.list[0].have === 2
+        && kxs.autoTasks(time.shiftMonth(cfgT.taskBonusFrom, -1)) === null && t.id === 'auto_tasks' && t.basis === 'ontime_tasks',
+      JSON.stringify({ all: all.total, late: late.total, none: none.total }));
+  }
   ok('qo\'shimcha KPI: noto\'g\'ri asos / summa / foiz / nomsiz — rad',
     (await crmKpi.extraFromCrm({ action: 'add', employeeId: akbar.id, title: 'x', basis: 'pul', amount: 1 })).error === 'bad_basis'
       && (await crmKpi.extraFromCrm({ action: 'add', employeeId: akbar.id, title: 'x', basis: 'total', amount: 0 })).error === 'bad_amount'
