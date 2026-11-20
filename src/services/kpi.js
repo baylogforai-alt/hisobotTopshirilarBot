@@ -118,11 +118,23 @@ const payOf = (k) => {
 };
 
 /**
+ * Optional period start (CRM preview only): max(from, month start). Invalid or outside the month → month start.
+ */
+const effectiveFrom = (month, fromRaw) => {
+  const { from, to } = time.monthRange(month);
+  if (typeof fromRaw !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(fromRaw) || !time.isValidDate(fromRaw)) return from;
+  if (fromRaw < from || fromRaw > to) return from;
+  return fromRaw;
+};
+
+/**
  * Oy qatorini HISOBLAYDI (bazaga yozmaydi) — compute (saqlaydi) va preview (CRM, faqat o'qish) uchun umumiy.
  * `existing` — shu oy uchun saqlangan qator (boshliq bahosi, mezon, qo'lda KPI summasi undan olinadi).
  */
-const buildRow = async (emp, month, existing) => {
-  const { from, to } = time.monthRange(month);
+const buildRow = async (emp, month, existing, fromRaw = null) => {
+  const range = time.monthRange(month);
+  const to = range.to;
+  const from = effectiveFrom(month, fromRaw);
   const ts = await tasks.stats(emp.id, from, to);
   const at = await attendance.stats(emp, from, to);
   const dept = emp.department_id ? await departments.byId(emp.department_id) : null;
@@ -183,10 +195,10 @@ const compute = async (emp, month, { force = false } = {}) => {
  * CRM uchun — BAZAGA YOZMAYDI. Tasdiqlangan/chiqarilgan qator bo'lsa o'sha (direktor qarori), aks holda
  * compute bilan bir xil formula bo'yicha hozirgi holat. `saved` — kpi_monthly da qator bormi.
  */
-const preview = async (emp, month) => {
+const preview = async (emp, month, fromRaw = null) => {
   const existing = await get(emp.id, month);
   if (existing && existing.status !== 'draft') return { ...existing, saved: true };
-  const { row } = await buildRow(emp, month, existing);
+  const { row } = await buildRow(emp, month, existing, fromRaw);
   return { ...row, status: existing ? existing.status : 'draft', saved: Boolean(existing) };
 };
 
@@ -286,7 +298,7 @@ const statusLabel = (s) => STATUS[s] || STATUS.draft;
 const fmtMoney = (n) => (n === null || n === undefined ? '—' : `${Math.round(Number(n)).toLocaleString('ru-RU').replace(/ /g, ' ')} so'm`);
 
 module.exports = {
-  MIN_PART_PCT, partPct, get, byId, listMonth, computeTotal, bonusOf, checkGate, bonusFor, payOf, compute, preview, computeAll, recalc, editable, setHeadScore, setCustomPct, setBonusFund, setNote, decide,
+  MIN_PART_PCT, partPct, get, byId, listMonth, computeTotal, bonusOf, checkGate, bonusFor, payOf, compute, preview, effectiveFrom, computeAll, recalc, editable, setHeadScore, setCustomPct, setBonusFund, setNote, decide,
   decideBlock, isLocked, gateSettings, setGateSettings, GATE_DEFAULTS,
   statusLabel, fmtMoney,
 };

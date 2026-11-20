@@ -493,6 +493,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     JSON.stringify(mkA || mk.rows[0] || null).slice(0, 300));
   const mkBad = await require('../src/services/crmKpi').monthKpi('xato');
   ok('CRM KPI: noto\'g\'ri oy → joriy oy', mkBad.month === time.month());
+  // Optional period start: stats count only from `from`; invalid / outside month -> ignored; no `from` -> unchanged
+  {
+    const crmKpiSvc = require('../src/services/crmKpi');
+    const mStart = time.monthRange(time.month()).from;
+    const dbq = require('../src/db');
+    let tmpId = null;
+    if (mStart < time.today()) tmpId = (await tasks.create({ employeeId: akbar.id, title: 'KPI FROM TEST', dueDate: mStart, createdBy: 1000, source: 'admin' })).id;
+    const mkAll = await crmKpiSvc.monthKpi(time.month());
+    const mkFrom = await crmKpiSvc.monthKpi(time.month(), time.today());
+    const mkOut = await crmKpiSvc.monthKpi(time.month(), time.shiftMonth(time.month(), -1) + '-15');
+    const mkJunk = await crmKpiSvc.monthKpi(time.month(), 'bad');
+    const dueOf = (m) => m.rows.find((r) => r.employeeId === String(akbar.id)).tasks.due;
+    ok('CRM KPI from: periodFrom echoed; without from = month start', mkFrom.periodFrom === time.today() && mkAll.periodFrom === mStart && mkAll.from === mStart);
+    ok('CRM KPI from: outside month / invalid ignored', mkOut.periodFrom === mStart && mkJunk.periodFrom === mStart);
+    if (tmpId) {
+      ok('CRM KPI from: task before from does not count', dueOf(mkAll) === dueOf(mkFrom) + 1 && dueOf(mkOut) === dueOf(mkAll));
+      await dbq.query('DELETE FROM tasks WHERE id = $1', [tmpId]);
+    }
+  }
   ok('CRM KPI: oklad, vaznlar, rejim', mk.mode && mkA.kpi.weights && mkA.kpi.weights.tasks > 0 && 'salary' in mkA.kpi && mkA.defaults);
   // CRM'dan sozlash (/crm/kpi/set) — summa, oklad, boshliq bahosi; KPI summasi = summa × ball / 100 (score)
   const crmKpi = require('../src/services/crmKpi');

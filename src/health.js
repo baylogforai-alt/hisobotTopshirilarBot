@@ -35,6 +35,12 @@ const readJson = (req) => new Promise((resolve) => {
   req.on('error', () => resolve(null));
 });
 
+/** Optional ?from=YYYY-MM-DD for /crm/kpi; anything else is ignored */
+const crmFrom = (url) => {
+  const v = url ? url.searchParams.get('from') : null;
+  return v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+};
+
 /** /crm/snapshot, /crm/kpi, /crm/kpi/set ni ishlaydi. true — javob berildi */
 const handleCrm = async (req, res, pathname, url = null) => {
   const POSTS = ['/crm/kpi/set', '/crm/kpi/extra'];
@@ -57,7 +63,7 @@ const handleCrm = async (req, res, pathname, url = null) => {
     return true;
   }
   try {
-    if (pathname === '/crm/kpi') json(res, 200, await crmKpi.monthKpi(url ? url.searchParams.get('month') : null));
+    if (pathname === '/crm/kpi') json(res, 200, await crmKpi.monthKpi(url ? url.searchParams.get('month') : null, crmFrom(url)));
     else json(res, 200, await crmFeed.snapshot());
   } catch (err) {
     console.warn('[crm] hisobot berib bolmadi:', err.message);

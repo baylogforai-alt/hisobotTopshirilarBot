@@ -21,17 +21,20 @@ const extradays = require('./extradays');
 
 const num = (v) => (v === null || v === undefined || v === '' ? null : Number(v));
 
-const monthKpi = async (monthRaw) => {
+const monthKpi = async (monthRaw, fromRaw = null) => {
   const month = time.isValidMonth(monthRaw) ? monthRaw : time.month();
   const { from, to } = time.monthRange(month);
   const today = time.today();
   const future = from > today;
   const toEff = to > today ? today : to;
+  // Optional period start (CRM only): never later than the effective end, so stats ranges stay ordered
+  let periodFrom = kpi.effectiveFrom(month, fromRaw);
+  if (periodFrom > toEff) periodFrom = future ? from : toEff;
 
   const rows = [];
   for (const emp of await employees.listStaff()) {
-    const st = future ? null : await period.employeeStats(emp, from, toEff);
-    const k = future ? null : await kpi.preview(emp, month);
+    const st = future ? null : await period.employeeStats(emp, periodFrom, toEff);
+    const k = future ? null : await kpi.preview(emp, month, periodFrom);
     const ts = st ? st.ts : null;
     const ex = k ? await kpiExtras.forKpi(emp.id, month, k) : { list: [], total: 0 };
     const offDays = future ? [] : await extradays.workedInMonth(emp.id, month);
@@ -99,7 +102,7 @@ const monthKpi = async (monthRaw) => {
       offDays: { total: offDays.reduce((s, x) => s + (Number(x.amount) || 0), 0), dates: offDays.map((x) => x.work_date) },
     });
   }
-  return { month, from, to: toEff, mode: config.kpiMode, generatedAt: new Date().toISOString(), rows };
+  return { month, from, periodFrom, to: toEff, mode: config.kpiMode, generatedAt: new Date().toISOString(), rows };
 };
 
 /** null | 0..max son; noto'g'ri qiymat — undefined (xato) */
